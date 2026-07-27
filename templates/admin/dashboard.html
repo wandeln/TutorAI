@@ -1,0 +1,510 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+
+  <h1 class="text-2xl font-bold text-gray-900 mb-6">Admin-Konsole</h1>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- ─── LEFT: Navigation ─────────────────────────────────── -->
+    <div class="space-y-2">
+      <button onclick="showSection('courses')" class="admin-nav w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition" data-section="courses">
+        📋 Kurse verwalten
+      </button>
+      <button onclick="showSection('users')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="users">
+        👥 User verwalten
+      </button>
+      <button onclick="showSection('settings')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="settings">
+        ⚙️ Systemeinstellungen
+      </button>
+    </div>
+
+    <!-- ─── RIGHT: Content Area ──────────────────────────────── -->
+    <div class="lg:col-span-2">
+
+      <!-- ═══ KURSE ═══ -->
+      <div id="section-courses" class="admin-section">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold text-gray-800">Kurse</h2>
+          <button onclick="showCreateCourseModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition">
+            + Neuer Kurs
+          </button>
+        </div>
+
+        <div id="courses-list" class="space-y-3">
+          {% for course in courses %}
+          <div class="card flex items-center justify-between">
+            <div>
+              <a href="/courses/{{ course.id }}" class="font-semibold text-blue-600 hover:underline">{{ course.name }}</a>
+              <div class="text-sm text-gray-500">{{ course.semester }}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="badge badge-text">{{ course.role_in_course }}</span>
+            </div>
+          </div>
+          {% else %}
+          <div class="text-center py-8 text-gray-400">
+            Noch keine Kurse erstellt. Klicke auf "+ Neuer Kurs".
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- ═══ USER ═══ -->
+      <div id="section-users" class="admin-section hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold text-gray-800">User</h2>
+          <button onclick="showCreateUserModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition">
+            + Neuer User
+          </button>
+        </div>
+
+        <div class="table-container">
+          <table class="w-full border-collapse">
+            <thead>
+              <tr class="bg-gray-100">
+                <th class="text-left py-2 px-4 text-sm font-semibold">Name</th>
+                <th class="text-left py-2 px-4 text-sm font-semibold">Username</th>
+                <th class="text-left py-2 px-4 text-sm font-semibold">Email</th>
+                <th class="text-center py-2 px-4 text-sm font-semibold">Rolle</th>
+                <th class="text-center py-2 px-4 text-sm font-semibold">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in all_users %}
+              <tr class="hover:bg-gray-50 border-t">
+                <td class="py-2 px-4 text-sm">{{ user.name }}</td>
+                <td class="py-2 px-4 text-sm font-mono">{{ user.username }}</td>
+                <td class="py-2 px-4 text-sm text-gray-500">{{ user.email }}</td>
+                <td class="py-2 px-4 text-center">
+                  <span class="badge {% if user.role == 'admin' %}badge-fail{% elif user.role == 'tutor' %}badge-code{% else %}badge-text{% endif %}">
+                    {{ user.role }}
+                  </span>
+                </td>
+                <td class="py-2 px-4 text-center">
+                  <button onclick="editUser({{ user.id }}, '{{ user.username }}', '{{ user.name }}', '{{ user.email }}', '{{ user.role }}')"
+                          class="text-blue-600 hover:text-blue-800 text-sm mr-2">✏️</button>
+                  {% if user.id != current_user.id %}
+                  <button onclick="deleteUser({{ user.id }}, '{{ user.username }}')"
+                          class="text-red-500 hover:text-red-700 text-sm">🗑️</button>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ SETTINGS ═══ -->
+      <div id="section-settings" class="admin-section hidden">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">Systemeinstellungen</h2>
+
+        <!-- LLM Config -->
+        <div class="card mb-6">
+          <h3 class="font-semibold text-gray-700 mb-4">🤖 LLM-Konfiguration</h3>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">API-Endpoint</label>
+              <input type="text" id="setting-llm-url" value="{{ courses[0].llm_api_url if courses[0].llm_api_url else '' }}"
+                     placeholder="http://llm-server.uni.de:8001/v1"
+                     class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono">
+              <p class="text-xs text-gray-400 mt-1">OpenAI-kompatibler Endpoint (z.B. Ollama, vLLM)</p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Modell</label>
+                <input type="text" id="setting-llm-model" value="{{ courses[0].llm_model if courses[0].llm_model else '' }}"
+                       placeholder="Qwen3-32B"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">API-Key</label>
+                <input type="password" id="setting-llm-key" placeholder="sk-..."
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+
+            <button onclick="testLlmConnection()" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition">
+              🧪 Verbindung testen
+            </button>
+            <div id="llm-test-result" class="hidden text-sm"></div>
+          </div>
+        </div>
+
+        <!-- LDAP Config -->
+        <div class="card mb-6">
+          <h3 class="font-semibold text-gray-700 mb-4">🔐 LDAP-Einrichtung</h3>
+
+          <div class="space-y-4">
+            <div>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="setting-ldap-enabled" class="w-4 h-4 text-blue-600">
+                <span class="text-sm font-medium text-gray-700">LDAP-Authentifizierung aktivieren</span>
+              </label>
+            </div>
+
+            <div id="ldap-fields" class="hidden space-y-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">LDAP-Server</label>
+                <input type="text" id="setting-ldap-server" placeholder="ldap.uni.de"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Base DN</label>
+                <input type="text" id="setting-ldap-base" placeholder="ou=people,dc=uni,dc=de"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono">
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Bind DN</label>
+                <input type="text" id="setting-ldap-bind" placeholder="cn=admin,dc=uni,dc=de"
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Default Grading Prompt -->
+        <div class="card">
+          <h3 class="font-semibold text-gray-700 mb-4">📝 Standard-Grading-Prompt</h3>
+
+          <textarea id="setting-grading-prompt" rows="10"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
+                    placeholder="Du bist ein Tutor, der eine Aufgabenlösung bewertet...">{% for course in courses %}{{ course.grading_prompt }}{% endfor %}</textarea>
+
+          <p class="text-xs text-gray-400 mt-2">
+            Platzhalter: {task_description}, {model_solution}, {student_solution}, {max_points}
+          </p>
+        </div>
+
+        <!-- Save Settings -->
+        <div class="mt-6">
+          <button onclick="saveSettings()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition">
+            💾 Einstellungen speichern
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ─── Create Course Modal ──────────────────────────────────── -->
+<div id="create-course-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+    <h3 class="text-lg font-bold text-gray-900 mb-4">Neuen Kurs erstellen</h3>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Kursname <span class="text-red-500">*</span></label>
+        <input type="text" id="new-course-name" placeholder="Einführung in die Informatik"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+        <textarea id="new-course-desc" rows="2" placeholder="Kurze Beschreibung..."
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Semester <span class="text-red-500">*</span></label>
+        <input type="text" id="new-course-semester" placeholder="WS 2025/26"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeCreateCourseModal()" class="text-gray-600 hover:text-gray-800 px-4 py-2">Abbrechen</button>
+      <button onclick="createCourse()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Create User Modal ────────────────────────────────────── -->
+<div id="create-user-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+    <h3 class="text-lg font-bold text-gray-900 mb-4">Neuen User erstellen</h3>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Username <span class="text-red-500">*</span></label>
+        <input type="text" id="new-user-username" placeholder="max.mustermann"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Name <span class="text-red-500">*</span></label>
+        <input type="text" id="new-user-name" placeholder="Max Mustermann"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Email <span class="text-red-500">*</span></label>
+        <input type="email" id="new-user-email" placeholder="max@uni.de"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Rolle</label>
+        <select id="new-user-role" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="student">Student</option>
+          <option value="tutor">Tutor</option>
+          <option value="admin">Administrator</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Password <span class="text-red-500">*</span></label>
+        <input type="password" id="new-user-password" placeholder="Sicheres Password..."
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeCreateUserModal()" class="text-gray-600 hover:text-gray-800 px-4 py-2">Abbrechen</button>
+      <button onclick="createUser()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Erstellen</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ─── Section Navigation ──────────────────────────────────────
+  function showSection(section) {
+    document.querySelectorAll('.admin-section').forEach(el => el.classList.add('hidden'));
+    document.getElementById(`section-${section}`).classList.remove('hidden');
+
+    document.querySelectorAll('.admin-nav').forEach(btn => {
+      btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-medium');
+      btn.classList.add('text-gray-600');
+    });
+    document.querySelector(`.admin-nav[data-section="${section}"]`).classList.add('bg-blue-50', 'text-blue-700', 'font-medium');
+    document.querySelector(`.admin-nav[data-section="${section}"]`).classList.remove('text-gray-600');
+  }
+
+  // ─── Create Course ───────────────────────────────────────────
+  function showCreateCourseModal() {
+    document.getElementById('create-course-modal').classList.remove('hidden');
+  }
+
+  function closeCreateCourseModal() {
+    document.getElementById('create-course-modal').classList.add('hidden');
+    document.getElementById('new-course-name').value = '';
+    document.getElementById('new-course-desc').value = '';
+    document.getElementById('new-course-semester').value = '';
+  }
+
+  async function createCourse() {
+    const name = document.getElementById('new-course-name').value.trim();
+    const desc = document.getElementById('new-course-desc').value.trim();
+    const semester = document.getElementById('new-course-semester').value.trim();
+
+    if (!name || !semester) {
+      showToast('Name und Semester sind erforderlich.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/courses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: desc, semester }),
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Erstellen.', 'error');
+        return;
+      }
+
+      showToast(`Kurs "${name}" erstellt!`, 'success');
+      closeCreateCourseModal();
+
+      // Reload page to show new course
+      window.location.reload();
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
+  }
+
+  // ─── Create User ─────────────────────────────────────────────
+  function showCreateUserModal() {
+    document.getElementById('create-user-modal').classList.remove('hidden');
+  }
+
+  function closeCreateUserModal() {
+    document.getElementById('create-user-modal').classList.add('hidden');
+    document.getElementById('new-user-username').value = '';
+    document.getElementById('new-user-name').value = '';
+    document.getElementById('new-user-email').value = '';
+    document.getElementById('new-user-password').value = '';
+  }
+
+  async function createUser() {
+    const username = document.getElementById('new-user-username').value.trim();
+    const name = document.getElementById('new-user-name').value.trim();
+    const email = document.getElementById('new-user-email').value.trim();
+    const role = document.getElementById('new-user-role').value;
+    const password = document.getElementById('new-user-password').value;
+
+    if (!username || !name || !email) {
+      showToast('Username, Name und Email sind erforderlich.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, name, email, role, password }),
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Erstellen.', 'error');
+        return;
+      }
+
+      showToast(`User "${username}" erstellt!`, 'success');
+      closeCreateUserModal();
+      window.location.reload();
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
+  }
+
+  // ─── Edit User ───────────────────────────────────────────────
+  async function editUser(userId, username, name, email, role) {
+    const newName = prompt('Name:', name);
+    if (!newName) return;
+    const newEmail = prompt('Email:', email);
+    if (!newEmail) return;
+    const newRole = prompt('Rolle (admin/tutor/student):', role);
+    if (!newRole) return;
+
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName, email: newEmail, role: newRole }),
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Aktualisieren.', 'error');
+        return;
+      }
+
+      showToast('User aktualisiert!', 'success');
+      window.location.reload();
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
+  }
+
+  // ─── Delete User ─────────────────────────────────────────────
+  async function deleteUser(userId, username) {
+    if (!confirm(`User "${username}" wirklich löschen?`)) return;
+
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Löschen.', 'error');
+        return;
+      }
+
+      showToast(`User "${username}" gelöscht.`, 'success');
+      window.location.reload();
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
+  }
+
+  // ─── LDAP Toggle ─────────────────────────────────────────────
+  document.getElementById('setting-ldap-enabled').addEventListener('change', (e) => {
+    document.getElementById('ldap-fields').classList.toggle('hidden', !e.target.checked);
+  });
+
+  // ─── Test LLM Connection ─────────────────────────────────────
+  async function testLlmConnection() {
+    const url = document.getElementById('setting-llm-url').value.trim();
+    const model = document.getElementById('setting-llm-model').value.trim();
+    const result = document.getElementById('llm-test-result');
+
+    result.classList.remove('hidden');
+    result.innerHTML = '<span class="text-blue-600"><span class="animate-spin">⏳</span> Verbindung wird getestet...</span>';
+
+    try {
+      const res = await fetch('/api/admin/llm/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_url: url, model: model }),
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        result.innerHTML = `<span class="text-green-600">✅ Verbindung erfolgreich! (${data.latency_ms}ms)</span>`;
+      } else {
+        result.innerHTML = `<span class="text-red-600">❌ Fehler: ${data.error || 'Keine Verbindung'}</span>`;
+      }
+
+    } catch (err) {
+      result.innerHTML = `<span class="text-red-600">❌ Fehler: ${err.message}</span>`;
+    }
+  }
+
+  // ─── Save Settings ───────────────────────────────────────────
+  async function saveSettings() {
+    const settings = {
+      llm_api_url: document.getElementById('setting-llm-url').value.trim() || null,
+      llm_model: document.getElementById('setting-llm-model').value.trim() || null,
+      use_ldap: document.getElementById('setting-ldap-enabled').checked,
+      ldap_server: document.getElementById('setting-ldap-server').value.trim() || null,
+      ldap_base_dn: document.getElementById('setting-ldap-base').value.trim() || null,
+      grading_prompt: document.getElementById('setting-grading-prompt').value.trim() || null,
+    };
+
+    try {
+      // For now, save to first course (TODO: global settings endpoint)
+      if ({{ courses|length }} > 0) {
+        const res = await fetch(`/api/admin/courses/{{ courses[0].id }}/settings`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings),
+          credentials: 'same-origin',
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          showToast(data.detail || 'Fehler beim Speichern.', 'error');
+          return;
+        }
+
+        showToast('Einstellungen gespeichert!', 'success');
+      }
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
+  }
+</script>
+{% endblock %}

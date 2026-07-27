@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+  
+  <!-- Welcome Header -->
+  <div class="mb-8">
+    <h1 class="text-3xl font-bold text-gray-800">Willkommen, {{ current_user.name }}!</h1>
+    <p class="text-gray-500 mt-1">Wähle einen Kurs aus dem Menü oder klicke unten auf einen Kurs.</p>
+  </div>
+  
+  <!-- Course Cards -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for course in courses %}
+    <a href="/courses/{{ course.id }}"
+       class="card hover:shadow-lg transition-shadow block">
+      <div class="flex items-start justify-between mb-3">
+        <h2 class="text-lg font-semibold text-gray-800">{{ course.name }}</h2>
+        <span class="px-2 py-1 rounded text-xs font-medium
+          {% if course.role_in_course == 'admin' %}bg-purple-100 text-purple-700
+          {% elif course.role_in_course == 'tutor' %}bg-blue-100 text-blue-700
+          {% else %}bg-green-100 text-green-700
+          {% endif %}">
+          {{ course.role_in_course }}
+        </span>
+      </div>
+      <p class="text-gray-500 text-sm">Klicke zum Öffnen →</p>
+    </a>
+    {% endfor %}
+  </div>
+  
+  {% if not courses %}
+  <div class="text-center py-12 text-gray-400">
+    <p class="text-xl">Du bist noch Mitglied in keinem Kurs.</p>
+    <p class="text-sm mt-2">Wende dich an deinen Kursleiter.</p>
+  </div>
+  {% endif %}
+  
+  <!-- Quick Stats (Student) -->
+  {% if current_user.role == 'student' %}
+  <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div class="card text-center">
+      <div class="text-3xl font-bold text-blue-600">{{ courses|length }}</div>
+      <div class="text-sm text-gray-500 mt-1">Aktive Kurse</div>
+    </div>
+    <div class="card text-center">
+      <div class="text-3xl font-bold text-green-600">0</div>
+      <div class="text-sm text-gray-500 mt-1">Abgeschlossene Aufgaben</div>
+    </div>
+    <div class="card text-center">
+      <div class="text-3xl font-bold text-gray-400">0%</div>
+      <div class="text-sm text-gray-500 mt-1">Gesamt-Punktestand</div>
+    </div>
+  </div>
+  {% endif %}
+  
+</div>
+{% endblock %}

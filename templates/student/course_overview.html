@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+  
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
+    <p class="text-gray-500">{{ course.semester }} — {{ course.description }}</p>
+  </div>
+  
+  <!-- Points Summary -->
+  <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
+    <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
+    <div hx-get="/api/student/courses/{{ course.id }}/my-points"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         id="my-points-summary">
+      <p class="text-gray-500 text-sm">Wird geladen...</p>
+    </div>
+  </div>
+  
+  <!-- Task List -->
+  <div class="space-y-4">
+    {% for task in tasks %}
+    <div class="card flex items-center justify-between">
+      <div class="flex-1">
+        <div class="flex items-center gap-3">
+          <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+             class="text-lg font-semibold text-blue-600 hover:underline">
+            {{ task.title }}
+          </a>
+          <span class="px-2 py-0.5 rounded text-xs font-medium
+            {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
+            {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
+            {% else %}bg-gray-100 text-gray-600
+            {% endif %}">
+            {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
+          </span>
+        </div>
+        <div class="text-sm text-gray-500 mt-1">
+          Max. {{ task.max_points }} Punkte
+        </div>
+      </div>
+      <div class="flex items-center gap-6">
+        <div class="text-right">
+          <div class="text-lg font-bold
+            {% if task.my_points >= task.max_points * 0.8 %}text-green-600
+            {% elif task.my_points >= task.max_points * 0.5 %}text-yellow-600
+            {% elif task.my_points > 0 %}text-orange-600
+            {% else %}text-gray-400
+            {% endif %}">
+            {{ task.my_points }}/{{ task.max_points }}
+          </div>
+          <div class="text-xs text-gray-400">Punkte</div>
+        </div>
+        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+          {{ 'Bearbeiten' if task.has_feedback else 'Lösen' }} →
+        </a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  
+  {% if not tasks %}
+  <div class="text-center py-12 text-gray-400">
+    <p class="text-xl">Derzeit keine Aufgaben verfügbar.</p>
+  </div>
+  {% endif %}
+  
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // Format the points summary
+  document.body.addEventListener("htmx:afterSwap", (evt) => {
+    if (evt.detail.target.id === "my-points-summary") {
+      try {
+        const data = JSON.parse(evt.detail.xhr.responseText);
+        const pct = data.percentage || 0;
+        let barColor = "bg-gray-300";
+        if (pct >= 80) barColor = "bg-green-500";
+        else if (pct >= 50) barColor = "bg-yellow-500";
+        else if (pct > 0) barColor = "bg-orange-500";
+        
+        evt.detail.target.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-2xl font-bold text-blue-700">${data.total_points}</span>
+              <span class="text-gray-500"> / ${data.total_possible} Punkte</span>
+            </div>
+            <div class="text-2xl font-bold text-blue-700">${pct}%</div>
+          </div>
+          <div class="mt-2 bg-gray-200 rounded-full h-3">
+            <div class="${barColor} h-3 rounded-full transition-all" style="width: ${pct}%"></div>
+          </div>
+        `;
+      } catch(e) {
+        // Already formatted or error
+      }
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,147 @@
+"""
+Auth-Endpoints: Login, Logout, Session-Status.
+
+- POST /api/auth/login  → JWT in httpOnly-Cookie setzen
+- POST /api/auth/logout → Cookie löschen
+- GET  /api/auth/me     → Aktueller User
+"""
+
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from sqlmodel import Session, select
+
+from database.base import get_session
+from database.models import User, UserRole, UserCreate
+from services.auth_service import (
+    authenticate_user, create_access_token, hash_password,
+    get_current_user,
+)
+
+router = APIRouter(prefix="/api/auth", tags=["Authentifizierung"])
+
+
+class LoginRequest:
+    def __init__(self, username: str, password: str):
+        self.username = username
+        self.password = password
+
+
+@router.post("/login")
+async def login(
+    request: Request,
+    response: Response,
+    session: Session = Depends(get_session),
+):
+    """
+    Login via Username + Password.
+    
+    Setzt JWT-Token in httpOnly-Cookie.
+    Prüft LDAP (wenn aktiviert) oder DB-Hash.
+    """
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    
+    if not username or not password:
+        raise HTTPException(400, "Username und Password erforderlich.")
+    
+    # LDAP-Setting des ersten Kurses lesen (oder globales)
+    use_ldap = False  # TODO: Von Course-Settings lesen
+    
+    user = await authenticate_user(username, password, session, use_ldap)
+    
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Ungültiger Username oder Password.",
+        )
+    
+    # JWT-Token erstellen und in Cookie setzen
+    token_data = {
+        "sub": user.id,
+        "username": user.username,
+        "role": user.role.value,
+    }
+    token = create_access_token(token_data)
+    
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=False,  # False für Dev (Browser-JS kann Cookie lesen). In Prod: True + HTTPS!
+        secure=False,
+        samesite="lax",
+        max_age=8 * 3600,
+        path="/",
+    )
+    
+    return {
+        "message": "Erfolgreich angemeldet.",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": user.role.value,
+        },
+    }
+
+
+@router.post("/logout")
+async def logout(response: Response):
+    """Löscht das Session-Cookie."""
+    response.delete_cookie(key="access_token", path="/")
+    return {"message": "Erfolgreich abgemeldet."}
+
+
+@router.get("/me")
+async def get_me(user: User = Depends(get_current_user)):
+    """Gibt den aktuellen User zurück."""
+    return {
+        "id": user.id,
+        "username": user.username,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role.value,
+    }
+
+
+@router.post("/register")
+async def register(
+    data: UserCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),  # Nur Admin kann registrieren
+):
+    """
+    Neue User registrieren (nur für Admin).
+    
+    Bei LDAP: Nur Username, Email, Name, Role speichern (kein Password).
+    """
+    # Prüfen, ob Username schon existiert
+    existing = session.exec(
+        select(User).where(User.username == data.username)
+    ).first()
+    if existing:
+        raise HTTPException(400, f"Username '{data.username}' existiert bereits.")
+    
+    pw_hash = hash_password(data.plain_password)
+    
+    new_user = User(
+        username=data.username,
+        email=data.email,
+        name=data.name,
+        role=data.role,
+        password_hash=pw_hash,
+    )
+    
+    session.add(new_user)
+    session.commit()
+    session.refresh(new_user)
+    
+    return {
+        "message": f"User '{data.username}' erstellt.",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "name": new_user.name,
+            "role": new_user.role.value,
+        },
+    }

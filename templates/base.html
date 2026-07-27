@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutor-System{% block title %} - {{ page_title or "Übungsaufgaben" }}{% endblock %}</title>
+
+  <!-- HTMX (BSD-3) -->
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+
+  <!-- Tailwind CSS (MIT) via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- CodeMirror (MIT) — nur laden wenn benötigt -->
+  {% if code_editor %}
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  {% endif %}
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/css/main.css">
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+  <!-- ─── Navigation ──────────────────────────────────────────── -->
+  <nav class="bg-blue-700 text-white shadow-lg">
+    <div class="container mx-auto px-4 py-3 flex items-center justify-between">
+
+      <!-- Logo / Home -->
+      <a href="/" class="text-xl font-bold flex items-center gap-2 hover:opacity-90 transition">
+        <span>📚</span>
+        <span>Tutor-System</span>
+      </a>
+
+      <!-- Kurs-Auswahl -->
+      {% if current_user and courses %}
+      <div class="flex items-center gap-4">
+        <select
+          id="course-select"
+          class="bg-blue-600 text-white border border-blue-500 rounded px-3 py-1 text-sm hover:bg-blue-500 transition"
+          onchange="window.location.href = '/courses/' + this.value"
+        >
+          <option value="">— Kurs wählen —</option>
+          {% for course in courses %}
+          <option value="{{ course.id }}"
+                  {% if selected_course_id == course.id %}selected{% endif %}>
+            {{ course.name }} ({{ course.role_in_course }})
+          </option>
+          {% endfor %}
+        </select>
+
+        <!-- User Info -->
+        <div class="flex items-center gap-2 text-sm" id="user-info">
+          <span>👤</span>
+          <span>{{ current_user.name }}</span>
+          <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
+            {{ current_user.role }}
+          </span>
+        </div>
+
+        <!-- Logout -->
+        <button
+          hx-post="/api/auth/logout"
+          hx-target="#user-info"
+          hx-on::after-request="window.location.href = '/login'"
+          class="text-blue-200 hover:text-white transition ml-2"
+        >
+          Abmelden
+        </button>
+      </div>
+      {% endif %}
+    </div>
+  </nav>
+
+  <!-- ─── Main Content ────────────────────────────────────────── -->
+  <main class="container mx-auto px-4 py-6 flex-1">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- ─── Footer ──────────────────────────────────────────────── -->
+  <footer class="bg-gray-800 text-gray-400 py-4 mt-8">
+    <div class="container mx-auto px-4 text-center text-sm">
+      <p>Tutor-System &copy; 2025 &mdash; Open-Source, 100% University-Licensed</p>
+    </div>
+  </footer>
+
+  <!-- ─── Error Toast (global) ────────────────────────────────── -->
+  <script>
+    // HTMX: CodeMirror-Integration — Editor-Inhalt in Requests aufnehmen
+    document.body.addEventListener("htmx:configRequest", (evt) => {
+      const editor = window._codeEditor;
+      if (editor && evt.detail.target) {
+        const name = "code_solution";
+        evt.detail.values[name] = editor.getValue();
+      }
+    });
+
+    // HTMX: Error-Handling
+    document.body.addEventListener("htmx:responseError", (evt) => {
+      const detail = evt.detail.xhr.responseText;
+      try {
+        const err = JSON.parse(detail);
+        showToast(err.detail || "Ein Fehler ist aufgetreten.", "error");
+      } catch {
+        showToast("Ein Fehler ist aufgetreten.", "error");
+      }
+    });
+
+    // HTMX: Success handler
+    document.body.addEventListener("htmx:afterOnLoad", (evt) => {
+      const content = evt.detail.xhr.responseText;
+      try {
+        const data = JSON.parse(content);
+        if (data.message) showToast(data.message, "success");
+      } catch {}
+    });
+
+    function showToast(message, type = "info") {
+      const colors = {
+        success: "bg-green-100 border-green-400 text-green-700",
+        error: "bg-red-100 border-red-400 text-red-700",
+        info: "bg-blue-100 border-blue-400 text-blue-700",
+        warning: "bg-yellow-100 border-yellow-400 text-yellow-700",
+      };
+      const toast = document.createElement("div");
+      toast.className = `fixed top-4 right-4 ${colors[type]} border px-6 py-4 rounded shadow-lg z-50 transition-all`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => toast.style.opacity = "1");
+      setTimeout(() => {
+        toast.style.opacity = "0";
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+  </script>
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

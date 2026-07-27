@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+  
+  <!-- Header -->
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
+    <p class="text-gray-500">{{ course.semester }} — {{ course.description }}</p>
+  </div>
+  
+  <!-- Action Bar -->
+  <div class="flex justify-between items-center mb-6">
+    <div class="text-sm text-gray-500">
+      {{ tasks|length }} Aufgaben
+    </div>
+    <div class="flex gap-2">
+      <a href="/courses/{{ course.id }}/overview"
+         class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+        📊 Übersichtstabelle
+      </a>
+      <a href="/courses/{{ course.id }}/tasks/new"
+         class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
+        ✏️ Neue Aufgabe
+      </a>
+    </div>
+  </div>
+  
+  <!-- Task List -->
+  <div class="space-y-4">
+    {% for task in tasks %}
+    <div class="card flex items-center justify-between">
+      <div class="flex-1">
+        <div class="flex items-center gap-3">
+          <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+             class="text-lg font-semibold text-blue-600 hover:underline">
+            {{ task.title }}
+          </a>
+          <span class="px-2 py-0.5 rounded text-xs font-medium
+            {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
+            {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
+            {% else %}bg-gray-100 text-gray-600
+            {% endif %}">
+            {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
+          </span>
+        </div>
+        <div class="text-sm text-gray-500 mt-1">
+          {{ task.max_points }} Punkte · {{ task.test_count }} Tests
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        {% if task.deadline %}
+        <div class="text-sm text-gray-400">
+          ⏰ {{ task.deadline[:10] }}
+        </div>
+        {% endif %}
+        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+           class="text-blue-600 hover:text-blue-800 transition">
+          Bearbeiten →
+        </a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  
+  {% if not tasks %}
+  <div class="text-center py-12 text-gray-400">
+    <p class="text-xl">Noch keine Aufgaben erstellt.</p>
+    <p class="text-sm mt-2">Klicke auf "Neue Aufgabe" um zu starten.</p>
+  </div>
+  {% endif %}
+  
+</div>
+{% endblock %}

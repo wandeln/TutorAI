@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+
+{% set code_editor = true %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <!-- Task Header -->
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-2">
+      <a href="/courses/{{ course.id }}" class="text-blue-600 hover:underline text-sm">
+        ← {{ course.name }}
+      </a>
+      <span class="text-gray-400">/</span>
+      <span class="text-sm text-gray-500">{{ task.title }}</span>
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900">{{ task.title }}</h1>
+
+    <div class="flex gap-2 mt-3">
+      {% set badge_class = {
+        'text': 'badge-text',
+        'code': 'badge-code',
+        'mc': 'badge-mc'
+      } %}
+      <span class="badge {{ badge_class.get(task.task_type, 'badge-text') }}">
+        {{ task.task_type }}
+      </span>
+      <span class="badge bg-gray-100 text-gray-600">
+        {{ task.max_points }} Punkte
+      </span>
+      {% if task.max_attempts %}
+      <span class="badge bg-gray-100 text-gray-600">
+        {{ task.max_attempts }} Versuche
+      </span>
+      {% endif %}
+      {% if task.deadline %}
+      <span class="badge bg-orange-100 text-orange-700">
+        ⏰ Deadline: {{ task.deadline[:10] }}
+      </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    <!-- ─── LEFT: Task Description ──────────────────────────────── -->
+    <div class="lg:col-span-1 space-y-4">
+
+      <!-- Aufgabenstellung -->
+      <div class="card">
+        <h2 class="font-semibold text-gray-800 mb-3">Aufgabenstellung</h2>
+        <div class="prose prose-sm text-gray-700 whitespace-pre-wrap">
+          {{ task.description }}
+        </div>
+      </div>
+
+      <!-- Public Tests (für Code-Aufgaben) -->
+      {% if task.task_type == 'code' and public_tests %}
+      <div class="card">
+        <details>
+          <summary class="cursor-pointer font-semibold text-blue-600 hover:text-blue-800">
+            🧪 Public Tests ({{ public_tests|length }})
+          </summary>
+          <div class="mt-3 space-y-3">
+            {% for test in public_tests %}
+            <div class="bg-gray-50 rounded p-3 text-sm">
+              <div class="font-mono text-blue-700 mb-1">{{ test.name }}</div>
+              <pre class="text-xs text-gray-600 overflow-x-auto">{{ test.code }}</pre>
+            </div>
+            {% endfor %}
+          </div>
+        </details>
+      </div>
+      {% endif %}
+
+      <!-- Meine Ergebnisse -->
+      <div class="card">
+        <h2 class="font-semibold text-gray-800 mb-3">Mein Stand</h2>
+        <div class="space-y-2 text-sm">
+          {% set best_points = 0 %}
+          {% set total_attempts = 0 %}
+          {% if my_submissions %}
+            {% for sub in my_submissions %}
+              {% for fb in sub.feedback_list %}
+                {% if fb.points_earned > best_points %}
+                  {% set best_points = fb.points_earned %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {% set total_attempts = my_submissions|length %}
+          {% endif %}
+
+          <div class="flex justify-between">
+            <span class="text-gray-600">Erreichte Punkte:</span>
+            <span class="font-semibold {% if best_points >= task.max_points %}text-green-600{% elif best_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+              {{ best_points }} / {{ task.max_points }}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-600">Versuche:</span>
+            <span>{{ total_attempts }}{% if task.max_attempts %} / {{ task.max_attempts }}{% endif %}</span>
+          </div>
+
+          <!-- Progress Bar -->
+          <div class="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+            <div class="bg-blue-600 h-2.5 rounded-full"
+                 style="width: {{ (best_points / task.max_points * 100) if best_points else 0 }}%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── RIGHT: Solution Area ───────────────────────────────── -->
+    <div class="lg:col-span-2 space-y-4">
+
+      {% if task.task_type == 'code' %}
+        <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->
+        <div class="card">
+          <h2 class="font-semibold text-gray-800 mb-3">Deine Lösung</h2>
+
+          <!-- Code-Editor -->
+          <textarea id="code-editor"
+                    class="w-full font-mono text-sm"
+                    spellcheck="false">{{ task.code_template or '# Dein Code hier:' }}</textarea>
+
+          <!-- Buttons -->
+          <div class="flex gap-3 mt-4">
+            <button id="run-tests-btn"
+                    class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
+              <span>▶</span> Public Tests ausführen
+              <span class="htmx-indicator text-sm">⏳</span>
+            </button>
+
+            <button id="submit-btn"
+                    class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2">
+              <span>📤</span> Lösung einreichen
+              <span class="htmx-indicator text-sm">⏳</span>
+            </button>
+          </div>
+        </div>
+
+      {% elif task.task_type == 'text' %}
+        <!-- ─── TEXTAUFGABE ─────────────────────────────────── -->
+        <div class="card">
+          <h2 class="font-semibold text-gray-800 mb-3">Deine Lösung</h2>
+          <textarea id="text-solution"
+                    class="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="Schreibe hier deine Lösung..."></textarea>
+
+          <button id="submit-btn"
+                  class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
+            📤 Lösung einreichen
+          </button>
+        </div>
+
+      {% elif task.task_type == 'mc' %}
+        <!-- ─── MULTIPLE CHOICE ─────────────────────────────── -->
+        <div class="card">
+          <h2 class="font-semibold text-gray-800 mb-3">Deine Antwort</h2>
+          <p class="text-sm text-gray-500 mb-4">
+            Multiple-Choice-Aufgabe. Wähle die richtige Antwort und reiche sie ein.
+          </p>
+          <textarea id="mc-answer"
+                    class="w-full h-32 border border-gray-300 rounded-lg p-3 text-sm"
+                    placeholder="Gib deine Antwort ein..."></textarea>
+
+          <button id="submit-btn"
+                  class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
+            📤 Antwort einreichen
+          </button>
+        </div>
+      {% endif %}
+
+      <!-- ─── Test Results ─────────────────────────────────── -->
+      <div id="test-results" class="hidden"></div>
+
+      <!-- ─── Feedback (LLM + Tutor) ──────────────────────── -->
+      <div id="feedback-area" class="space-y-3">
+        {% if my_submissions %}
+          {% for sub in my_submissions %}
+            {% for fb in sub.feedback_list %}
+            <div class="feedback-box {% if fb.source == 'llm' %}feedback-llm{% else %}feedback-human{% endif %}">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold">
+                    {% if fb.source == 'llm' %}🤖 LLM{% else %}👤 {{ fb.giver }}{% endif %}
+                  </span>
+                  <span class="badge {% if fb.points_earned >= task.max_points * 0.5 %}badge-pass{% else %}badge-fail{% endif %}">
+                    {{ fb.points_earned }} / {{ task.max_points }} Punkte
+                  </span>
+                </div>
+                <span class="text-xs text-gray-400">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+              </div>
+              <div class="text-sm text-gray-700 whitespace-pre-wrap">{{ fb.comment }}</div>
+            </div>
+            {% endfor %}
+          {% endfor %}
+        {% endif %}
+      </div>
+
+      <!-- ─── Latest Submission Result ─────────────────────── -->
+      <div id="grading-result" class="hidden"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ─── CodeMirror Editor ──────────────────────────────────────
+  {% if task.task_type == 'code' %}
+  const editor = CodeMirror.fromTextArea(document.getElementById("code-editor"), {
+    mode: { name: "python", version: 3 },
+    theme: "dracula",
+    lineNumbers: true,
+    autoCloseBrackets: true,
+    indentUnit: 4,
+    tabSize: 4,
+    lineWrapping: true,
+    matchBrackets: true,
+  });
+  window._codeEditor = editor;
+  {% endif %}
+
+  // ─── Run Public Tests (Code Tasks) ─────────────────────────
+  document.getElementById("run-tests-btn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("run-tests-btn");
+    const output = document.getElementById("test-results");
+
+    const code = window._codeEditor ? window._codeEditor.getValue() : "";
+    if (!code.trim()) {
+      showToast("Bitte schreibe zuerst Code.", "warning");
+      return;
+    }
+
+    btn.disabled = true;
+    output.classList.remove("hidden");
+    output.innerHTML = '<div class="flex items-center gap-2 text-blue-600"><span class="animate-spin">⏳</span> Tests werden ausgeführt...</div>';
+
+    try {
+      const res = await fetch("/api/student/tasks/{{ task.id }}/run-tests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code_solution: code }),
+        credentials: "same-origin",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        output.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">${data.detail || "Fehler"}</div>`;
+        return;
+      }
+
+      // Render results
+      const passed = data.tests_passed || 0;
+      const total = data.tests_total || 0;
+      const allPassed = data.passed;
+
+      let html = `
+        <div class="card border-l-4 ${allPassed ? 'border-l-green-500' : 'border-l-red-500'}">
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-semibold ${allPassed ? 'text-green-700' : 'text-red-700'}">
+              ${allPassed ? '✅ Alle Tests bestanden!' : '❌ Tests nicht bestanden'}
+            </span>
+            <span class="text-sm text-gray-500">${passed}/${total} Tests</span>
+          </div>
+      `;
+
+      data.test_results.forEach(t => {
+        const icon = t.passed ? '✅' : '❌';
+        const color = t.passed ? 'text-green-600' : 'text-red-600';
+        html += `
+          <div class="flex items-start gap-2 text-sm mb-1 ${color}">
+            <span>${icon}</span>
+            <span class="font-mono">${t.name}</span>
+            ${!t.passed && t.output ? `<br><span class="ml-4 text-red-500 text-xs">${t.output.substring(0, 150)}</span>` : ''}
+          </div>
+        `;
+      });
+
+      if (data.stderr && !allPassed) {
+        html += `<div class="mt-2 text-xs text-red-400 font-mono bg-red-50 p-2 rounded">${data.stderr}</div>`;
+      }
+
+      html += `</div>`;
+      output.innerHTML = html;
+
+    } catch (err) {
+      output.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">Fehler: ${err.message}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ─── Submit Solution ───────────────────────────────────────
+  document.getElementById("submit-btn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("submit-btn");
+    const resultDiv = document.getElementById("grading-result");
+
+    const body = {};
+    {% if task.task_type == 'code' %}
+      body.code_solution = editor.getValue();
+    {% elif task.task_type == 'text' %}
+      body.solution = document.getElementById("text-solution").value;
+    {% elif task.task_type == 'mc' %}
+      body.solution = document.getElementById("mc-answer").value;
+    {% endif %}
+
+    if (!body.solution?.trim() && !body.code_solution?.trim()) {
+      showToast("Bitte trage zuerst eine Lösung ein.", "warning");
+      return;
+    }
+
+    btn.disabled = true;
+    resultDiv.classList.remove("hidden");
+    resultDiv.innerHTML = '<div class="flex items-center gap-2 text-blue-600"><span class="animate-spin">⏳</span> Lösung wird vom LLM korrigiert...</div>';
+
+    try {
+      const res = await fetch("/api/student/tasks/{{ task.id }}/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        resultDiv.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">${data.detail || "Fehler"}</div>`;
+        btn.disabled = false;
+        return;
+      }
+
+      // Render grading result
+      const pointsClass = data.points >= {{ task.max_points }} * 0.5 ? 'text-green-600' : 'text-red-600';
+      const borderColor = data.points >= {{ task.max_points }} * 0.5 ? 'border-l-green-500' : 'border-l-red-500';
+
+      let html = `
+        <div class="card border-l-4 ${borderColor}">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-semibold ${pointsClass}">
+              🤖 LLM-Bewertung
+            </span>
+            <span class="text-lg font-bold ${pointsClass}">${data.points} / {{ task.max_points }} Punkte</span>
+          </div>
+          <div class="text-sm text-gray-700 whitespace-pre-wrap mb-3">${data.feedback}</div>
+      `;
+
+      // Test results for code tasks
+      {% if task.task_type == 'code' %}
+      if (data.test_results) {
+        html += '<div class="border-t pt-2 mt-2">';
+        html += `<div class="text-sm font-semibold mb-1">Tests: ${data.tests_passed || 0}/${data.tests_total || 0}</div>`;
+        data.test_results.forEach(t => {
+          html += `<div class="text-xs ${t.passed ? 'text-green-600' : 'text-red-600'}">${t.passed ? '✅' : '❌'} ${t.name}</div>`;
+        });
+        html += '</div>';
+      }
+      {% endif %}
+
+      // Strengths & Improvements
+      if (data.strengths?.length) {
+        html += '<div class="border-t pt-2 mt-2"><div class="text-sm font-semibold text-green-700 mb-1">💪 Stärken:</div>';
+        data.strengths.forEach(s => { html += `<div class="text-sm text-green-600 ml-2">• ${s}</div>`; });
+        html += '</div>';
+      }
+      if (data.improvements?.length) {
+        html += '<div class="border-t pt-2 mt-2"><div class="text-sm font-semibold text-orange-700 mb-1">📝 Verbesserungspotenzial:</div>';
+        data.improvements.forEach(i => { html += `<div class="text-sm text-orange-600 ml-2">• ${i}</div>`; });
+        html += '</div>';
+      }
+
+      // Remaining attempts
+      if (data.remaining_attempts !== undefined) {
+        html += `<div class="border-t pt-2 mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) möglich.</div>`;
+      }
+
+      html += '</div>';
+      resultDiv.innerHTML = html;
+
+      // Prepend to feedback area
+      const feedbackArea = document.getElementById("feedback-area");
+      feedbackArea.insertAdjacentHTML('afterend', html);
+      resultDiv.classList.add("hidden");
+
+    } catch (err) {
+      resultDiv.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">Fehler: ${err.message}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+{% endblock %}

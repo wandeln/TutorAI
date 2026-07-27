@@ -1,0 +1,27 @@
+# Core
+python-dotenv==1.0.1
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlmodel==0.0.22
+python-multipart==0.0.20
+
+# Auth
+pyjwt==2.10.1
+# No passlib needed — we use hashlib + secrets (built-in, no compatibility issues)
+# python-ldap==3.4.4  # Optional: Needs libldap-dev. Install with:
+#   apt install libldap2-dev libsasl2-dev && pip install python-ldap
+
+# LLM
+openai==1.61.1
+
+# Excel Export
+openpyxl==3.1.5
+
+# Templates
+jinja2==3.1.5
+
+# HTMX ist eine JS-Library (CDN) — kein Python-Package nötig
+
+# Sandboxing
+psutil==6.1.1

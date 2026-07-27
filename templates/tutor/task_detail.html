@@ -1,0 +1,569 @@
+{% extends "base.html" %}
+
+{% set code_editor = true %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <!-- Breadcrumb + Title -->
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-2">
+      <a href="/courses/{{ course.id }}" class="text-blue-600 hover:underline text-sm">
+        ← {{ course.name }}
+      </a>
+      {% if task and task.id %}
+      <span class="text-gray-400">/</span>
+      <span class="text-sm text-gray-500">{{ task.title }}</span>
+      {% endif %}
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900">
+      {% if task %}{{ task.title }} — Bearbeiten{% else %}Neue Aufgabe erstellen{% endif %}
+    </h1>
+  </div>
+
+  <form id="task-form" class="space-y-6" onsubmit="return false;">
+    {% if task and task.id %}
+    <input type="hidden" name="task_id" value="{{ task.id }}">
+    {% endif %}
+
+    <!-- ─── Basic Info ─────────────────────────────────────────── -->
+    <div class="card">
+      <h2 class="font-semibold text-gray-800 mb-4">Grundlegendes</h2>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            Titel <span class="text-red-500">*</span>
+          </label>
+          <input type="text" name="title" required
+                 value="{{ task.title if task else '' }}"
+                 placeholder="z.B. Blatt3-01: Rekursion"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Verwende BlattX-NN für Filterbarkeit</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            Aufgabentyp <span class="text-red-500">*</span>
+          </label>
+          <select name="task_type" required id="task_type_select"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
+            <option value="text" {% if task and task.task_type == 'text' %}selected{% endif %}>Textaufgabe</option>
+            <option value="code" {% if task and task.task_type == 'code' %}selected{% endif %}>Codeaufgabe</option>
+            <option value="mc" {% if task and task.task_type == 'mc' %}selected{% endif %}>Multiple Choice</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Max. Punkte</label>
+          <input type="number" name="max_points" min="0" value="{{ task.max_points if task else 10 }}"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Max. Versuche</label>
+          <input type="number" name="max_attempts" min="1" value="{{ task.max_attempts if task and task.max_attempts else '' }}"
+                 placeholder="Leer = unlimitiert"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Deadline</label>
+          <input type="datetime-local" name="deadline" value="{{ task.deadline[:16] if task and task.deadline else '' }}"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Task Description ───────────────────────────────────── -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-gray-800">Aufgabenstellung</h2>
+        <button type="button" id="ai-suggest-btn"
+                class="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-purple-700 transition flex items-center gap-2">
+          🤖 LLM-Vorschlag generieren
+          <span class="htmx-indicator text-xs">⏳</span>
+        </button>
+      </div>
+
+      <textarea name="description" required rows="8"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                placeholder="Beschreibe die Aufgabe hier...">{{ task.description if task else '' }}</textarea>
+
+      <!-- AI Suggestion Input -->
+      <div id="ai-suggestion-panel" class="hidden mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+        <h3 class="text-sm font-semibold text-purple-800 mb-2">LLM-Aufgabenvorschlag</h3>
+        <div class="flex gap-2 mb-3">
+          <input type="text" id="ai-topic" placeholder="Thema (z.B. Rekursion)"
+                 class="flex-1 border border-purple-300 rounded px-3 py-1.5 text-sm">
+          <select id="ai-difficulty" class="border border-purple-300 rounded px-3 py-1.5 text-sm">
+            <option value="einfach">Einfach</option>
+            <option value="mittel" selected>Mittel</option>
+            <option value="schwer">Schwer</option>
+          </select>
+        </div>
+        <div id="ai-suggestion-result" class="text-sm text-gray-700 whitespace-pre-wrap"></div>
+        <button type="button" id="use-suggestion-btn"
+                class="hidden mt-2 bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700">
+          ✓ Vorschlag verwenden
+        </button>
+      </div>
+    </div>
+
+    <!-- ─── Model Solution ─────────────────────────────────────── -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-gray-800">Musterlösung <span class="text-xs text-gray-400">(optional, versteckt für Studenten)</span></h2>
+        <button type="button" id="ai-solution-btn"
+                class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-indigo-700 transition flex items-center gap-2">
+          🤖 LLM-Musterlösung generieren
+          <span class="htmx-indicator text-xs">⏳</span>
+        </button>
+      </div>
+      <textarea id="model-solution-editor" name="model_solution" rows="6"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                placeholder="Die korrekte Lösung... (optional – bei einfachen Aufgaben kann der LLM auch ohne Musterlösung korrigieren)">{{ task.model_solution if task and task.model_solution else '' }}</textarea>
+      <p class="text-xs text-gray-400 mt-1">💡 Tipp: Bei einfachen Code-Aufgaben mit Tests oder MC-Fragen kann die Musterlösung leer bleiben — der LLM korrigiert dann ohne.</p>
+    </div>
+
+    <!-- ─── Code Template (for Code tasks) ─────────────────────── -->
+    <div id="code-section" class="card {% if not task or task.task_type != 'code' %}hidden{% endif %}">
+      <h2 class="font-semibold text-gray-800 mb-4">Code-Vorlage <span class="text-xs text-gray-400">(gerüst für Studenten)</span></h2>
+      <textarea id="code-template-editor" name="code_template" rows="8"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
+                placeholder="def meinedefinition(...):&#10;    pass">{{ task.code_template if task else '' }}</textarea>
+    </div>
+
+    <!-- ─── Test Cases ─────────────────────────────────────────── -->
+    <div id="tests-section" class="card {% if task and task.task_type != 'code' %}hidden{% endif %}">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-gray-800">Unit-Tests</h2>
+        <button type="button" id="add-test-btn"
+                class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 transition">
+          + Test hinzufügen
+        </button>
+      </div>
+
+      <div id="test-cases-list" class="space-y-3">
+        {% if task and task.test_cases %}
+          {% for tc in task.test_cases %}
+          <div class="test-case-entry bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <input type="text" name="test_name[]" value="{{ tc.name }}"
+                       class="border border-gray-300 rounded px-2 py-1 text-sm font-mono w-40"
+                       placeholder="test_name">
+                <select name="test_visibility[]" class="border border-gray-300 rounded px-2 py-1 text-sm">
+                  <option value="public" {% if tc.visibility == 'public' %}selected{% endif %}>Public</option>
+                  <option value="private" {% if tc.visibility == 'private' %}selected{% endif %}>Private</option>
+                </select>
+              </div>
+              <button type="button" class="remove-test text-red-500 hover:text-red-700 text-sm">✕</button>
+            </div>
+            <textarea id="test-code-{{ loop.index }}" name="test_code[]" rows="4"
+                      class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono"
+                      placeholder="import unittest&#10;class TestX(unittest.TestCase):&#10;    def test_x(self):&#10;        self.assertEqual(...)">{{ tc.code }}</textarea>
+          </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+
+      {% if not task or not task.test_cases %}
+      <p class="text-sm text-gray-400 text-center py-4">
+        Noch keine Tests hinzugefügt. Klicke auf "+ Test hinzufügen" oder lass den LLM Tests generieren.
+      </p>
+      {% endif %}
+    </div>
+
+    <!-- ─── Actions ────────────────────────────────────────────── -->
+    <div class="flex items-center justify-between">
+      <a href="/courses/{{ course.id }}" class="text-gray-600 hover:text-gray-800 text-sm">
+        ← Abbrechen
+      </a>
+      <div class="flex gap-3">
+        <button type="submit" id="save-task-btn"
+                class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+          {% if task %}Aufgabe aktualisieren{% else %}Aufgabe erstellen{% endif %}
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  // ─── Toggle Code Section based on Task Type ─────────────────
+  document.getElementById("task_type_select").addEventListener("change", (e) => {
+    const isCode = e.target.value === "code";
+    document.getElementById("code-section").classList.toggle("hidden", !isCode);
+    document.getElementById("tests-section").classList.toggle("hidden", !isCode);
+
+    // Model-Solution: bei Code-Aufgaben → CodeMirror, sonst normaler Textarea
+    const modelSolutionTa = document.getElementById("model-solution-editor");
+    if (isCode && !modelSolutionCM && modelSolutionTa) {
+      modelSolutionCM = CodeMirror.fromTextArea(modelSolutionTa, codeMirrorConfig);
+    } else if (!isCode && modelSolutionCM) {
+      modelSolutionCM.save();
+      modelSolutionCM.toTextArea();
+      modelSolutionCM = null;
+    }
+
+    // Code-Template: bei Code-Aufgaben → CodeMirror, sonst normaler Textarea
+    const codeTemplateTa = document.getElementById("code-template-editor");
+    if (isCode && !codeTemplateCM && codeTemplateTa) {
+      codeTemplateCM = CodeMirror.fromTextArea(codeTemplateTa, codeMirrorConfig);
+    } else if (!isCode && codeTemplateCM) {
+      codeTemplateCM.save();
+      codeTemplateCM.toTextArea();
+      codeTemplateCM = null;
+    }
+  });
+
+  // ─── CodeMirror Editors ─────────────────────────────────────
+  const codeMirrorConfig = {
+    mode: { name: "python", version: 3 },
+    theme: "dracula",
+    lineNumbers: true,
+    autoCloseBrackets: true,
+    indentUnit: 4,
+    tabSize: 4,
+    lineWrapping: true,
+    matchBrackets: true,
+  };
+
+  // Model-Solution Editor (CodeMirror bei Code-Aufgaben)
+  const modelSolutionEditor = document.getElementById("model-solution-editor");
+  let modelSolutionCM = null;
+  {% if task and task.task_type == 'code' %}
+  modelSolutionCM = CodeMirror.fromTextArea(modelSolutionEditor, codeMirrorConfig);
+  {% endif %}
+
+  // Code-Template Editor
+  const codeTemplateEditor = document.getElementById("code-template-editor");
+  let codeTemplateCM = null;
+  {% if task and task.task_type == 'code' %}
+  codeTemplateCM = CodeMirror.fromTextArea(codeTemplateEditor, codeMirrorConfig);
+  {% endif %}
+
+  // Initialize existing test-code editors
+  const testEditors = [];
+  document.querySelectorAll('textarea[name="test_code[]"]').forEach((ta) => {
+    if (!ta.getAttribute('data-cm-initialized')) {
+      ta.setAttribute('data-cm-initialized', 'true');
+      const cm = CodeMirror.fromTextArea(ta, codeMirrorConfig);
+      testEditors.push(cm);
+    }
+  });
+  
+  // ─── AI Suggestion Panel ────────────────────────────────────
+  document.getElementById("ai-suggest-btn").addEventListener("click", () => {
+    const panel = document.getElementById("ai-suggestion-panel");
+    panel.classList.toggle("hidden");
+  });
+
+  document.getElementById("ai-suggest-btn").addEventListener("click", async (e) => {
+    // First click: show panel; second click: generate
+    const panel = document.getElementById("ai-suggestion-panel");
+    if (panel.classList.contains("hidden")) return;
+
+    const topic = document.getElementById("ai-topic").value || "allgemein";
+    const difficulty = document.getElementById("ai-difficulty").value;
+    const taskType = document.getElementById("task_type_select").value;
+    const description = document.querySelector('textarea[name="description"]').value;
+
+    const resultDiv = document.getElementById("ai-suggestion-result");
+    const useBtn = document.getElementById("use-suggestion-btn");
+
+    resultDiv.textContent = "⏳ LLM generiert Vorschlag...";
+    useBtn.classList.add("hidden");
+
+    try {
+      const res = await fetch("/api/courses/{{ course.id }}/tasks/ai-suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topic,
+          difficulty: difficulty,
+          task_type: taskType,
+          context: description || "",
+        }),
+        credentials: "same-origin",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        resultDiv.textContent = `Fehler: ${data.detail || 'Unbekannter Fehler'}`;
+        return;
+      }
+
+      const suggestion = data.suggestion;
+      let text = "";
+      if (suggestion.title) text += `Titel: ${suggestion.title}\n\n`;
+      if (suggestion.description) text += `Aufgabe: ${suggestion.description}\n\n`;
+      if (suggestion.model_solution) text += `Lösung: ${suggestion.model_solution}\n\n`;
+      if (suggestion.tests) text += `Tests: ${JSON.stringify(suggestion.tests, null, 2)}`;
+
+      resultDiv.textContent = text || "Kein Vorschlag generiert.";
+      useBtn.classList.remove("hidden");
+
+    } catch (err) {
+      resultDiv.textContent = `Fehler: ${err.message}`;
+    }
+  });
+
+  // ─── AI Solution Generation ────────────────────────────────
+  document.getElementById("ai-solution-btn").addEventListener("click", async (e) => {
+    const taskType = document.getElementById("task_type_select").value;
+    const description = document.querySelector('textarea[name="description"]').value;
+    const maxPoints = document.querySelector('input[name="max_points"]').value;
+    
+    // Sync CodeMirror-Inhalt bevor wir den Wert lesen
+    syncEditorsToTextareas();
+    
+    const codeTemplate = document.querySelector('textarea[name="code_template"]')?.value || "";
+    
+    if (!description.trim()) {
+      showToast("Bitte zuerst die Aufgabenstellung eingeben.", "error");
+      return;
+    }
+    
+    const solutionTextarea = document.querySelector('textarea[name="model_solution"]');
+    const originalPlaceholder = solutionTextarea.placeholder;
+    solutionTextarea.placeholder = "⏳ LLM generiert Musterlösung...";
+    
+    const btn = document.getElementById("ai-solution-btn");
+    btn.disabled = true;
+    
+    try {
+      const res = await fetch("/api/tasks/{{ task.id if task else 0 }}/generate-solution", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: description,
+          task_type: taskType,
+          max_points: parseInt(maxPoints) || 10,
+          code_template: codeTemplate,
+        }),
+        credentials: "same-origin",
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        showToast(data.detail || "Fehler bei der Generierung.", "error");
+        solutionTextarea.placeholder = originalPlaceholder;
+        return;
+      }
+      
+      const solution = data.solution;
+      let text = "";
+      if (solution.model_solution) text += solution.model_solution;
+      if (solution.explanation) text += "\n\nErläuterung:\n" + solution.explanation;
+      if (solution.grading_criteria) {
+        text += "\n\nBewertungskriterien:\n" + solution.grading_criteria.join("\n");
+      }
+      
+      // In CodeMirror oder Textarea schreiben
+      if (modelSolutionCM) {
+        modelSolutionCM.setValue(text);
+      } else {
+        solutionTextarea.value = text;
+      }
+      showToast("Musterlösung wurde generiert!", "success");
+      
+      // Code-Template automatisch füllen
+      if (taskType === "code" && solution.code_template) {
+        if (codeTemplateCM) {
+          codeTemplateCM.setValue(solution.code_template);
+        } else {
+          const codeTextarea = document.querySelector('textarea[name="code_template"]');
+          if (codeTextarea && !codeTextarea.value.trim()) {
+            codeTextarea.value = solution.code_template;
+          }
+        }
+      }
+      
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, "error");
+    } finally {
+      solutionTextarea.placeholder = originalPlaceholder;
+      btn.disabled = false;
+    }
+  });
+
+  // ─── Add Test Case ──────────────────────────────────────────
+  let testCounter = {{ (task.test_cases|length) if task else 0 }};
+
+  document.getElementById("add-test-btn").addEventListener("click", () => {
+    testCounter++;
+    const list = document.getElementById("test-cases-list");
+    const entry = document.createElement("div");
+    entry.className = "test-case-entry bg-gray-50 rounded-lg p-4 border border-gray-200";
+    const taId = "test-code-" + testCounter;
+    const defaultCode = `import unittest
+
+
+class TestMyFunction(unittest.TestCase):
+    def test_${testCounter}(self):
+        # Ersetze mit deinem Test
+        # self.assertEqual(my_function(...), expected)
+        pass
+
+
+if __name__ == '__main__':
+    unittest.main()`;
+    entry.innerHTML = `
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <input type="text" name="test_name[]" value="test_${testCounter}"
+                 class="border border-gray-300 rounded px-2 py-1 text-sm font-mono w-40"
+                 placeholder="test_name">
+          <select name="test_visibility[]" class="border border-gray-300 rounded px-2 py-1 text-sm">
+            <option value="public">Public</option>
+            <option value="private">Private</option>
+          </select>
+        </div>
+        <button type="button" class="remove-test text-red-500 hover:text-red-700 text-sm">✕</button>
+      </div>
+      <textarea id="${taId}" name="test_code[]" rows="4"
+                class="w-full border border-gray-300 rounded px-3 py-2 text-sm font-mono"
+                placeholder="import unittest&#10;class TestX(unittest.TestCase):&#10;    def test_x(self):&#10;        self.assertEqual(...)"></textarea>
+    `;
+    list.appendChild(entry);
+
+    // CodeMirror für den neuen Test-Editor initialisieren
+    const newTa = document.getElementById(taId);
+    const cm = CodeMirror.fromTextArea(newTa, codeMirrorConfig);
+    cm.setValue(defaultCode);
+    cm.clearHistory();
+    cm.focus();
+    testEditors.push(cm);
+  });
+
+  // ─── Remove Test Case ───────────────────────────────────────
+  document.getElementById("test-cases-list").addEventListener("click", (e) => {
+    if (e.target.classList.contains("remove-test")) {
+      const entry = e.target.closest(".test-case-entry");
+      const ta = entry.querySelector('textarea[name="test_code[]"]');
+      
+      // CodeMirror-Editor aufräumen
+      if (ta && ta.CodeMirror) {
+        ta.CodeMirror.toTextArea();
+        const idx = testEditors.findIndex(cm => cm.getTextarea() === ta);
+        if (idx !== -1) testEditors.splice(idx, 1);
+      }
+      
+      entry.remove();
+    }
+  });
+
+  // ─── Sync CodeMirror editors to textareas ─────────────────
+  function syncEditorsToTextareas() {
+    if (modelSolutionCM) modelSolutionCM.save();
+    if (codeTemplateCM) codeTemplateCM.save();
+    testEditors.forEach(cm => cm.save());
+  }
+
+  // ─── Submit Form ────────────────────────────────────────────
+  document.getElementById("task-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    // Sync CodeMirror-Inhalt in die Textareas, bevor wir FormData lesen
+    syncEditorsToTextareas();
+
+    const form = document.getElementById("task-form");
+    const formData = new FormData(form);
+
+    const body = {
+      title: formData.get("title"),
+      task_type: formData.get("task_type"),
+      description: formData.get("description"),
+    };
+
+    // Optional fields: nur senden, wenn explizit gefüllt (Update: bestehende Werte nicht mit null überschreiben)
+    const modelSolution = formData.get("model_solution");
+    if (modelSolution !== null && modelSolution !== "") {
+      body.model_solution = modelSolution;
+    }
+
+    const maxPointsRaw = formData.get("max_points");
+    if (maxPointsRaw !== null && maxPointsRaw !== "") {
+      body.max_points = parseInt(maxPointsRaw);
+    }
+
+    const maxAttemptsRaw = formData.get("max_attempts");
+    if (maxAttemptsRaw !== null && maxAttemptsRaw !== "") {
+      body.max_attempts = parseInt(maxAttemptsRaw);
+    }
+
+    const deadlineRaw = formData.get("deadline");
+    if (deadlineRaw !== null && deadlineRaw !== "") {
+      body.deadline = deadlineRaw;
+    }
+
+    const codeTemplateRaw = formData.get("code_template");
+    if (codeTemplateRaw !== null && codeTemplateRaw !== "") {
+      body.code_template = codeTemplateRaw;
+    }
+
+    body.test_cases = [];
+
+    // Collect test cases
+    const testNames = formData.getAll("test_name[]");
+    const testCodes = formData.getAll("test_code[]");
+    const testVisibilities = formData.getAll("test_visibility[]");
+
+    for (let i = 0; i < testNames.length; i++) {
+      if (testNames[i]?.trim()) {
+        body.test_cases.push({
+          name: testNames[i],
+          code: testCodes[i] || "",
+          visibility: testVisibilities[i] || "public",
+        });
+      }
+    }
+
+    const btn = document.getElementById("save-task-btn");
+    btn.disabled = true;
+    btn.textContent = "⏳ Wird gespeichert...";
+
+    const isUpdate = {{ "true" if task and task.id else "false" }};
+    const url = isUpdate
+      ? `/api/tasks/{{ task.id }}`
+      : `/api/courses/{{ course.id }}/tasks`;
+    const method = isUpdate ? "PUT" : "POST";
+
+    try {
+      const res = await fetch(url, {
+        method: method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "same-origin",
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Speichern.", "error");
+        btn.disabled = false;
+        return;
+      }
+
+      showToast(data.message || "Erfolgreich gespeichert!", "success");
+
+      if (!isUpdate && data.task?.id) {
+        // Redirect to edit view after creation
+        window.location.href = `/courses/{{ course.id }}/tasks/${data.task.id}/edit`;
+      }
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = isUpdate ? "Aufgabe aktualisieren" : "Aufgabe erstellen";
+    }
+  });
+</script>
+{% endblock %}

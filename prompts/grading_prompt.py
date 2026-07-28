@@ -27,12 +27,12 @@ WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Kl
 
 Das JSON hat NUR zwei Felder:
 - "points": Zahl (0 bis __MAX_POINTS__)
-- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Schreibe ein konstruktives Feedback, das Staerken, Verbesserungspotenzial und ggf. Tipps direkt als natuerliche Saetze formuliert. Keine separaten Listen oder Aufzaehlungen — alles in einen fließenden Text.
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Verwende Markdown-Formatierung fuer bessere Lesbarkeit: **fett** fuer Hervorhebungen, *kursiv* fuer Betonung, - Listen fuer Aufzählungen, und $...$ bzw. $$...$$ fuer mathematische Formeln (LaTeX). Schreibe ein konstruktives Feedback, das Staerken, Verbesserungspotenzial und ggf. Tipps direkt als natuerliche Saetze formuliert.
 
 Beispiel-Antwortformat:
 {
   "points": 7,
-  "feedback": "Gute Loesung overall. Du hast den Algorithmus korrekt erkannt und die Grundideen getroffen. Allerdings fehlen die Basisfaelle und die konkrete Berechnung. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher."
+  "feedback": "**Gute Lösung overall.** Du hast den Algorithmus korrekt erkannt. Die Formel $f(n) = f(n-1) + f(n-2)$ ist richtig. Allerdings fehlen die **Basisfälle** — fuege $f(0) = 0$ und $f(1) = 1$ hinzu. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher."
 }
 
 Bewertungskriterien:
@@ -66,12 +66,12 @@ WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Kl
 
 Das JSON hat NUR zwei Felder:
 - "points": Zahl (0 bis __MAX_POINTS__)
-- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Beruecksichtige die Test-Ergebnisse und die Code-Qualitaet. Schreibe konstruktives Feedback als natuerliche Saetze — keine separaten Listen.
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Beruecksichtige die Test-Ergebnisse und die Code-Qualitaet. Verwende Markdown-Formatierung: **fett** fuer Wichtige Punkte, *kursiv* fuer Betonung, und $...$ fuer mathematische Ausdruecke.
 
 Beispiel-Antwortformat:
 {
   "points": 10,
-  "feedback": "3 von 4 Tests bestanden. Der Algorithmus ist im Kern korrekt und gut strukturiert. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine Praefuerung am Anfang hinzu, um diesen Fall zu behandeln."
+  "feedback": "**3 von 4 Tests bestanden.** Der Algorithmus ist im Kern korrekt. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine **Praefuerung** `if not lst: return 0` am Anfang hinzu. Die Zeitkomplexitaet $O(n)$ ist optimal."
 }
 
 Beruecksichtige bei der Bewertung:

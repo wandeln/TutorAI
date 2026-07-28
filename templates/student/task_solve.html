@@ -22,11 +22,15 @@
         'code': 'badge-code',
         'mc': 'badge-mc'
       } %}
-      <span class="badge {{ badge_class.get(task.task_type, 'badge-text') }}">
-        {{ task.task_type }}
+      <span class="badge text-gray-600">
+        Max. {{ task.max_points }} Punkte
       </span>
-      <span class="badge bg-gray-100 text-gray-600">
-        {{ task.max_points }} Punkte
+      <span class="px-2 py-0.5 rounded text-xs font-medium
+        {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
+        {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
+        {% else %}bg-gray-100 text-gray-600
+        {% endif %}" style="align-content: center;">
+        {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
       </span>
       {% if task.max_attempts %}
       <span class="badge bg-gray-100 text-gray-600">
@@ -46,12 +50,11 @@
     <!-- ─── LEFT: Task Description ──────────────────────────────── -->
     <div class="lg:col-span-1 space-y-4">
 
-      <!-- Aufgabenstellung -->
+      <!-- Aufgabenstellung (Markdown + LaTeX) -->
       <div class="card">
         <h2 class="font-semibold text-gray-800 mb-3">Aufgabenstellung</h2>
-        <div class="prose prose-sm text-gray-700 whitespace-pre-wrap">
-          {{ task.description }}
-        </div>
+        <div id="task-description-rendered"></div>
+        <template id="task-description-raw">{{ (task.description or '') | tojson }}</template>
       </div>
 
       <!-- Public Tests (für Code-Aufgaben) -->
@@ -160,11 +163,13 @@
 
       {% elif task.task_type == 'text' %}
         <!-- ─── TEXTAUFGABE ─────────────────────────────────── -->
-        <div class="card">
-          <h2 class="font-semibold text-gray-800 mb-3">Deine Lösung</h2>
+        <div id="text-editor-container" class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-800">Deine Lösung</h2>
+          </div>
           <textarea id="text-solution"
                     class="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Schreibe hier deine Lösung..."></textarea>
+                    placeholder="Schreibe hier deine Lösung...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$"></textarea>
 
           <button id="submit-btn"
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
@@ -186,14 +191,16 @@
 
       {% elif task.task_type == 'mc' %}
         <!-- ─── MULTIPLE CHOICE ─────────────────────────────── -->
-        <div class="card">
-          <h2 class="font-semibold text-gray-800 mb-3">Deine Antwort</h2>
+        <div id="mc-editor-container" class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold text-gray-800">Deine Antwort</h2>
+          </div>
           <p class="text-sm text-gray-500 mb-4">
             Multiple-Choice-Aufgabe. Wähle die richtige Antwort und reiche sie ein.
           </p>
           <textarea id="mc-answer"
                     class="w-full h-32 border border-gray-300 rounded-lg p-3 text-sm"
-                    placeholder="Gib deine Antwort ein..."></textarea>
+                    placeholder="Gib deine Antwort ein...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, $Math$"></textarea>
 
           <button id="submit-btn"
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
@@ -238,12 +245,10 @@
               {% if sub.solution or sub.code_solution %}
               <details class="mb-2">
                 <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
-                <div class="mt-1 p-2 bg-gray-50 rounded text-sm text-gray-700 whitespace-pre-wrap">
-                  {% if task.task_type == 'code' %}{{ sub.code_solution }}{% else %}{{ sub.solution }}{% endif %}
-                </div>
+                <template class="markdown-solution" type="application/json">{% if task.task_type == 'code' %}{{ (sub.code_solution or '') | tojson }}{% else %}{{ (sub.solution or '') | tojson }}{% endif %}</template>
               </details>
               {% endif %}
-              <div class="text-sm text-gray-700 whitespace-pre-wrap">{{ fb.comment }}</div>
+              <template class="markdown-feedback" type="application/json">{{ (fb.comment or '') | tojson }}</template>
             </div>
             {% endfor %}
           {% endfor %}
@@ -256,6 +261,53 @@
 
 {% block extra_scripts %}
 <script>
+  // ─── Render task description as Markdown + LaTeX ──────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    const taskDescEl = document.getElementById('task-description-rendered');
+    const taskDescRaw = document.getElementById('task-description-raw');
+    if (taskDescEl && taskDescRaw) {
+      const rawDesc = JSON.parse(taskDescRaw.innerHTML);
+      renderMarkdown(rawDesc, taskDescEl);
+    }
+
+    // ─── Render existing feedback as Markdown ───────────────────
+    document.querySelectorAll('template.markdown-feedback[type="application/json"]').forEach(el => {
+      try {
+        const raw = JSON.parse(el.innerHTML);
+        const container = document.createElement('div');
+        container.className = 'markdown-feedback';
+        el.replaceWith(container);
+        renderMarkdown(raw, container);
+      } catch(e) {
+        console.warn('Failed to render feedback markdown:', e, el.innerHTML);
+      }
+    });
+
+    // ─── Render existing solutions ────
+    document.querySelectorAll('template.markdown-solution[type="application/json"]').forEach(el => {
+      try {
+        const raw = JSON.parse(el.innerHTML);
+        const container = document.createElement('div');
+        container.className = 'mt-1 p-3 bg-white border border-gray-200 rounded-xl markdown-solution';
+        el.replaceWith(container);
+        {% if task.task_type == 'code' %}
+        renderMarkdown('```python\n' + raw + '\n```', container);
+        {% else %}
+        renderMarkdown(raw, container);
+        {% endif %}
+      } catch(e) {
+        console.warn('Failed to render solution:', e, el.innerHTML);
+      }
+    });
+
+    // ─── Create Markdown editors for text/mc tasks ─────────────
+    {% if task.task_type == 'text' %}
+    createMarkdownEditor('text-editor-container');
+    {% elif task.task_type == 'mc' %}
+    createMarkdownEditor('mc-editor-container');
+    {% endif %}
+  });
+
   // ─── CodeMirror Editor ──────────────────────────────────────
   {% if task.task_type == 'code' %}
   const editor = CodeMirror.fromTextArea(document.getElementById("code-editor"), {
@@ -309,13 +361,28 @@
       // Render results
       const passed = data.tests_passed || 0;
       const total = data.tests_total || 0;
-      const allPassed = data.passed;
+      const allPassed = total === 0 ? true : data.passed;
+
+      let message, borderColor, textColor;
+      if (total === 0) {
+        message = '✅ Keine Tests vorhanden — Tests bestanden';
+        borderColor = 'border-l-green-500';
+        textColor = 'text-green-700';
+      } else if (allPassed) {
+        message = '✅ Alle Tests bestanden!';
+        borderColor = 'border-l-green-500';
+        textColor = 'text-green-700';
+      } else {
+        message = '❌ Tests nicht bestanden';
+        borderColor = 'border-l-red-500';
+        textColor = 'text-red-700';
+      }
 
       let html = `
-        <div class="card border-l-4 ${allPassed ? 'border-l-green-500' : 'border-l-red-500'}">
+        <div class="card border-l-4 ${borderColor}">
           <div class="flex items-center justify-between mb-3">
-            <span class="font-semibold ${allPassed ? 'text-green-700' : 'text-red-700'}">
-              ${allPassed ? '✅ Alle Tests bestanden!' : '❌ Tests nicht bestanden'}
+            <span class="font-semibold ${textColor}">
+              ${message}
             </span>
             <span class="text-sm text-gray-500">${passed}/${total} Tests</span>
           </div>
@@ -333,7 +400,7 @@
         `;
       });
 
-      if (data.stderr && !allPassed) {
+      if (data.stderr && total > 0 && !allPassed) {
         html += `<div class="mt-2 text-xs text-red-400 font-mono bg-red-50 p-2 rounded">${data.stderr}</div>`;
       }
 
@@ -458,11 +525,11 @@
       const badgeClass = data.points >= {{ task.max_points }} * 0.5 ? 'badge-pass' : 'badge-fail';
       const borderColor = data.points >= {{ task.max_points }} * 0.5 ? 'border-l-green-500' : 'border-l-red-500';
 
-      // Escape HTML in submitted text
-      const escapedSolution = submittedText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
       const now = new Date();
       const timeStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+
+      let feedbackJson = encodeURIComponent(JSON.stringify(data.feedback));
+      let solutionJson = encodeURIComponent(JSON.stringify(submittedText));
 
       let html = `
         <div class="feedback-box feedback-llm">
@@ -476,9 +543,9 @@
           </div>
           <details class="mb-2">
             <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
-            <div class="mt-1 p-2 bg-gray-50 rounded text-sm text-gray-700 whitespace-pre-wrap">${escapedSolution}</div>
+            <template class="markdown-solution" type="application/json" data-raw="${solutionJson}"></template>
           </details>
-          <div class="text-sm text-gray-700 whitespace-pre-wrap">${data.feedback}</div>
+          <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
       `;
 
       // Test results for code tasks
@@ -503,6 +570,37 @@
       const feedbackArea = document.getElementById("feedback-area");
       feedbackArea.insertAdjacentHTML('afterbegin', html);
 
+      // Render Markdown in the newly added feedback elements
+      const newFeedbackBox = feedbackArea.firstElementChild;
+      if (newFeedbackBox) {
+        newFeedbackBox.querySelectorAll('template.markdown-feedback[type="application/json"]').forEach(el => {
+          try {
+            const jsonStr = decodeURIComponent(el.getAttribute('data-raw') || '');
+            const raw = JSON.parse(jsonStr);
+            const container = document.createElement('div');
+            container.className = 'markdown-feedback';
+            el.replaceWith(container);
+            renderMarkdown(raw, container);
+          } catch(e) {
+            console.warn('Failed to render feedback markdown:', e, el.getAttribute('data-raw'));
+          }
+        });
+        {% if task.task_type != 'code' %}
+        newFeedbackBox.querySelectorAll('template.markdown-solution[type="application/json"]').forEach(el => {
+          try {
+            const jsonStr2 = decodeURIComponent(el.getAttribute('data-raw') || '');
+            const raw2 = JSON.parse(jsonStr2);
+            const container = document.createElement('div');
+            container.className = 'mt-1 p-2 bg-gray-50 rounded markdown-solution';
+            el.replaceWith(container);
+            renderMarkdown(raw2, container);
+          } catch(e) {
+            console.warn('Failed to render solution markdown:', e, el.getAttribute('data-raw'));
+          }
+        });
+        {% endif %}
+      }
+
       // Update progress bars
       updateProgressBars(data);
 
@@ -518,7 +616,6 @@
       clearInterval(gradingTimerInterval);
       progressDiv.classList.add("hidden");
       showToast("Fehler: " + err.message, "error");
-    } finally {
       btn.disabled = false;
     }
   });

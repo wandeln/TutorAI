@@ -2,13 +2,13 @@
 
 {% block content %}
 <div class="max-w-6xl mx-auto">
-  
+
   <!-- Header -->
   <div class="mb-6">
     <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
     <p class="text-gray-500">{{ course.semester }} — {{ course.description }}</p>
   </div>
-  
+
   <!-- Points Summary -->
   <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
     <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
@@ -19,7 +19,7 @@
       <p class="text-gray-500 text-sm">Wird geladen...</p>
     </div>
   </div>
-  
+
   <!-- Task List -->
   <div class="space-y-4">
     {% for task in tasks %}
@@ -30,16 +30,16 @@
              class="text-lg font-semibold text-blue-600 hover:underline">
             {{ task.title }}
           </a>
+        </div>
+        <div class="text-sm text-gray-500 mt-1">
+          Max. {{ task.max_points }} Punkte
           <span class="px-2 py-0.5 rounded text-xs font-medium
             {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
             {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
             {% else %}bg-gray-100 text-gray-600
-            {% endif %}">
+            {% endif %}" style="align-content: center;">
             {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
           </span>
-        </div>
-        <div class="text-sm text-gray-500 mt-1">
-          Max. {{ task.max_points }} Punkte
         </div>
       </div>
       <div class="flex items-center gap-6">
@@ -62,13 +62,13 @@
     </div>
     {% endfor %}
   </div>
-  
+
   {% if not tasks %}
   <div class="text-center py-12 text-gray-400">
     <p class="text-xl">Derzeit keine Aufgaben verfügbar.</p>
   </div>
   {% endif %}
-  
+
 </div>
 {% endblock %}
 
@@ -84,7 +84,7 @@
         if (pct >= 80) barColor = "bg-green-500";
         else if (pct >= 50) barColor = "bg-yellow-500";
         else if (pct > 0) barColor = "bg-orange-500";
-        
+
         evt.detail.target.innerHTML = `
           <div class="flex items-center justify-between">
             <div>

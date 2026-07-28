@@ -24,8 +24,8 @@ Regeln:
 - Der Titel soll klar sein (z.B. „Blatt3-01: Rekursion“)
 - Die Aufgabenstellung soll präzise formuliert sein
 - Die Schwierigkeit muss der Vorgabe entsprechen
-- Bei Text-Aufgaben: Beschreibe die Aufgabenstellung
-- Bei Code-Aufgaben: Beschreibe was implementiert werden soll
-- Bei MC-Aufgaben: Formuliere die Frage und liste die Optionen
+- Bei Text-Aufgaben: Beschreibe die Aufgabenstellung. Verwende Markdown-Formatierung (**fett**, *kursiv*, Listen, $Math$, $$Display-Math$$) für bessere Lesbarkeit.
+- Bei Code-Aufgaben: Beschreibe was implementiert werden soll. Verwende $...$ für mathematische Notation.
+- Bei MC-Aufgaben: Formuliere die Frage und liste die Optionen. Verwende - Listen und **fett** für Optionen.
 - Keine Musterlösung, keine Punkte — das kommt später
 """

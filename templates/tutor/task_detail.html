@@ -76,7 +76,7 @@
     </div>
 
     <!-- ─── Task Description ───────────────────────────────────── -->
-    <div class="card">
+    <div id="description-editor-container" class="card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold text-gray-800">Aufgabenstellung</h2>
         <button type="button" id="ai-suggest-btn"
@@ -87,7 +87,9 @@
 
       <textarea name="description" required rows="8"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                placeholder="Beschreibe die Aufgabe hier...">{{ task.description if task else '' }}</textarea>
+                placeholder="Beschreibe die Aufgabe hier...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$, etc.">{{ task.description if task else '' }}</textarea>
+
+      <p id="description-hint" class="text-xs text-gray-400 mt-1">💡 Markdown und LaTeX ($...$) werden unterstützt.</p>
 
       <!-- AI Suggestion Input -->
       <div id="ai-suggestion-panel" class="hidden mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
@@ -123,7 +125,7 @@
     </div>
 
     <!-- ─── Model Solution ─────────────────────────────────────── -->
-    <div class="card">
+    <div id="model-solution-editor-container" class="card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold text-gray-800">Musterlösung <span class="text-xs text-gray-400">(optional, versteckt für Studenten)</span></h2>
         <button type="button" id="ai-solution-btn"
@@ -133,7 +135,9 @@
       </div>
       <textarea id="model-solution-editor" name="model_solution" rows="6"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-                placeholder="Die korrekte Lösung... (optional – bei einfachen Aufgaben kann der LLM auch ohne Musterlösung korrigieren)">{{ task.model_solution if task and task.model_solution else '' }}</textarea>
+                placeholder="Die korrekte Lösung...&#10;&#10;Markdown + LaTeX ($...$) werden unterstützt.">{{ task.model_solution if task and task.model_solution else '' }}</textarea>
+
+      <p id="model-solution-hint" class="text-xs text-gray-400 mt-1">💡 Markdown und LaTeX ($...$) werden unterstützt. Bei Code-Aufgaben kann die Musterlösung leer bleiben.</p>
 
       <div id="ai-solution-progress" class="hidden mt-3">
         <div class="flex items-center gap-2 text-sm text-indigo-700">
@@ -144,8 +148,6 @@
           <div id="ai-solution-progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all" style="width: 10%"></div>
         </div>
       </div>
-
-      <p class="text-xs text-gray-400 mt-1">💡 Tipp: Bei einfachen Code-Aufgaben mit Tests oder MC-Fragen kann die Musterlösung leer bleiben — der LLM korrigiert dann ohne.</p>
     </div>
 
     <!-- ─── Code Template (for Code tasks) ─────────────────────── -->
@@ -215,33 +217,6 @@
 
 {% block extra_scripts %}
 <script>
-  // ─── Toggle Code Section based on Task Type ─────────────────
-  document.getElementById("task_type_select").addEventListener("change", (e) => {
-    const isCode = e.target.value === "code";
-    document.getElementById("code-section").classList.toggle("hidden", !isCode);
-    document.getElementById("tests-section").classList.toggle("hidden", !isCode);
-
-    // Model-Solution: bei Code-Aufgaben → CodeMirror, sonst normaler Textarea
-    const modelSolutionTa = document.getElementById("model-solution-editor");
-    if (isCode && !modelSolutionCM && modelSolutionTa) {
-      modelSolutionCM = CodeMirror.fromTextArea(modelSolutionTa, codeMirrorConfig);
-    } else if (!isCode && modelSolutionCM) {
-      modelSolutionCM.save();
-      modelSolutionCM.toTextArea();
-      modelSolutionCM = null;
-    }
-
-    // Code-Template: bei Code-Aufgaben → CodeMirror, sonst normaler Textarea
-    const codeTemplateTa = document.getElementById("code-template-editor");
-    if (isCode && !codeTemplateCM && codeTemplateTa) {
-      codeTemplateCM = CodeMirror.fromTextArea(codeTemplateTa, codeMirrorConfig);
-    } else if (!isCode && codeTemplateCM) {
-      codeTemplateCM.save();
-      codeTemplateCM.toTextArea();
-      codeTemplateCM = null;
-    }
-  });
-
   // ─── CodeMirror Editors ─────────────────────────────────────
   const codeMirrorConfig = {
     mode: { name: "python", version: 3 },
@@ -268,6 +243,69 @@
   codeTemplateCM = CodeMirror.fromTextArea(codeTemplateEditor, codeMirrorConfig);
   {% endif %}
 
+  // ─── Initialize Markdown Editors ─────────────────────────────
+  // Description editor (always needed)
+  const descEditor = createMarkdownEditor('description-editor-container', { buttonAnchor: 'description-hint' });
+  // Model solution: only if not a code task (CodeMirror takes precedence)
+  const isCodeTask = {{ 'true' if task and task.task_type == 'code' else 'false' }};
+  let solEditor = modelSolutionCM ? null : createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'model-solution-hint' });
+
+  // Hide model-solution markdown preview for code tasks
+  if (isCodeTask && solEditor) {
+    solEditor.toggleBtn.style.display = 'none';
+    document.getElementById('model-solution-hint').style.display = 'none';
+  }
+
+  // ─── Toggle Code Section based on Task Type ─────────────────
+  document.getElementById("task_type_select").addEventListener("change", (e) => {
+    const isCode = e.target.value === "code";
+    document.getElementById("code-section").classList.toggle("hidden", !isCode);
+    document.getElementById("tests-section").classList.toggle("hidden", !isCode);
+
+    // Show/hide model-solution markdown hint and preview button based on task type
+    const solHint = document.getElementById('model-solution-hint');
+    if (solHint) {
+      if (isCode) {
+        solHint.textContent = '💡 Bei Code-Aufgaben kann die Musterlösung leer bleiben.';
+        solHint.classList.add('hidden');
+      } else {
+        solHint.textContent = '💡 Markdown und LaTeX ($...$) werden unterstützt. Bei Code-Aufgaben kann die Musterlösung leer bleiben.';
+        solHint.classList.remove('hidden');
+      }
+    }
+    if (solEditor) {
+      solEditor.toggleBtn.style.display = isCode ? 'none' : 'inline-flex';
+    }
+
+    // Model-Solution: bei Code-Aufgaben → CodeMirror, sonst Markdown Editor
+    const modelSolutionTa = document.getElementById("model-solution-editor");
+    if (isCode && !modelSolutionCM && modelSolutionTa) {
+      // Destroy markdown preview if active
+      if (solEditor && solEditor.isPreview()) {
+        solEditor.toggleBtn.click();
+      }
+      modelSolutionCM = CodeMirror.fromTextArea(modelSolutionTa, codeMirrorConfig);
+    } else if (!isCode && modelSolutionCM) {
+      modelSolutionCM.save();
+      modelSolutionCM.toTextArea();
+      modelSolutionCM = null;
+      // Recreate markdown editor if not present
+      if (!solEditor) {
+        solEditor = createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'model-solution-hint' });
+      }
+    }
+
+    // Code-Template: bei Code-Aufgaben → CodeMirror, sonst normaler Textarea
+    const codeTemplateTa = document.getElementById("code-template-editor");
+    if (isCode && !codeTemplateCM && codeTemplateTa) {
+      codeTemplateCM = CodeMirror.fromTextArea(codeTemplateTa, codeMirrorConfig);
+    } else if (!isCode && codeTemplateCM) {
+      codeTemplateCM.save();
+      codeTemplateCM.toTextArea();
+      codeTemplateCM = null;
+    }
+  });
+
   // Initialize existing test-code editors
   const testEditors = [];
   document.querySelectorAll('textarea[name="test_code[]"]').forEach((ta) => {
@@ -292,7 +330,7 @@
     const difficulty = document.getElementById("ai-difficulty").value;
     const taskType = document.getElementById("task_type_select").value;
     const title = document.querySelector('input[name="title"]').value;
-    const description = document.querySelector('textarea[name="description"]').value;
+    const description = descEditor ? descEditor.textarea.value : document.querySelector('textarea[name="description"]').value;
 
     const progressDiv = document.getElementById("ai-suggestion-progress");
     const resultDiv = document.getElementById("ai-suggestion-result");
@@ -375,7 +413,12 @@
 
     // Fill description
     if (s.description) {
-      document.querySelector('textarea[name="description"]').value = s.description;
+      const descTa = descEditor ? descEditor.textarea : document.querySelector('textarea[name="description"]');
+      descTa.value = s.description;
+      // Update preview if in preview mode
+      if (descEditor && descEditor.isPreview()) {
+        renderMarkdown(s.description, descEditor.previewDiv, { preview: true });
+      }
     }
 
     // Hide suggestion panel
@@ -389,7 +432,8 @@
 
   document.getElementById("ai-solution-btn").addEventListener("click", async (e) => {
     const taskType = document.getElementById("task_type_select").value;
-    const description = document.querySelector('textarea[name="description"]').value;
+    const descTa = descEditor ? descEditor.textarea : document.querySelector('textarea[name="description"]');
+    const description = descTa.value;
     const maxPoints = document.querySelector('input[name="max_points"]').value;
 
     // Sync CodeMirror-Inhalt bevor wir den Wert lesen
@@ -453,6 +497,10 @@
         modelSolutionCM.setValue(text);
       } else {
         solutionTextarea.value = text;
+        // Update preview if in preview mode
+        if (solEditor && solEditor.isPreview()) {
+          renderMarkdown(text, solEditor.previewDiv, { preview: true });
+        }
       }
       showToast("Musterlösung wurde generiert!", "success");
 
@@ -545,14 +593,25 @@ class TestMyFunction(unittest.TestCase):
     const form = document.getElementById("task-form");
     const formData = new FormData(form);
 
+    // Get description from the markdown editor textarea
+    let description = formData.get("description");
+    if (descEditor) {
+      description = descEditor.textarea.value;
+    }
+
+    // Get model_solution from the markdown editor textarea (if not using CodeMirror)
+    let modelSolution = formData.get("model_solution");
+    if (solEditor && !modelSolutionCM) {
+      modelSolution = solEditor.textarea.value;
+    }
+
     const body = {
       title: formData.get("title"),
       task_type: formData.get("task_type"),
-      description: formData.get("description"),
+      description: description,
     };
 
     // Optional fields: nur senden, wenn explizit gefüllt (Update: bestehende Werte nicht mit null überschreiben)
-    const modelSolution = formData.get("model_solution");
     if (modelSolution !== null && modelSolution !== "") {
       body.model_solution = modelSolution;
     }

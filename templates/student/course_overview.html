@@ -10,7 +10,7 @@
   </div>
   
   <!-- Points Summary -->
-  <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5">
+  <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
     <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
     <div hx-get="/api/student/courses/{{ course.id }}/my-points"
          hx-trigger="load"

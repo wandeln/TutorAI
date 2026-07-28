@@ -28,18 +28,19 @@
 <body class="bg-gray-50 min-h-screen flex flex-col">
 
   <!-- ─── Navigation ──────────────────────────────────────────── -->
-  <nav class="bg-blue-700 text-white shadow-lg">
+  <nav class="sticky top-0 z-50 bg-blue-700 text-white shadow-lg">
     <div class="container mx-auto px-4 py-3 flex items-center justify-between">
 
       <!-- Logo / Home -->
       <a href="/" class="text-xl font-bold flex items-center gap-2 hover:opacity-90 transition">
         <span>📚</span>
-        <span>Tutor-System</span>
+        <span class="hidden sm:inline">Tutor-System</span>
+        <span class="sm:hidden">TS</span>
       </a>
 
-      <!-- Kurs-Auswahl -->
+      <!-- Desktop Navigation -->
       {% if current_user and courses %}
-      <div class="flex items-center gap-4">
+      <div class="hidden sm:flex items-center gap-4">
         <select
           id="course-select"
           class="bg-blue-600 text-white border border-blue-500 rounded px-3 py-1 text-sm hover:bg-blue-500 transition"
@@ -66,19 +67,61 @@
         <!-- Logout -->
         <button
           hx-post="/api/auth/logout"
-          hx-target="#user-info"
+          hx-swap="none"
           hx-on::after-request="window.location.href = '/login'"
           class="text-blue-200 hover:text-white transition ml-2"
         >
           Abmelden
         </button>
       </div>
+
+      <!-- Mobile Burger Button -->
+      <button id="burger-btn" class="sm:hidden text-white text-2xl leading-none p-1" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')">
+        ☰
+      </button>
       {% endif %}
     </div>
+
+    <!-- Mobile Menu (hidden by default) -->
+    {% if current_user and courses %}
+    <div id="mobile-menu" class="hidden sm:hidden border-t border-blue-600">
+      <div class="px-4 py-3 space-y-3">
+        <select
+          class="w-full bg-blue-600 text-white border border-blue-500 rounded px-3 py-2 text-sm"
+          onchange="{ document.getElementById('mobile-menu').classList.add('hidden'); window.location.href = this.value ? '/courses/' + this.value : '/'; }"
+        >
+          <option value="">— Kurs wählen —</option>
+          {% for course in courses %}
+          <option value="{{ course.id }}"
+                  {% if selected_course_id == course.id %}selected{% endif %}>
+            {{ course.name }} ({{ course.role_in_course }})
+          </option>
+          {% endfor %}
+        </select>
+
+        <div class="flex items-center gap-2 text-sm">
+          <span>👤</span>
+          <span>{{ current_user.name }}</span>
+          <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
+            {{ current_user.role }}
+          </span>
+        </div>
+
+        <button
+          hx-post="/api/auth/logout"
+          hx-swap="none"
+          hx-on::after-request="window.location.href = '/login'"
+          class="text-blue-200 hover:text-white transition text-sm"
+        >
+          Abmelden
+        </button>
+      </div>
+    </div>
+    {% endif %}
   </nav>
 
   <!-- ─── Main Content ────────────────────────────────────────── -->
-  <main class="container mx-auto px-4 py-6 flex-1">
+  <main class="container mx-auto px-4 py-6 pt-10 flex-1">
     {% block content %}{% endblock %}
   </main>
 

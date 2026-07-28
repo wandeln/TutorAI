@@ -2,21 +2,50 @@
 
 {% block content %}
 <div class="max-w-6xl mx-auto">
-  
+
   <!-- Welcome Header -->
   <div class="mb-8">
     <h1 class="text-3xl font-bold text-gray-800">Willkommen, {{ current_user.name }}!</h1>
-    <p class="text-gray-500 mt-1">Wähle einen Kurs aus dem Menü oder klicke unten auf einen Kurs.</p>
+    <p class="text-gray-500 mt-1">Hier ueberblickst du deine Kurse und deinen Fortschritt.</p>
   </div>
-  
-  <!-- Course Cards -->
+
+  <!-- Gesamtkennzahlen (nur fuer Studenten) -->
+  {% if current_user.role == 'student' %}
+  <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
+    <div class="bg-white rounded-xl shadow-lg border border-gray-200 text-center p-5">
+      <div class="text-2xl font-bold text-blue-600">{{ courses|length }}</div>
+      <div class="text-xs text-gray-500 mt-1">Aktive Kurse</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-lg border border-gray-200 text-center p-5">
+      <div class="text-2xl font-bold text-green-600">{{ total_completed }}</div>
+      <div class="text-xs text-gray-500 mt-1">Abgeschlossene Aufgaben</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-lg border border-gray-200 text-center p-5 col-span-2 md:col-span-1">
+      <div class="text-2xl font-bold {% if total_percentage >= 80 %}text-green-600{% elif total_percentage >= 50 %}text-yellow-600{% elif total_percentage > 0 %}text-orange-600{% else %}text-gray-400{% endif %}">{{ total_percentage }}%</div>
+      <div class="text-xs text-gray-500 mt-1">{{ "%.1f"|format(total_points_earned) }} / {{ total_points_possible }} Punkte</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Course Cards with inline stats -->
   <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
     {% for course in courses %}
     <a href="/courses/{{ course.id }}"
-       class="card hover:shadow-lg transition-shadow block">
+       class="bg-white rounded-xl shadow-md border border-gray-200 hover:shadow-lg hover:border-gray-300 transition-all duration-200 block overflow-hidden">
+
+      <!-- Top: colored accent bar -->
+      <div class="h-1
+        {% if course.role_in_course == 'admin' %}bg-purple-500
+        {% elif course.role_in_course == 'tutor' %}bg-blue-500
+        {% else %}bg-green-500
+        {% endif %}"></div>
+
+      <div class="p-5">
+
+      <!-- Role badge + title -->
       <div class="flex items-start justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-800">{{ course.name }}</h2>
-        <span class="px-2 py-1 rounded text-xs font-medium
+        <h2 class="text-lg font-semibold text-gray-800 leading-tight">{{ course.name }}</h2>
+        <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium
           {% if course.role_in_course == 'admin' %}bg-purple-100 text-purple-700
           {% elif course.role_in_course == 'tutor' %}bg-blue-100 text-blue-700
           {% else %}bg-green-100 text-green-700
@@ -24,35 +53,53 @@
           {{ course.role_in_course }}
         </span>
       </div>
-      <p class="text-gray-500 text-sm">Klicke zum Öffnen →</p>
+
+      {% if current_user.role == 'student' and stats_by_course|length > 0 %}
+        {% set cs = stats_by_course.get(course.id) %}
+        {% if cs %}
+          <!-- Aufgaben-Fortschritt -->
+          <div class="mb-3">
+            <div class="flex justify-between text-xs text-gray-500 mb-1">
+              <span>Aufgaben</span>
+              <span>{{ cs.completed }} / {{ cs.total_tasks }}</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div class="bg-blue-500 h-2 rounded-full transition-all"
+                   style="width: {{ (cs.completed / cs.total_tasks * 100) if cs.total_tasks > 0 else 0 }}%"></div>
+            </div>
+          </div>
+
+          <!-- Punkte -->
+          <div class="flex items-center justify-between text-sm">
+            <span class="text-gray-500">Punkte</span>
+            <span class="font-semibold
+              {% if cs.possible > 0 and cs.earned / cs.possible >= 0.8 %}text-green-600
+              {% elif cs.possible > 0 and cs.earned / cs.possible >= 0.5 %}text-yellow-600
+              {% elif cs.earned > 0 %}text-orange-600
+              {% else %}text-gray-400
+              {% endif %}">
+              {{ "%.1f"|format(cs.earned) }} / {{ cs.possible }}
+            </span>
+          </div>
+        {% else %}
+          <p class="text-gray-400 text-sm mt-2">Noch keine Aufgaben</p>
+        {% endif %}
+      {% elif current_user.role != 'student' %}
+        <p class="text-gray-500 text-sm mt-2">Zum Kurs öffnen →</p>
+      {% else %}
+        <p class="text-gray-400 text-sm mt-2">Noch keine Aufgaben</p>
+      {% endif %}
+      </div>
     </a>
     {% endfor %}
   </div>
-  
+
   {% if not courses %}
   <div class="text-center py-12 text-gray-400">
     <p class="text-xl">Du bist noch Mitglied in keinem Kurs.</p>
     <p class="text-sm mt-2">Wende dich an deinen Kursleiter.</p>
   </div>
   {% endif %}
-  
-  <!-- Quick Stats (Student) -->
-  {% if current_user.role == 'student' %}
-  <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-    <div class="card text-center">
-      <div class="text-3xl font-bold text-blue-600">{{ courses|length }}</div>
-      <div class="text-sm text-gray-500 mt-1">Aktive Kurse</div>
-    </div>
-    <div class="card text-center">
-      <div class="text-3xl font-bold text-green-600">0</div>
-      <div class="text-sm text-gray-500 mt-1">Abgeschlossene Aufgaben</div>
-    </div>
-    <div class="card text-center">
-      <div class="text-3xl font-bold text-gray-400">0%</div>
-      <div class="text-sm text-gray-500 mt-1">Gesamt-Punktestand</div>
-    </div>
-  </div>
-  {% endif %}
-  
+
 </div>
 {% endblock %}

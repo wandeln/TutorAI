@@ -82,7 +82,6 @@
         <button type="button" id="ai-suggest-btn"
                 class="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-purple-700 transition flex items-center gap-2">
           🤖 LLM-Vorschlag generieren
-          <span class="htmx-indicator text-xs">⏳</span>
         </button>
       </div>
 
@@ -92,7 +91,7 @@
 
       <!-- AI Suggestion Input -->
       <div id="ai-suggestion-panel" class="hidden mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-        <h3 class="text-sm font-semibold text-purple-800 mb-2">LLM-Aufgabenvorschlag</h3>
+        <h3 class="text-sm font-semibold text-purple-800 mb-2">🤖 LLM-Aufgabenvorschlag</h3>
         <div class="flex gap-2 mb-3">
           <input type="text" id="ai-topic" placeholder="Thema (z.B. Rekursion)"
                  class="flex-1 border border-purple-300 rounded px-3 py-1.5 text-sm">
@@ -101,11 +100,24 @@
             <option value="mittel" selected>Mittel</option>
             <option value="schwer">Schwer</option>
           </select>
+          <button type="button" id="ai-generate-btn"
+                  class="bg-purple-700 text-white px-4 py-1.5 rounded text-sm hover:bg-purple-800 transition">
+            Generieren
+          </button>
         </div>
-        <div id="ai-suggestion-result" class="text-sm text-gray-700 whitespace-pre-wrap"></div>
+        <div id="ai-suggestion-progress" class="hidden">
+          <div class="flex items-center gap-2 text-sm text-purple-700">
+            <span>⏳ LLM generiert Vorschlag...</span>
+            <span id="ai-timer" class="font-mono">0s</span>
+          </div>
+          <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
+            <div id="ai-progress-bar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+        </div>
+        <div id="ai-suggestion-result" class="hidden text-sm text-gray-700 whitespace-pre-wrap mt-3 p-3 bg-white rounded border border-purple-200"></div>
         <button type="button" id="use-suggestion-btn"
-                class="hidden mt-2 bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700">
-          ✓ Vorschlag verwenden
+                class="hidden mt-2 bg-green-600 text-white px-4 py-1.5 rounded text-sm hover:bg-green-700 transition font-medium">
+          ✓ Vorschlag in Formular übernehmen
         </button>
       </div>
     </div>
@@ -117,12 +129,22 @@
         <button type="button" id="ai-solution-btn"
                 class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-indigo-700 transition flex items-center gap-2">
           🤖 LLM-Musterlösung generieren
-          <span class="htmx-indicator text-xs">⏳</span>
         </button>
       </div>
       <textarea id="model-solution-editor" name="model_solution" rows="6"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                 placeholder="Die korrekte Lösung... (optional – bei einfachen Aufgaben kann der LLM auch ohne Musterlösung korrigieren)">{{ task.model_solution if task and task.model_solution else '' }}</textarea>
+
+      <div id="ai-solution-progress" class="hidden mt-3">
+        <div class="flex items-center gap-2 text-sm text-indigo-700">
+          <span>⏳ LLM generiert Musterlösung...</span>
+          <span id="ai-solution-timer" class="font-mono">0s</span>
+        </div>
+        <div class="mt-2 w-full bg-indigo-200 rounded-full h-2">
+          <div id="ai-solution-progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all" style="width: 10%"></div>
+        </div>
+      </div>
+
       <p class="text-xs text-gray-400 mt-1">💡 Tipp: Bei einfachen Code-Aufgaben mit Tests oder MC-Fragen kann die Musterlösung leer bleiben — der LLM korrigiert dann ohne.</p>
     </div>
 
@@ -135,7 +157,7 @@
     </div>
 
     <!-- ─── Test Cases ─────────────────────────────────────────── -->
-    <div id="tests-section" class="card {% if task and task.task_type != 'code' %}hidden{% endif %}">
+    <div id="tests-section" class="card {% if not task or task.task_type != 'code' %}hidden{% endif %}">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold text-gray-800">Unit-Tests</h2>
         <button type="button" id="add-test-btn"
@@ -255,28 +277,47 @@
       testEditors.push(cm);
     }
   });
-  
+
   // ─── AI Suggestion Panel ────────────────────────────────────
+  let aiSuggestionData = null;        // cached suggestion for "use"
+  let aiTimerInterval = null;
+
   document.getElementById("ai-suggest-btn").addEventListener("click", () => {
     const panel = document.getElementById("ai-suggestion-panel");
     panel.classList.toggle("hidden");
   });
 
-  document.getElementById("ai-suggest-btn").addEventListener("click", async (e) => {
-    // First click: show panel; second click: generate
-    const panel = document.getElementById("ai-suggestion-panel");
-    if (panel.classList.contains("hidden")) return;
-
+  document.getElementById("ai-generate-btn").addEventListener("click", async () => {
     const topic = document.getElementById("ai-topic").value || "allgemein";
     const difficulty = document.getElementById("ai-difficulty").value;
     const taskType = document.getElementById("task_type_select").value;
+    const title = document.querySelector('input[name="title"]').value;
     const description = document.querySelector('textarea[name="description"]').value;
 
+    const progressDiv = document.getElementById("ai-suggestion-progress");
     const resultDiv = document.getElementById("ai-suggestion-result");
     const useBtn = document.getElementById("use-suggestion-btn");
+    const timerSpan = document.getElementById("ai-timer");
+    const progressBar = document.getElementById("ai-progress-bar");
 
-    resultDiv.textContent = "⏳ LLM generiert Vorschlag...";
+    // Show progress, hide old result
+    progressDiv.classList.remove("hidden");
+    resultDiv.classList.add("hidden");
     useBtn.classList.add("hidden");
+    aiSuggestionData = null;
+
+    // Start timer
+    let elapsed = 0;
+    timerSpan.textContent = "0s";
+    progressBar.style.width = "10%";
+    if (aiTimerInterval) clearInterval(aiTimerInterval);
+    aiTimerInterval = setInterval(() => {
+      elapsed++;
+      timerSpan.textContent = elapsed + "s";
+      // Animate progress bar (max ~120s timeout)
+      const pct = Math.min(10 + (elapsed / 120) * 85, 95);
+      progressBar.style.width = pct + "%";
+    }, 1000);
 
     try {
       const res = await fetch("/api/courses/{{ course.id }}/tasks/ai-suggest", {
@@ -286,56 +327,100 @@
           topic: topic,
           difficulty: difficulty,
           task_type: taskType,
+          title: title,
           context: description || "",
         }),
         credentials: "same-origin",
       });
 
+      clearInterval(aiTimerInterval);
+      progressDiv.classList.add("hidden");
+
       const data = await res.json();
 
       if (!res.ok) {
+        resultDiv.classList.remove("hidden");
         resultDiv.textContent = `Fehler: ${data.detail || 'Unbekannter Fehler'}`;
         return;
       }
 
       const suggestion = data.suggestion;
+      aiSuggestionData = suggestion;
+
+      // Format result as readable text
       let text = "";
       if (suggestion.title) text += `Titel: ${suggestion.title}\n\n`;
-      if (suggestion.description) text += `Aufgabe: ${suggestion.description}\n\n`;
-      if (suggestion.model_solution) text += `Lösung: ${suggestion.model_solution}\n\n`;
-      if (suggestion.tests) text += `Tests: ${JSON.stringify(suggestion.tests, null, 2)}`;
+      if (suggestion.description) text += `Aufgabenstellung:\n${suggestion.description}`;
 
+      resultDiv.classList.remove("hidden");
       resultDiv.textContent = text || "Kein Vorschlag generiert.";
       useBtn.classList.remove("hidden");
 
     } catch (err) {
+      clearInterval(aiTimerInterval);
+      progressDiv.classList.add("hidden");
+      resultDiv.classList.remove("hidden");
       resultDiv.textContent = `Fehler: ${err.message}`;
     }
   });
 
+  document.getElementById("use-suggestion-btn").addEventListener("click", () => {
+    if (!aiSuggestionData) return;
+    const s = aiSuggestionData;
+
+    // Fill title
+    if (s.title) {
+      document.querySelector('input[name="title"]').value = s.title;
+    }
+
+    // Fill description
+    if (s.description) {
+      document.querySelector('textarea[name="description"]').value = s.description;
+    }
+
+    // Hide suggestion panel
+    document.getElementById("ai-suggestion-panel").classList.add("hidden");
+
+    showToast("Vorschlag wurde in das Formular übernommen!", "success");
+  });
+
   // ─── AI Solution Generation ────────────────────────────────
+  let solutionTimerInterval = null;
+
   document.getElementById("ai-solution-btn").addEventListener("click", async (e) => {
     const taskType = document.getElementById("task_type_select").value;
     const description = document.querySelector('textarea[name="description"]').value;
     const maxPoints = document.querySelector('input[name="max_points"]').value;
-    
+
     // Sync CodeMirror-Inhalt bevor wir den Wert lesen
     syncEditorsToTextareas();
-    
+
     const codeTemplate = document.querySelector('textarea[name="code_template"]')?.value || "";
-    
+
     if (!description.trim()) {
       showToast("Bitte zuerst die Aufgabenstellung eingeben.", "error");
       return;
     }
-    
-    const solutionTextarea = document.querySelector('textarea[name="model_solution"]');
-    const originalPlaceholder = solutionTextarea.placeholder;
-    solutionTextarea.placeholder = "⏳ LLM generiert Musterlösung...";
-    
+
+    const progressDiv = document.getElementById("ai-solution-progress");
+    const timerSpan = document.getElementById("ai-solution-timer");
+    const progressBar = document.getElementById("ai-solution-progress-bar");
     const btn = document.getElementById("ai-solution-btn");
     btn.disabled = true;
-    
+
+    // Show progress
+    progressDiv.classList.remove("hidden");
+    let elapsed = 0;
+    timerSpan.textContent = "0s";
+    progressBar.style.width = "10%";
+    if (solutionTimerInterval) clearInterval(solutionTimerInterval);
+    solutionTimerInterval = setInterval(() => {
+      elapsed++;
+      timerSpan.textContent = elapsed + "s";
+      const pct = Math.min(10 + (elapsed / 120) * 85, 95);
+      progressBar.style.width = pct + "%";
+    }, 1000);
+
     try {
       const res = await fetch("/api/tasks/{{ task.id if task else 0 }}/generate-solution", {
         method: "POST",
@@ -348,47 +433,34 @@
         }),
         credentials: "same-origin",
       });
-      
+
+      clearInterval(solutionTimerInterval);
+      progressDiv.classList.add("hidden");
+
       const data = await res.json();
-      
+
       if (!res.ok) {
         showToast(data.detail || "Fehler bei der Generierung.", "error");
-        solutionTextarea.placeholder = originalPlaceholder;
         return;
       }
-      
+
       const solution = data.solution;
-      let text = "";
-      if (solution.model_solution) text += solution.model_solution;
-      if (solution.explanation) text += "\n\nErläuterung:\n" + solution.explanation;
-      if (solution.grading_criteria) {
-        text += "\n\nBewertungskriterien:\n" + solution.grading_criteria.join("\n");
-      }
-      
+      const text = solution.model_solution || "";
+
       // In CodeMirror oder Textarea schreiben
+      const solutionTextarea = document.querySelector('textarea[name="model_solution"]');
       if (modelSolutionCM) {
         modelSolutionCM.setValue(text);
       } else {
         solutionTextarea.value = text;
       }
       showToast("Musterlösung wurde generiert!", "success");
-      
-      // Code-Template automatisch füllen
-      if (taskType === "code" && solution.code_template) {
-        if (codeTemplateCM) {
-          codeTemplateCM.setValue(solution.code_template);
-        } else {
-          const codeTextarea = document.querySelector('textarea[name="code_template"]');
-          if (codeTextarea && !codeTextarea.value.trim()) {
-            codeTextarea.value = solution.code_template;
-          }
-        }
-      }
-      
+
     } catch (err) {
+      clearInterval(solutionTimerInterval);
+      progressDiv.classList.add("hidden");
       showToast(`Fehler: ${err.message}`, "error");
     } finally {
-      solutionTextarea.placeholder = originalPlaceholder;
       btn.disabled = false;
     }
   });
@@ -410,10 +482,7 @@ class TestMyFunction(unittest.TestCase):
         # Ersetze mit deinem Test
         # self.assertEqual(my_function(...), expected)
         pass
-
-
-if __name__ == '__main__':
-    unittest.main()`;
+`;
     entry.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <div class="flex items-center gap-2">
@@ -447,14 +516,14 @@ if __name__ == '__main__':
     if (e.target.classList.contains("remove-test")) {
       const entry = e.target.closest(".test-case-entry");
       const ta = entry.querySelector('textarea[name="test_code[]"]');
-      
+
       // CodeMirror-Editor aufräumen
       if (ta && ta.CodeMirror) {
         ta.CodeMirror.toTextArea();
         const idx = testEditors.findIndex(cm => cm.getTextarea() === ta);
         if (idx !== -1) testEditors.splice(idx, 1);
       }
-      
+
       entry.remove();
     }
   });
@@ -555,7 +624,7 @@ if __name__ == '__main__':
 
       if (!isUpdate && data.task?.id) {
         // Redirect to edit view after creation
-        window.location.href = `/courses/{{ course.id }}/tasks/${data.task.id}/edit`;
+        window.location.href = `/courses/{{ course.id }}/tasks/${data.task.id}`;
       }
 
     } catch (err) {

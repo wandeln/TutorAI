@@ -46,7 +46,7 @@ async def list_tasks(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
 ):
     """Alle Aufgaben eines Kurses auflisten."""
     tasks = list(session.exec(
@@ -76,9 +76,10 @@ async def create_task(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
 ):
     """Neue Aufgabe erstellen."""
+    user, _ = user_and_course
     body = await request.json()
     
     model_solution = body.get("model_solution")
@@ -295,7 +296,7 @@ async def delete_task(
     
     session.delete(task)
     session.commit()
-    return {"message": "Aufgabe gelöscht."}
+    return {"message": "Aufgabe '" + task.title + "' gelöscht."}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -337,7 +338,7 @@ async def ai_suggest_task(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
 ):
     """
     LLM generiert Aufgabenvorschlag.
@@ -356,6 +357,7 @@ async def ai_suggest_task(
         topic=body.get("topic", ""),
         difficulty=body.get("difficulty", "mittel"),
         task_type=body.get("task_type", "text"),
+        title=body.get("title", ""),
         context=body.get("context", ""),
     )
     
@@ -409,6 +411,7 @@ async def generate_model_solution(
         task_type=body.get("task_type", "text"),
         max_points=body.get("max_points", 10),
         code_template=body.get("code_template", ""),
+        title=body.get("title", ""),
     )
     
     if not result.get("success"):
@@ -545,8 +548,9 @@ async def get_overview(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
     filter_text: Optional[str] = None,
+    type_filter: Optional[str] = None,
 ):
     """
     Übersichtstabelle: Students × Tasks mit Punkten.
@@ -572,7 +576,11 @@ async def get_overview(
         select(Task).where(Task.course_id == course_id)
     ).all())
     
-    # Filter anwenden
+    # Filter nach Aufgabentyp anwenden
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type.value == type_filter]
+    
+    # Filter nach Text (Titel) anwenden
     if filter_text:
         filter_lower = filter_text.lower()
         tasks = [t for t in tasks if filter_lower in t.title.lower()]
@@ -626,7 +634,7 @@ async def export_excel(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
     filter_text: Optional[str] = None,
 ):
     """Excel-Export der Übersichtstabelle."""

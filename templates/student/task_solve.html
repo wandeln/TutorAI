@@ -76,36 +76,43 @@
       <!-- Meine Ergebnisse -->
       <div class="card">
         <h2 class="font-semibold text-gray-800 mb-3">Mein Stand</h2>
-        <div class="space-y-2 text-sm">
-          {% set best_points = 0 %}
-          {% set total_attempts = 0 %}
-          {% if my_submissions %}
-            {% for sub in my_submissions %}
-              {% for fb in sub.feedback_list %}
-                {% if fb.points_earned > best_points %}
-                  {% set best_points = fb.points_earned %}
-                {% endif %}
-              {% endfor %}
-            {% endfor %}
-            {% set total_attempts = my_submissions|length %}
+        <div class="space-y-4 text-sm">
+
+          <!-- Punkte -->
+          <div id="points-progress">
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-600">Punkte</span>
+              <span id="points-text" class="font-semibold {% if best_points >= task.max_points %}text-green-600{% elif best_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                {{ best_points }} / {{ task.max_points }}
+              </span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+              <div id="points-bar" class="{% if best_points >= task.max_points %}bg-green-500{% elif best_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
+                   style="width: {{ (best_points / task.max_points * 100) if best_points else 0 }}%"></div>
+            </div>
+          </div>
+
+          <!-- Versuche -->
+          {% if task.max_attempts %}
+          <div id="attempts-progress">
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-600">Versuche</span>
+              <span id="attempts-text">{{ total_attempts }} / {{ task.max_attempts }}</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+              <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
+                   style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%"></div>
+            </div>
+          </div>
+          {% else %}
+          <div id="attempts-progress">
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-600">Versuche</span>
+              <span id="attempts-text">{{ total_attempts }}</span>
+            </div>
+          </div>
           {% endif %}
 
-          <div class="flex justify-between">
-            <span class="text-gray-600">Erreichte Punkte:</span>
-            <span class="font-semibold {% if best_points >= task.max_points %}text-green-600{% elif best_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
-              {{ best_points }} / {{ task.max_points }}
-            </span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-gray-600">Versuche:</span>
-            <span>{{ total_attempts }}{% if task.max_attempts %} / {{ task.max_attempts }}{% endif %}</span>
-          </div>
-
-          <!-- Progress Bar -->
-          <div class="w-full bg-gray-200 rounded-full h-2.5 mt-2">
-            <div class="bg-blue-600 h-2.5 rounded-full"
-                 style="width: {{ (best_points / task.max_points * 100) if best_points else 0 }}%"></div>
-          </div>
         </div>
       </div>
     </div>
@@ -137,6 +144,18 @@
               <span class="htmx-indicator text-sm">⏳</span>
             </button>
           </div>
+
+          <!-- ─── Grading Progress ──────────────────────────────── -->
+          <div id="grading-progress" class="hidden mt-4">
+            <div class="flex items-center gap-2 text-sm text-green-700">
+              <span class="animate-spin">⏳</span>
+              <span>LLM korrigiert deine Loesung...</span>
+              <span id="grading-timer" class="font-mono">0s</span>
+            </div>
+            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
+              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
+            </div>
+          </div>
         </div>
 
       {% elif task.task_type == 'text' %}
@@ -151,6 +170,18 @@
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
             📤 Lösung einreichen
           </button>
+
+          <!-- ─── Grading Progress ──────────────────────────────── -->
+          <div id="grading-progress" class="hidden mt-4">
+            <div class="flex items-center gap-2 text-sm text-green-700">
+              <span class="animate-spin">⏳</span>
+              <span>LLM korrigiert deine Lösung...</span>
+              <span id="grading-timer" class="font-mono">0s</span>
+            </div>
+            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
+              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
+            </div>
+          </div>
         </div>
 
       {% elif task.task_type == 'mc' %}
@@ -168,6 +199,18 @@
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
             📤 Antwort einreichen
           </button>
+
+          <!-- ─── Grading Progress ──────────────────────────────── -->
+          <div id="grading-progress" class="hidden mt-4">
+            <div class="flex items-center gap-2 text-sm text-green-700">
+              <span class="animate-spin">⏳</span>
+              <span>LLM korrigiert deine Lösung...</span>
+              <span id="grading-timer" class="font-mono">0s</span>
+            </div>
+            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
+              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
+            </div>
+          </div>
         </div>
       {% endif %}
 
@@ -188,18 +231,24 @@
                   <span class="badge {% if fb.points_earned >= task.max_points * 0.5 %}badge-pass{% else %}badge-fail{% endif %}">
                     {{ fb.points_earned }} / {{ task.max_points }} Punkte
                   </span>
+                  <span class="text-xs text-gray-400">Versuch {{ sub.attempt_number }}</span>
                 </div>
                 <span class="text-xs text-gray-400">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
               </div>
+              {% if sub.solution or sub.code_solution %}
+              <details class="mb-2">
+                <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
+                <div class="mt-1 p-2 bg-gray-50 rounded text-sm text-gray-700 whitespace-pre-wrap">
+                  {% if task.task_type == 'code' %}{{ sub.code_solution }}{% else %}{{ sub.solution }}{% endif %}
+                </div>
+              </details>
+              {% endif %}
               <div class="text-sm text-gray-700 whitespace-pre-wrap">{{ fb.comment }}</div>
             </div>
             {% endfor %}
           {% endfor %}
         {% endif %}
       </div>
-
-      <!-- ─── Latest Submission Result ─────────────────────── -->
-      <div id="grading-result" class="hidden"></div>
     </div>
   </div>
 </div>
@@ -245,7 +294,12 @@
         credentials: "same-origin",
       });
 
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = { detail: "Server-Fehler — bitte versuche es erneut." };
+      }
 
       if (!res.ok) {
         output.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">${data.detail || "Fehler"}</div>`;
@@ -293,18 +347,62 @@
     }
   });
 
+  // ─── Update Progress Bars After Submission ─────────────────
+  function updateProgressBars(data) {
+    const pointsText = document.getElementById('points-text');
+    const pointsBar = document.getElementById('points-bar');
+    const attemptsText = document.getElementById('attempts-text');
+    const attemptsBar = document.getElementById('attempts-bar');
+
+    const maxPoints = {{ task.max_points }};
+    const bestPoints = data.best_points;
+    const pctPoints = maxPoints > 0 ? (bestPoints / maxPoints * 100) : 0;
+
+    // Update points
+    pointsText.textContent = `${bestPoints} / ${maxPoints}`;
+    pointsText.className = `font-semibold ${bestPoints >= maxPoints ? 'text-green-600' : bestPoints >= maxPoints * 0.5 ? 'text-yellow-600' : 'text-red-600'}`;
+    pointsBar.style.width = `${pctPoints}%`;
+    pointsBar.className = `${bestPoints >= maxPoints ? 'bg-green-500' : bestPoints >= maxPoints * 0.5 ? 'bg-yellow-500' : 'bg-red-500'} h-2.5 rounded-full transition-all`;
+
+    // Update attempts
+    const maxAttempts = data.max_attempts;
+    const totalAttempts = data.total_attempts;
+    if (maxAttempts && attemptsBar) {
+      const pctAttempts = (totalAttempts / maxAttempts * 100);
+      attemptsText.textContent = `${totalAttempts} / ${maxAttempts}`;
+      attemptsBar.style.width = `${pctAttempts}%`;
+      // Color: red when almost out of attempts
+      const remaining = data.remaining_attempts;
+      if (remaining <= 1) {
+        attemptsBar.className = 'bg-red-500 h-2.5 rounded-full transition-all';
+      } else {
+        attemptsBar.className = 'bg-blue-600 h-2.5 rounded-full transition-all';
+      }
+    } else if (attemptsText) {
+      attemptsText.textContent = `${totalAttempts}`;
+    }
+  }
+
   // ─── Submit Solution ───────────────────────────────────────
+  let gradingTimerInterval = null;
+
   document.getElementById("submit-btn")?.addEventListener("click", async () => {
     const btn = document.getElementById("submit-btn");
-    const resultDiv = document.getElementById("grading-result");
+    const progressDiv = document.getElementById("grading-progress");
+    const timerSpan = document.getElementById("grading-timer");
+    const progressBar = document.getElementById("grading-progress-bar");
 
     const body = {};
+    let submittedText = "";
     {% if task.task_type == 'code' %}
       body.code_solution = editor.getValue();
+      submittedText = body.code_solution;
     {% elif task.task_type == 'text' %}
       body.solution = document.getElementById("text-solution").value;
+      submittedText = body.solution;
     {% elif task.task_type == 'mc' %}
       body.solution = document.getElementById("mc-answer").value;
+      submittedText = body.solution;
     {% endif %}
 
     if (!body.solution?.trim() && !body.code_solution?.trim()) {
@@ -313,8 +411,19 @@
     }
 
     btn.disabled = true;
-    resultDiv.classList.remove("hidden");
-    resultDiv.innerHTML = '<div class="flex items-center gap-2 text-blue-600"><span class="animate-spin">⏳</span> Lösung wird vom LLM korrigiert...</div>';
+
+    // Show progress bar
+    progressDiv.classList.remove("hidden");
+    let elapsed = 0;
+    timerSpan.textContent = "0s";
+    progressBar.style.width = "10%";
+    if (gradingTimerInterval) clearInterval(gradingTimerInterval);
+    gradingTimerInterval = setInterval(() => {
+      elapsed++;
+      timerSpan.textContent = elapsed + "s";
+      const pct = Math.min(10 + (elapsed / 120) * 85, 95);
+      progressBar.style.width = pct + "%";
+    }, 1000);
 
     try {
       const res = await fetch("/api/student/tasks/{{ task.id }}/submit", {
@@ -324,27 +433,52 @@
         credentials: "same-origin",
       });
 
-      const data = await res.json();
+      clearInterval(gradingTimerInterval);
+      progressBar.style.width = "100%";
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = { detail: "Server-Fehler — bitte versuche es erneut." };
+      }
 
       if (!res.ok) {
-        resultDiv.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">${data.detail || "Fehler"}</div>`;
+        progressDiv.classList.add("hidden");
+        showToast(data.detail || "Fehler", "error");
         btn.disabled = false;
         return;
       }
 
-      // Render grading result
+      // Hide progress
+      progressDiv.classList.add("hidden");
+
+      // Build feedback box — matching the template style
       const pointsClass = data.points >= {{ task.max_points }} * 0.5 ? 'text-green-600' : 'text-red-600';
+      const badgeClass = data.points >= {{ task.max_points }} * 0.5 ? 'badge-pass' : 'badge-fail';
       const borderColor = data.points >= {{ task.max_points }} * 0.5 ? 'border-l-green-500' : 'border-l-red-500';
 
+      // Escape HTML in submitted text
+      const escapedSolution = submittedText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+      const now = new Date();
+      const timeStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+
       let html = `
-        <div class="card border-l-4 ${borderColor}">
+        <div class="feedback-box feedback-llm">
           <div class="flex items-center justify-between mb-2">
-            <span class="font-semibold ${pointsClass}">
-              🤖 LLM-Bewertung
-            </span>
-            <span class="text-lg font-bold ${pointsClass}">${data.points} / {{ task.max_points }} Punkte</span>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold">🤖 LLM</span>
+              <span class="badge ${badgeClass}">${data.points} / {{ task.max_points }} Punkte</span>
+              <span class="text-xs text-gray-400">Versuch ${data.attempt_number}</span>
+            </div>
+            <span class="text-xs text-gray-400">${timeStr}</span>
           </div>
-          <div class="text-sm text-gray-700 whitespace-pre-wrap mb-3">${data.feedback}</div>
+          <details class="mb-2">
+            <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
+            <div class="mt-1 p-2 bg-gray-50 rounded text-sm text-gray-700 whitespace-pre-wrap">${escapedSolution}</div>
+          </details>
+          <div class="text-sm text-gray-700 whitespace-pre-wrap">${data.feedback}</div>
       `;
 
       // Test results for code tasks
@@ -359,33 +493,31 @@
       }
       {% endif %}
 
-      // Strengths & Improvements
-      if (data.strengths?.length) {
-        html += '<div class="border-t pt-2 mt-2"><div class="text-sm font-semibold text-green-700 mb-1">💪 Stärken:</div>';
-        data.strengths.forEach(s => { html += `<div class="text-sm text-green-600 ml-2">• ${s}</div>`; });
-        html += '</div>';
-      }
-      if (data.improvements?.length) {
-        html += '<div class="border-t pt-2 mt-2"><div class="text-sm font-semibold text-orange-700 mb-1">📝 Verbesserungspotenzial:</div>';
-        data.improvements.forEach(i => { html += `<div class="text-sm text-orange-600 ml-2">• ${i}</div>`; });
-        html += '</div>';
-      }
-
-      // Remaining attempts
-      if (data.remaining_attempts !== undefined) {
-        html += `<div class="border-t pt-2 mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) möglich.</div>`;
+      if (data.remaining_attempts !== undefined && data.remaining_attempts < 999) {
+        html += `<div class="border-t pt-2 mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) moeglich.</div>`;
       }
 
       html += '</div>';
-      resultDiv.innerHTML = html;
 
-      // Prepend to feedback area
+      // Prepend to feedback area (neuestes zuerst)
       const feedbackArea = document.getElementById("feedback-area");
-      feedbackArea.insertAdjacentHTML('afterend', html);
-      resultDiv.classList.add("hidden");
+      feedbackArea.insertAdjacentHTML('afterbegin', html);
+
+      // Update progress bars
+      updateProgressBars(data);
+
+      // Clear solution field for next attempt
+      {% if task.task_type == 'code' %}
+      editor.setValue("");
+      {% else %}
+      const solEl = document.getElementById("{% if task.task_type == 'mc' %}mc-answer{% else %}text-solution{% endif %}");
+      if (solEl) solEl.value = "";
+      {% endif %}
 
     } catch (err) {
-      resultDiv.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">Fehler: ${err.message}</div>`;
+      clearInterval(gradingTimerInterval);
+      progressDiv.classList.add("hidden");
+      showToast("Fehler: " + err.message, "error");
     } finally {
       btn.disabled = false;
     }

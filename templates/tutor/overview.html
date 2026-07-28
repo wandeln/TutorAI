@@ -27,8 +27,8 @@
   <div class="card mb-6">
     <div class="flex items-center gap-4 flex-wrap">
       <div class="flex-1 min-w-[200px]">
-        <label class="block text-sm font-medium text-gray-700 mb-1">Filter</label>
-        <input type="text" id="filter-input" placeholder="z.B. Blatt1, code, Rekursion..."
+        <label class="block text-sm font-medium text-gray-700 mb-1">Suche</label>
+        <input type="text" id="filter-input" placeholder="z.B. Blatt1, Rekursion..."
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
       </div>
       <div>
@@ -128,8 +128,7 @@
         text: '📝', code: '💻', mc: '☑️'
       }[task.task_type] || '📋';
       headerHtml += `<th class="text-center py-3 px-3 font-semibold text-gray-700 border-b text-xs" title="${task.title}">
-        ${typeBadge} ${task.title.split(':').pop()?.trim() || task.title}
-        <br><span class="text-gray-400 font-normal">${task.max_points}P</span>
+        ${typeBadge} ${task.title} ${task.max_points}P
       </th>`;
     });
 

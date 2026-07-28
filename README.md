@@ -67,11 +67,22 @@ cp .env.example .env
 
 ### 3. Start
 
+**Entwicklungsmodus** (mit Hot-Reload):
 ```bash
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+**Hintergrund-Start** (Output wird geloggt):
+```bash
+nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 > server-output.log 2>&1 &
+```
+
 Der Server ist dann unter `http://localhost:8000` erreichbar.
+
+> **Debugging:** Server-Logs (Errors, Request-Trace, etc.) landen in `server-output.log`. Bei Problemen immer zuerst die letzten Zeilen dieser Datei prüfen:
+> ```bash
+> tail -n 50 server-output.log
+> ```
 
 ### 4. Demo-Accounts
 

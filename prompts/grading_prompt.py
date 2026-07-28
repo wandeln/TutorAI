@@ -2,85 +2,86 @@
 Default-Prompts für LLM-Grading.
 
 Kann vom Admin pro Kurs überschrieben werden (course_settings.grading_prompt).
+
+Verwendet __PLACEHOLDER__-Syntax statt {} um Konflikte mit str.format() und
+geschweiften Klammern im Prompt-Text (z.B. JSON-Beispielen) zu vermeiden.
 """
 
 GRADING_TEXT_PROMPT_TEMPLATE = """\
 Du bist ein Tutor, der eine Aufgabenlösung bewertet.
 
 AUFGABE:
-{task_description}
+__TASK_DESCRIPTION__
 
 MUSTERLÖSUNG:
-{model_solution}
+__MODEL_SOLUTION__
 
 STUDENTENLÖSUNG:
-{student_solution}
+__STUDENT_SOLUTION__
 
-MAXIMALE PUNKTE: {max_points}
+MAXIMALE PUNKTE: __MAX_POINTS__
 
-Bewerte die Lösung fair und konstruktiv. Gib als Antwort EINZIG ein JSON-Objekt zurück (NICHT in Code-Blöcken, NICHT als Liste).
+Bewerte die Lösung fair und konstruktiv. Gib als Antwort EINZIG ein JSON-Objekt zurueck (NICHT in Code-Blocken, NICHT als Liste).
 
-WICHTIG: Deine gesamte Antwort MUSS ein gültiges JSON-Objekt in geschweiften Klammern {} sein. Verwende KEINE Backticks und KEINE Code-Blöcke.
+WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Klammern sein. Verwende KEINE Backticks und KEINE Code-Blcke.
+
+Das JSON hat NUR zwei Felder:
+- "points": Zahl (0 bis __MAX_POINTS__)
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Schreibe ein konstruktives Feedback, das Staerken, Verbesserungspotenzial und ggf. Tipps direkt als natuerliche Saetze formuliert. Keine separaten Listen oder Aufzaehlungen — alles in einen fließenden Text.
 
 Beispiel-Antwortformat:
-{{
+{
   "points": 7,
-  "feedback": "Gute Lösung, aber...",
-  "is_correct": false,
-  "strengths": ["Klar strukturiert"],
-  "improvements": ["Mehr Details"],
-  "hints": []
-}}
+  "feedback": "Gute Loesung overall. Du hast den Algorithmus korrekt erkannt und die Grundideen getroffen. Allerdings fehlen die Basisfaelle und die konkrete Berechnung. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher."
+}
 
 Bewertungskriterien:
-- Vollständigkeit: Wurde alle Aspekte der Aufgabe adressiert?
+- Vollstaendigkeit: Wurde alle Aspekte der Aufgabe adressiert?
 - Korrektheit: Sind die Ergebnisse/Argumente richtig?
-- Qualität: Ist die Lösung elegant und gut strukturiert?
-- Verständnis: Zeigt der Student echtes Verständnis oder nur Auswendiglernen?
+- Qualitaet: Ist die Loesung elegant und gut strukturiert?
+- Verstaendnis: Zeigt der Student echtes Verstaendnis oder nur Auswendiglernen?
 """
 
 
 GRADING_CODE_PROMPT_TEMPLATE = """\
-Du bist ein Tutor, der eine Code-Lösung bewertet.
+Du bist ein Tutor, der eine Code-Loesung bewertet.
 
 AUFGABE:
-{task_description}
+__TASK_DESCRIPTION__
 
-MUSTERLÖSUNG:
-{model_solution}
+MUSTERLOESUNG:
+__MODEL_SOLUTION__
 
 STUDENTEN-CODE:
-{student_solution}
+__STUDENT_SOLUTION__
 
 UNIT-TEST-ERGEBNISSE:
-{test_results}
+__TEST_RESULTS__
 
-MAXIMALE PUNKTE: {max_points}
+MAXIMALE PUNKTE: __MAX_POINTS__
 
-Bewerte den Code und gib als Antwort EINZIG ein JSON-Objekt zurück (NICHT in Code-Blöcken, NICHT als Liste).
+Bewerte den Code und gib als Antwort EINZIG ein JSON-Objekt zurueck (NICHT in Code-Blocken, NICHT als Liste).
 
-WICHTIG: Deine gesamte Antwort MUSS ein gültiges JSON-Objekt in geschweiften Klammern {} sein. Verwende KEINE Backticks und KEINE Code-Blöcke.
+WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Klammern sein. Verwende KEINE Backticks und KEINE Code-Blcke.
+
+Das JSON hat NUR zwei Felder:
+- "points": Zahl (0 bis __MAX_POINTS__)
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Beruecksichtige die Test-Ergebnisse und die Code-Qualitaet. Schreibe konstruktives Feedback als natuerliche Saetze — keine separaten Listen.
 
 Beispiel-Antwortformat:
-{{
-  "points": 12,
-  "test_points": 10,
-  "code_quality_points": 2,
-  "feedback": "Guter Code, aber...",
-  "is_correct": false,
-  "strengths": ["Klar strukturiert"],
-  "improvements": ["Mehr Kommentare"],
-  "hints": []
-}}
+{
+  "points": 10,
+  "feedback": "3 von 4 Tests bestanden. Der Algorithmus ist im Kern korrekt und gut strukturiert. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine Praefuerung am Anfang hinzu, um diesen Fall zu behandeln."
+}
 
-Berücksichtige bei der Bewertung:
+Beruecksichtige bei der Bewertung:
 - Anzahl bestander Tests (public + private)
-- Code-Qualität (Lesbarkeit, Struktur, PEP8)
-- Effizienz (Laufzeitkomplexität)
-- Edge-Cases (Umgang mit Sonderfällen)
-- Verständlichkeit (Kommentare, Variablennamen)
+- Code-Qualitaet (Lesbarkeit, Struktur, PEP8)
+- Effizienz (Laufzeitkomplexitaet)
+- Edge-Cases (Umgang mit Sonderfaellen)
+- Verstaendlichkeit (Kommentare, Variablennamen)
 """
 
 
-# Kompatibilitäts-Alias (verwende GRADING_TEXT_PROMPT_TEMPLATE als Default)
+# Kompatibilitaets-Alias (verwende GRADING_TEXT_PROMPT_TEMPLATE als Default)
 GRADING_PROMPT_TEMPLATE = GRADING_TEXT_PROMPT_TEMPLATE

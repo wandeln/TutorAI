@@ -304,6 +304,23 @@ app.include_router(student.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
+# GLOBAL EXCEPTION HANDLERS
+# ═══════════════════════════════════════════════════════════════════
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """401 → Redirect zur Login-Seite statt JSON-Fehler."""
+    if exc.status_code == 401:
+        # HTMX-Requests: HX-Redirect Header (HTMX folgt automatisch)
+        if "HX-Request" in request.headers:
+            from fastapi.responses import Response
+            return Response(status_code=401, headers={"HX-Redirect": "/login"})
+        return RedirectResponse(url="/login", status_code=302)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+# ═══════════════════════════════════════════════════════════════════
 # WEB-PAGES (HTMX-gerendert)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -345,7 +362,50 @@ async def index(
         return RedirectResponse(url="/login")
     
     courses = _get_user_courses(user, session)
-    
+
+    # Quick Stats fuer Studenten
+    total_completed = 0
+    total_points_earned = 0.0
+    total_points_possible = 0
+    stats_by_course = {}
+    if user.role.value == "student":
+        for c in courses:
+            course_id = c["id"]
+            tasks = session.exec(
+                select(Task).where(Task.course_id == course_id)
+            ).all()
+            course_earned = 0.0
+            course_possible = 0
+            completed_count = 0
+            for task in tasks:
+                course_possible += task.max_points
+                subs = session.exec(
+                    select(Submission)
+                    .where(Submission.task_id == task.id)
+                    .where(Submission.student_id == user.id)
+                ).all()
+                best = 0.0
+                for sub in subs:
+                    for fb in sub.feedback_list:
+                        if fb.points_earned > best:
+                            best = fb.points_earned
+                if best > 0:
+                    completed_count += 1
+                course_earned += best
+            total_completed += completed_count
+            total_points_earned += course_earned
+            total_points_possible += course_possible
+            stats_by_course[course_id] = {
+                "completed": completed_count,
+                "total_tasks": len(tasks),
+                "earned": course_earned,
+                "possible": course_possible,
+            }
+
+    pct = 0.0
+    if total_points_possible > 0:
+        pct = round(total_points_earned / total_points_possible * 100, 1)
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -359,6 +419,11 @@ async def index(
             },
             "courses": courses,
             "selected_course_id": None,
+            "total_completed": total_completed,
+            "total_points_earned": total_points_earned,
+            "total_points_possible": total_points_possible,
+            "total_percentage": pct,
+            "stats_by_course": stats_by_course,
         },
     )
 
@@ -552,9 +617,10 @@ async def new_task_page(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
 ):
     """Neue Aufgabe erstellen."""
+    user, _ = user_and_course
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
@@ -627,13 +693,19 @@ async def task_page(
     
     # Student: eigene Submissions laden
     my_submissions = []
+    best_points = 0
     if not is_tutor:
         subs = session.exec(
             select(Submission)
             .where(Submission.task_id == task.id)
             .where(Submission.student_id == user.id)
+            .order_by(Submission.submitted_at.desc())
         ).all()
         my_submissions = subs
+        for sub in subs:
+            for fb in sub.feedback_list:
+                if fb.points_earned > best_points:
+                    best_points = fb.points_earned
     
     return templates.TemplateResponse(
         template,
@@ -676,6 +748,8 @@ async def task_page(
             "is_code": is_code,
             "code_editor": is_code,
             "my_submissions": my_submissions,
+            "best_points": best_points,
+            "total_attempts": len(my_submissions),
             "public_tests": [
                 {
                     "id": tc.id,

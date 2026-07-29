@@ -38,6 +38,23 @@ llm_service = LLMService()
 export_service = ExportService()
 
 
+def _check_course_role(user: User, course_id: int, session: Session):
+    """
+    Prüft, ob der User im Kurs PROF oder TUTOR ist.
+    Global-Admin hat immer Zugriff.
+    Hebt HTTPException 403, falls keine Berechtigung.
+    """
+    if user.role == GlobalUserRole.ADMIN:
+        return
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Nur PROF/Tutor dürfen auf diese Daten zugreifen.")
+
+
 # ═══════════════════════════════════════════════════════════════════
 # AUFGABEN
 # ═══════════════════════════════════════════════════════════════════
@@ -316,6 +333,8 @@ async def add_test_case(
     if not task:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
     
+    _check_course_role(user, task.course_id, session)
+    
     tc = TestCase(
         task_id=task_id,
         name=data.name,
@@ -448,6 +467,8 @@ async def list_submissions(
     if not task:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
     
+    _check_course_role(user, task.course_id, session)
+    
     submissions = session.exec(
         select(Submission).where(Submission.task_id == task_id)
     ).all()
@@ -477,6 +498,12 @@ async def get_submission(
     submission = session.get(Submission, submission_id)
     if not submission:
         raise HTTPException(404, "Einreichung nicht gefunden.")
+    
+    task = session.get(Task, task_id)
+    if not task or task.id != submission.task_id:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+    
+    _check_course_role(user, task.course_id, session)
     
     return {
         "id": submission.id,
@@ -521,6 +548,12 @@ async def override_feedback(
     submission = session.get(Submission, submission_id)
     if not submission:
         raise HTTPException(404, "Einreichung nicht gefunden.")
+    
+    task = session.get(Task, task_id)
+    if not task or task.id != submission.task_id:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+    
+    _check_course_role(user, task.course_id, session)
     
     body = await request.json()
     

@@ -392,7 +392,11 @@
       try {
         const raw = JSON.parse(el.innerHTML);
         const container = document.createElement('div');
+        {% if task.task_type == 'code' %}
+        container.className = 'mt-1 markdown-solution';
+        {% else %}
         container.className = 'mt-1 p-3 bg-white border border-gray-200 rounded-xl markdown-solution';
+        {% endif %}
         el.replaceWith(container);
         {% if task.task_type == 'code' %}
         renderMarkdown('```python\n' + raw + '\n```', container);
@@ -894,20 +898,24 @@
             console.warn('Failed to render feedback markdown:', e, el.getAttribute('data-raw'));
           }
         });
-        {% if task.task_type != 'code' %}
         newFeedbackBox.querySelectorAll('template.markdown-solution[type="application/json"]').forEach(el => {
           try {
             const jsonStr2 = decodeURIComponent(el.getAttribute('data-raw') || '');
             const raw2 = JSON.parse(jsonStr2);
             const container = document.createElement('div');
+            {% if task.task_type == 'code' %}
+            container.className = 'mt-1 markdown-solution';
+            el.replaceWith(container);
+            renderMarkdown('```python\n' + raw2 + '\n```', container);
+            {% else %}
             container.className = 'mt-1 p-2 bg-gray-50 rounded markdown-solution';
             el.replaceWith(container);
             renderMarkdown(raw2, container);
+            {% endif %}
           } catch(e) {
             console.warn('Failed to render solution markdown:', e, el.getAttribute('data-raw'));
           }
         });
-        {% endif %}
       }
 
       // Update progress bars

@@ -61,85 +61,25 @@
 </div>
 {% endblock %}
 
+{% block extra_head %}
+<style>
+  {% if task_type == 'text' %}
+  .solution-container {
+    margin-top: 0.25rem;
+    padding: 0.75rem;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+  }
+  {% endif %}
+</style>
+{% endblock %}
+
 {% block extra_scripts %}
 <script>
   var courseId = {{ course_id }};
   var taskId = {{ task_id }};
   var studentId = {{ student_id }};
-
-  /**
-   * renderMarkdownHtml — wie renderMarkdown, aber gibt den HTML-String zur\u00FCck
-   * statt in ein DOM-Element zu schreiben. Benutzt dieselbe Pipeline:
-   * LaTeX-Extraction → marked → KaTeX → hljs → entity decode.
-   */
-  function renderMarkdownHtml(text) {
-    if (!text || typeof text !== 'string') return '';
-
-    var latexBlocks = [];
-    var processed = text.replace(/\$\$([\s\S]*?)\$\$/g, function(match, latex) {
-      var idx = latexBlocks.length;
-      latexBlocks.push(latex.trim());
-      return '%%LATEX_BLOCK_' + idx + '%%';
-    });
-
-    var mdHtml = marked.parse(processed, {
-      breaks: true,
-      gfm: true,
-      headerIds: false,
-      mangle: false,
-    });
-
-    var html = mdHtml;
-    latexBlocks.forEach(function(latex, idx) {
-      var rendered;
-      try {
-        rendered = katex.renderToString(latex, { displayMode: true, throwOnError: false, trust: true });
-      } catch (e) {
-        rendered = '<pre class="text-red-500 bg-red-50 p-2 rounded">KaTeX Error: ' + e.message + '</pre>';
-      }
-      html = html.replace('%%LATEX_BLOCK_' + idx + '%%', rendered);
-    });
-
-    // Inline LaTeX
-    var parts = html.split(/(<[^>]*>)/g);
-    html = parts.map(function(part, i) {
-      if (i % 2 === 0 && part.indexOf('$') !== -1) {
-        return part.replace(/\$([^\$]+?)\$/g, function(match, latex) {
-          try {
-            return katex.renderToString(latex.trim(), { displayMode: false, throwOnError: false, trust: true });
-          } catch (e) {
-            return '<span class="text-red-500">\\(' + latex + '\\)</span>';
-          }
-        });
-      }
-      return part;
-    }).join('');
-
-    // Syntax highlighting
-    html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, function(match, attrs, code) {
-      var decoded = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-      var isPython = attrs.indexOf('python') !== -1 || !attrs.trim();
-      if (isPython && typeof hljs !== 'undefined') {
-        try {
-          var highlighted = hljs.highlight(decoded.trim(), { language: 'python' }).value;
-          return '<pre><code class="language-python">' + highlighted + '</code></pre>';
-        } catch (e) {}
-      }
-      var escaped = decoded.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      return '<pre><code' + attrs + '>' + escaped + '</code></pre>';
-    });
-
-    // Decode text entities
-    var parts2 = html.split(/(<pre>[\s\S]*?<\/pre>|<[^>]*>)/g);
-    html = parts2.map(function(part, i) {
-      if (i % 2 === 0) {
-        return part.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-      }
-      return part;
-    }).join('');
-
-    return html;
-  }
 
   // ─── Load Data ────────────────────────────────────────────────
   async function loadData() {
@@ -175,7 +115,9 @@
       return;
     }
 
-    var html = '';
+    container.innerHTML = '';
+    var isCode = data.task.task_type === 'code';
+
     data.submissions.forEach(function(sub) {
       var statusColors = {
         pending: 'bg-yellow-100 text-yellow-800',
@@ -190,32 +132,39 @@
       var statusClass = statusColors[sub.status] || 'bg-gray-100 text-gray-800';
       var statusLabel = statusLabels[sub.status] || sub.status;
 
-      html += '<div class="card">';
-      html += '  <div class="flex items-center justify-between mb-4">';
-      html += '    <h3 class="text-lg font-semibold text-gray-800">Versuch #' + sub.attempt_number + '</h3>';
-      html += '    <div class="flex items-center gap-3">';
-      html += '      <span class="text-sm text-gray-500">' + formatDate(sub.submitted_at) + '</span>';
-      html += '      <span class="badge ' + statusClass + '">' + statusLabel + '</span>';
-      html += '    </div>';
-      html += '  </div>';
+      var card = document.createElement('div');
+      card.className = 'card';
+
+      // Header
+      card.innerHTML = '<div class="flex items-center justify-between mb-4">' +
+        '<h3 class="text-lg font-semibold text-gray-800">Versuch #' + sub.attempt_number + '</h3>' +
+        '<div class="flex items-center gap-3">' +
+          '<span class="text-sm text-gray-500">' + formatDate(sub.submitted_at) + '</span>' +
+          '<span class="badge ' + statusClass + '">' + statusLabel + '</span>' +
+        '</div>' +
+      '</div>';
 
       // Solution
-      html += '  <div class="mb-4">';
-      html += '    <h4 class="text-sm font-semibold text-gray-600 mb-2">Lösung des Students</h4>';
-      html += '    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">';
-      if (sub.code_solution) {
-        html += '      <pre class="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto"><code>' + escapeHtml(sub.code_solution) + '</code></pre>';
+      var solSection = document.createElement('div');
+      solSection.className = 'mb-4';
+      solSection.innerHTML = '<h4 class="text-sm font-semibold text-gray-600 mb-2">Lösung des Students</h4>';
+
+      var solContainer = document.createElement('div');
+      solContainer.className = 'solution-container';
+      if (isCode) {
+        renderMarkdown('```python\n' + sub.code_solution + '\n```', solContainer);
       } else {
-        html += '      <div class="markdown-preview">' + renderMarkdownHtml(sub.solution) + '</div>';
+        renderMarkdown(sub.solution, solContainer);
       }
-      html += '    </div>';
-      html += '  </div>';
+      solSection.appendChild(solContainer);
+      card.appendChild(solSection);
 
       // Feedback List
-      html += '  <div class="space-y-3">';
+      var fbSection = document.createElement('div');
+      fbSection.className = 'space-y-3';
 
       if (sub.feedback.length === 0) {
-        html += '    <p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>';
+        fbSection.innerHTML = '<p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>';
       } else {
         sub.feedback.forEach(function(fb) {
           var isLlm = fb.source === 'llm';
@@ -224,64 +173,78 @@
           var sourceLabel = isLlm ? 'LLM-Bewertung' : 'Tutor-Bewertung';
           var sourceHeaderClass = isLlm ? 'text-purple-700' : 'text-blue-700';
 
-          html += '    <div class="feedback-box ' + sourceClass + ' rounded-lg">';
-          html += '      <div class="flex items-center justify-between mb-2">';
-          html += '        <h5 class="text-sm font-semibold ' + sourceHeaderClass + '">' + sourceIcon + ' ' + sourceLabel + '</h5>';
-          html += '        <div class="flex items-center gap-2">';
-          html += '          <span class="text-sm font-mono font-bold">' + fb.points_earned + ' / ' + data.task.max_points + ' P</span>';
-          html += '          <span class="text-xs text-gray-400">' + fb.giver + ' \u00B7 ' + formatDate(fb.created_at) + '</span>';
-          html += '        </div>';
-          html += '      </div>';
-          html += '      <div class="markdown-preview">' + renderMarkdownHtml(fb.comment) + '</div>';
+          var fbBox = document.createElement('div');
+          fbBox.className = 'feedback-box ' + sourceClass + ' rounded-lg';
+
+          fbBox.innerHTML =
+            '<div class="flex items-center justify-between mb-2">' +
+              '<h5 class="text-sm font-semibold ' + sourceHeaderClass + '">' + sourceIcon + ' ' + sourceLabel + '</h5>' +
+              '<div class="flex items-center gap-2">' +
+                '<span class="text-sm font-mono font-bold">' + fb.points_earned + ' / ' + data.task.max_points + ' P</span>' +
+                '<span class="text-xs text-gray-400">' + fb.giver + ' \u00B7 ' + formatDate(fb.created_at) + '</span>' +
+              '</div>' +
+            '</div>';
+
+          // Render feedback comment with shared renderMarkdown
+          var fbCommentDiv = document.createElement('div');
+          fbCommentDiv.className = 'fb-comment-container';
+          renderMarkdown(fb.comment, fbCommentDiv);
+          fbBox.appendChild(fbCommentDiv);
 
           // Action Buttons
-          html += '      <div class="flex items-center gap-2 mt-3">';
+          var actionsDiv = document.createElement('div');
+          actionsDiv.className = 'flex items-center gap-2 mt-3';
 
           if (isLlm) {
-            html += '        <button onclick="approveLlm(' + sub.id + ', ' + fb.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"';
-            html += '                class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition">';
-            html += '          \u2713 LLM-Bewertung übernehmen';
-            html += '        </button>';
+            actionsDiv.innerHTML =
+              '<button onclick="approveLlm(' + sub.id + ', ' + fb.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
+              '        class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition">' +
+              '  \u2713 LLM-Bewertung übernehmen' +
+              '</button>';
           } else {
-            html += '        <span class="text-sm text-gray-500">\u2705 Diese Bewertung ist aktiv (Tutor-Überschreibung)</span>';
+            actionsDiv.innerHTML =
+              '<span class="text-sm text-gray-500">\u2705 Diese Bewertung ist aktiv (Tutor-Überschreibung)</span>';
           }
 
-          html += '        <button onclick="openOverridePanel(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"';
-          html += '                class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">';
-          html += '          \u270F\uFE0F Korrekturen bearbeiten';
-          html += '        </button>';
-          html += '      </div>';
+          actionsDiv.innerHTML +=
+            '<button onclick="openOverridePanel(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
+            '        class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">' +
+            '  \u270F\uFE0F Korrekturen bearbeiten' +
+            '</button>';
+          fbBox.appendChild(actionsDiv);
 
           // Override Panel (hidden by default)
-          html += '      <div id="override-panel-' + sub.id + '" class="hidden mt-4 pt-4 border-t border-gray-200">';
-          html += '        <h5 class="text-sm font-semibold text-gray-700 mb-2">Feedback bearbeiten</h5>';
-          html += '        <div class="space-y-3">';
-          html += '          <div>';
-          html += '            <label class="block text-xs font-medium text-gray-600 mb-1">Punkte (0 — ' + data.task.max_points + ')</label>';
-          html += '            <input type="number" id="override-points-' + sub.id + '" min="0" max="' + data.task.max_points + '" step="0.5"';
-          html += '                   value="' + fb.points_earned + '" class="w-32 border border-gray-300 rounded px-3 py-2 text-sm">';
-          html += '          </div>';
-          html += '          <div>';
-          html += '            <label class="block text-xs font-medium text-gray-600 mb-1">Feedback-Text (Markdown + LaTeX)</label>';
-          html += '            <textarea id="override-comment-' + sub.id + '" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' + escapeHtml(fb.comment) + '</textarea>';
-          html += '          </div>';
-          html += '          <div class="flex items-center gap-2">';
-          html += '            <button onclick="submitOverride(' + sub.id + ', ' + data.task.max_points + ')" class="text-sm bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">';
-          html += '              \uD83D\uDCBE Überschreiben & speichern';
-          html += '            </button>';
-          html += '            <button onclick="closeOverridePanel(' + sub.id + ')" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-2">Abbrechen</button>';
-          html += '          </div>';
-          html += '        </div>';
-          html += '      </div>';
-          html += '    </div>';
+          var overridePanel = document.createElement('div');
+          overridePanel.id = 'override-panel-' + sub.id;
+          overridePanel.className = 'hidden mt-4 pt-4 border-t border-gray-200';
+          overridePanel.innerHTML =
+            '<h5 class="text-sm font-semibold text-gray-700 mb-2">Feedback bearbeiten</h5>' +
+            '<div class="space-y-3">' +
+              '<div>' +
+                '<label class="block text-xs font-medium text-gray-600 mb-1">Punkte (0 — ' + data.task.max_points + ')</label>' +
+                '<input type="number" id="override-points-' + sub.id + '" min="0" max="' + data.task.max_points + '" step="0.5"' +
+                       ' value="' + fb.points_earned + '" class="w-32 border border-gray-300 rounded px-3 py-2 text-sm">' +
+              '</div>' +
+              '<div>' +
+                '<label class="block text-xs font-medium text-gray-600 mb-1">Feedback-Text (Markdown + LaTeX)</label>' +
+                '<textarea id="override-comment-' + sub.id + '" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' + escapeHtml(fb.comment) + '</textarea>' +
+              '</div>' +
+              '<div class="flex items-center gap-2">' +
+                '<button onclick="submitOverride(' + sub.id + ', ' + data.task.max_points + ')" class="text-sm bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">' +
+                  '\uD83D\uDCBE Überschreiben & speichern' +
+                '</button>' +
+                '<button onclick="closeOverridePanel(' + sub.id + ')" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-2">Abbrechen</button>' +
+              '</div>' +
+            '</div>';
+          fbBox.appendChild(overridePanel);
+
+          fbSection.appendChild(fbBox);
         });
       }
 
-      html += '  </div>';
-      html += '</div>';
+      card.appendChild(fbSection);
+      container.appendChild(card);
     });
-
-    container.innerHTML = html;
   }
 
   // ─── Actions ──────────────────────────────────────────────────

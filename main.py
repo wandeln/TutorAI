@@ -465,6 +465,7 @@ async def index(
             },
             "courses": courses,
             "selected_course_id": None,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "total_completed": total_completed,
             "total_points_earned": total_points_earned,
             "total_points_possible": total_points_possible,
@@ -653,6 +654,7 @@ async def course_page(
             },
             "courses": courses,
             "selected_course_id": course_id,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "course": {
                 "id": course.id,
                 "name": course.name,
@@ -661,6 +663,78 @@ async def course_page(
             },
             "tasks": task_list,
             "is_tutor": is_tutor,
+            "is_prof": membership.role_in_course == CourseRole.PROF,
+        },
+    )
+
+
+@app.get("/courses/{course_id}/members")
+async def members_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Mitglieder-Verwaltung: Für PROFs und Admins."""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    is_admin = user.role == GlobalUserRole.ADMIN
+
+    # Admin: darf alles — auch ohne Membership
+    if not is_admin:
+        membership = session.exec(
+            select(UserCourse)
+            .where(UserCourse.user_id == user.id)
+            .where(UserCourse.course_id == course_id)
+        ).first()
+
+        if not membership or membership.role_in_course != CourseRole.PROF:
+            raise HTTPException(403, "Nur PROFs und Administratoren können die Mitglieder verwalten.")
+    else:
+        # Für Admin ohne Membership: Dummy für die current_user-Display
+        membership = None
+
+    # Alle Mitglieder mit User-Info laden
+    user_courses = session.exec(
+        select(UserCourse).where(UserCourse.course_id == course_id)
+    ).all()
+
+    members = [
+        {
+            "id": uc.id,
+            "user_id": uc.user_id,
+            "username": uc.user.username if uc.user else "unknown",
+            "name": uc.user.name if uc.user else "unknown",
+            "role_in_course": uc.role_in_course.value,
+        }
+        for uc in user_courses
+    ]
+
+    courses = _get_user_courses(user, session)
+
+    return templates.TemplateResponse(
+        "tutor/members.html",
+        {
+            "request": request,
+            "page_title": f"Mitglieder — {course.name}",
+            "current_user": {
+                "id": user.id,
+                "username": user.username,
+                "name": user.name,
+                "role": membership.role_in_course.value if membership else "ADMIN",
+            },
+            "courses": courses,
+            "selected_course_id": course_id,
+            "is_admin": is_admin,
+            "course": {
+                "id": course.id,
+                "name": course.name,
+                "description": course.description,
+                "semester": course.semester,
+            },
+            "members": members,
         },
     )
 
@@ -705,6 +779,7 @@ async def new_task_page(
             },
             "courses": courses,
             "selected_course_id": course_id,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "course": {
                 "id": course.id,
                 "name": course.name,
@@ -805,6 +880,7 @@ async def task_page(
             },
             "courses": courses,
             "selected_course_id": course_id,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "course": {
                 "id": course.id,
                 "name": course.name,
@@ -885,6 +961,7 @@ async def overview_page(
                 "role": membership.role_in_course.value,
             },
             "courses": courses,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "selected_course_id": course_id,
             "course": {
                 "id": course.id,
@@ -942,6 +1019,7 @@ async def submission_review_page(
                 "name": user.name,
                 "role": membership.role_in_course.value,
             },
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "courses": courses,
             "selected_course_id": course_id,
             "course_id": course_id,
@@ -949,6 +1027,7 @@ async def submission_review_page(
             "student_id": student_id,
             "task_title": task.title,
             "task_type_display": task_type_display,
+            "task_type": task.task_type.value,
             "max_points": task.max_points,
             "student_name": student.name,
             "student_username": student.username,
@@ -982,6 +1061,7 @@ async def settings_page(
             },
             "courses": courses,
             "selected_course_id": None,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
             "use_ldap": use_ldap,
         },
     )
@@ -1014,6 +1094,7 @@ async def admin_page(
             },
             "courses": courses,
             "selected_course_id": None,
+            "is_admin": True,
             "all_users": [
                 {
                     "id": u.id,

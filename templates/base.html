@@ -104,7 +104,7 @@
           {% for course in courses %}
           <option value="{{ course.id }}"
                   {% if selected_course_id == course.id %}selected{% endif %}>
-            {{ course.name }} ({{ course.role_in_course }})
+            {{ course.name }}
           </option>
           {% endfor %}
         </select>
@@ -117,6 +117,13 @@
             {{ current_user.role }}
           </span>
         </a>
+
+        <!-- Admin Console Link (nur für ADMINs) -->
+        {% if is_admin %}
+        <a href="/admin" class="bg-yellow-500 text-yellow-900 px-3 py-1 rounded text-sm font-semibold hover:bg-yellow-400 transition">
+          🔧 Admin-Konsole
+        </a>
+        {% endif %}
 
         <!-- Logout -->
         <button
@@ -160,6 +167,13 @@
             {{ current_user.role }}
           </span>
         </a>
+
+        <!-- Admin Console Link (nur für ADMINs) -->
+        {% if is_admin %}
+        <a href="/admin" class="block w-full text-center bg-yellow-500 text-yellow-900 px-3 py-2 rounded text-sm font-semibold hover:bg-yellow-400 transition">
+          🔧 Admin-Konsole
+        </a>
+        {% endif %}
 
         <button
           hx-post="/api/auth/logout"

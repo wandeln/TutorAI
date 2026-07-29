@@ -120,7 +120,7 @@
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                 placeholder="Beschreibe die Aufgabe hier...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$, etc.">{{ task.description if task else '' }}</textarea>
 
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between mt-2">
         <p id="description-hint" class="text-xs text-gray-400">💡 Markdown und LaTeX ($...$) werden unterstützt.</p>
         <div id="description-preview-anchor"></div>
       </div>
@@ -151,7 +151,7 @@
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
                 placeholder="Die korrekte Lösung...&#10;&#10;Markdown + LaTeX ($...$) werden unterstützt.">{{ task.model_solution if task and task.model_solution else '' }}</textarea>
 
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between mt-2">
         <p id="model-solution-hint" class="text-xs text-gray-400">💡 Markdown und LaTeX ($...$) werden unterstützt. Beschreibe die Lösung, füge Code-Beispiele und Bewertungskriterien ein.</p>
         <div id="solution-preview-anchor"></div>
       </div>

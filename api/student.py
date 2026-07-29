@@ -14,7 +14,7 @@ from database.base import get_session
 from database.models import (
     User, Task, TestCase, Submission, Feedback,
     TaskType, SubmissionStatus, FeedbackSource, TestVisibility,
-    Course, UserCourse, UserRole,
+    Course, UserCourse, CourseRole,
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
@@ -44,7 +44,7 @@ async def list_course_tasks(
         .where(UserCourse.course_id == course_id)
     ).first()
 
-    if not membership or membership.role_in_course != UserRole.STUDENT:
+    if not membership or membership.role_in_course != CourseRole.STUDENT:
         raise HTTPException(403, "Kein Zugriff auf diesen Kurs.")
 
     tasks = session.exec(

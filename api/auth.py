@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlmodel import Session, select
 
 from database.base import get_session
-from database.models import User, UserRole, UserCreate
+from database.models import User, GlobalUserRole, CourseRole, UserCreate
 from services.auth_service import (
     authenticate_user, create_access_token, hash_password,
     get_current_user,
@@ -56,11 +56,10 @@ async def login(
             detail="Ungültiger Username oder Password.",
         )
     
-    # JWT-Token erstellen und in Cookie setzen
+    # JWT-Token erstellen und in Cookie setzen (kein role im Token)
     token_data = {
         "sub": user.id,
         "username": user.username,
-        "role": user.role.value,
     }
     token = create_access_token(token_data)
     
@@ -74,13 +73,15 @@ async def login(
         path="/",
     )
     
+    # Rolle anzeigen: Admin bleibt "Admin", User zeigt generisch "User"
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
     return {
         "message": "Erfolgreich angemeldet.",
         "user": {
             "id": user.id,
             "username": user.username,
             "name": user.name,
-            "role": user.role.value,
+            "role": display_role,
         },
     }
 
@@ -95,12 +96,13 @@ async def logout(response: Response):
 @router.get("/me")
 async def get_me(user: User = Depends(get_current_user)):
     """Gibt den aktuellen User zurück."""
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
     return {
         "id": user.id,
         "username": user.username,
         "name": user.name,
         "email": user.email,
-        "role": user.role.value,
+        "role": display_role,
     }
 
 
@@ -128,7 +130,7 @@ async def register(
         username=data.username,
         email=data.email,
         name=data.name,
-        role=data.role,
+        role=GlobalUserRole.USER,
         password_hash=pw_hash,
     )
     
@@ -136,12 +138,13 @@ async def register(
     session.commit()
     session.refresh(new_user)
     
+    display_role = "Admin" if new_user.role == GlobalUserRole.ADMIN else "User"
     return {
         "message": f"User '{data.username}' erstellt.",
         "user": {
             "id": new_user.id,
             "username": new_user.username,
             "name": new_user.name,
-            "role": new_user.role.value,
+            "role": display_role,
         },
     }

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from database.base import get_session
-from database.models import User
+from database.models import User, GlobalUserRole
 from services.auth_service import (
     get_current_user,
     hash_password,
@@ -88,12 +88,13 @@ async def update_settings(
     if password_changed:
         messages.append("Password wurde geändert.")
 
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
     return {
         "message": " ".join(messages),
         "user": {
             "id": user.id,
             "username": user.username,
             "name": user.name,
-            "role": user.role.value,
+            "role": display_role,
         },
     }

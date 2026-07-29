@@ -21,20 +21,20 @@ from config import BASE_DIR, LLM_TIMEOUT
 from database.base import create_db_and_tables, engine, get_session
 from database.models import (
     Course,
-
+    CourseRole,
     FeedbackSource,
+    GlobalUserRole,
     Task,
     TaskType,
     TestCase,
     TestVisibility,
     User,
     UserCourse,
-    UserRole,
     Submission,
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
 
-from api import admin, auth, student, tutor, user_settings
+from api import admin, auth, student, tutor, user_settings, course_members
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -43,11 +43,14 @@ from api import admin, auth, student, tutor, user_settings
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """App-Start: DB-Tabellen + Demo-Daten erstellen."""
+    """App-Start: DB-Tabellen + Migration + Demo-Daten erstellen."""
     # 1. Tabellen erstellen
     create_db_and_tables()
     
-    # 2. Seed-Daten (wenn DB leer)
+    # 2. Migration: Alte UserRole-Werte in neue Enums umwandeln
+    _migrate_roles()
+    
+    # 3. Seed-Daten (wenn DB leer)
     with Session(engine) as session:
         # Einfacher Check: Admin existieren?
         admin_exists = session.exec(
@@ -60,6 +63,37 @@ async def lifespan(app: FastAPI):
     yield
 
 
+def _migrate_roles():
+    """
+    Migration von altem UserRole (ADMIN/TUTOR/STUDENT) zu neuem Schema.
+    
+    - User.role: "ADMIN" → GlobalUserRole.ADMIN, "TUTOR"/"STUDENT" → GlobalUserRole.USER
+    - UserCourse.role_in_course: "ADMIN" → CourseRole.PROF, "TUTOR"/"STUDENT" bleibt
+    """
+    from sqlalchemy import text
+    
+    with Session(engine) as session:
+        try:
+            # 1. User.role migrieren
+            session.execute(text(
+                "UPDATE users SET role = 'USER' WHERE role IN ('TUTOR', 'STUDENT')"
+            ))
+            # ADMIN bleibt ADMIN
+            
+            # 2. UserCourse.role_in_course migrieren
+            session.execute(text(
+                "UPDATE user_courses SET role_in_course = 'PROF' WHERE role_in_course = 'ADMIN'"
+            ))
+            # TUTOR und STUDENT bleiben unverändert
+            
+            session.commit()
+            print("Rollen-Migration abgeschlossen.")
+        except Exception as e:
+            # Wenn die Tabelle noch nicht existiert oder Migration bereits gelaufen ist
+            print(f"Rollen-Migration übersprungen: {e}")
+            session.rollback()
+
+
 def _seed_demo_data(session: Session):
     """Erstellt Demo-User, Kurs, und Beispiel-Aufgabe."""
     
@@ -70,7 +104,7 @@ def _seed_demo_data(session: Session):
         username="admin",
         email="admin@uni.de",
         name="Prof. Admin",
-        role=UserRole.ADMIN,
+        role=GlobalUserRole.ADMIN,
         password_hash=hash_password("admin123"),
     )
     session.add(admin)
@@ -82,7 +116,7 @@ def _seed_demo_data(session: Session):
         username="tutor1",
         email="tutor@uni.de",
         name="Dr. Tutor",
-        role=UserRole.TUTOR,
+        role=GlobalUserRole.USER,
         password_hash=hash_password("tutor123"),
     )
     session.add(tutor_user)
@@ -95,7 +129,7 @@ def _seed_demo_data(session: Session):
             username=f"student{i}",
             email=f"student{i}@uni.de",
             name=f"Student {i}",
-            role=UserRole.STUDENT,
+            role=GlobalUserRole.USER,
             password_hash=hash_password("student123"),
         )
         session.add(stu)
@@ -119,14 +153,14 @@ def _seed_demo_data(session: Session):
     course_id: int = course.id  # type: ignore[assignment]
     
     # ─── Kurs-Mitglieder ────────────────────────────────────────
-    # Admin → Kurs
+    # Admin → Kurs (als PROF)
     session.add(UserCourse(
-        user_id=admin_id, course_id=course_id, role_in_course=UserRole.ADMIN
+        user_id=admin_id, course_id=course_id, role_in_course=CourseRole.PROF
     ))
     
     # Tutor → Kurs
     session.add(UserCourse(
-        user_id=tutor_id, course_id=course_id, role_in_course=UserRole.TUTOR
+        user_id=tutor_id, course_id=course_id, role_in_course=CourseRole.TUTOR
     ))
     
     # Students → Kurs
@@ -138,7 +172,7 @@ def _seed_demo_data(session: Session):
             session.add(UserCourse(
                 user_id=stu.id,  # type: ignore[arg-type]
                 course_id=course_id,
-                role_in_course=UserRole.STUDENT,
+                role_in_course=CourseRole.STUDENT,
             ))
     
     # ─── Beispiel-Aufgabe (Text) ────────────────────────────────
@@ -303,6 +337,7 @@ app.include_router(auth.router)
 app.include_router(user_settings.router)
 app.include_router(admin.router)
 app.include_router(tutor.router)
+app.include_router(course_members.router)
 app.include_router(student.router)
 
 
@@ -366,13 +401,17 @@ async def index(
     
     courses = _get_user_courses(user, session)
 
-    # Quick Stats fuer Studenten
+    # Quick Stats fuer Studenten (nur wenn User mindestens eine STUDENT-Rolle hat)
     total_completed = 0
     total_points_earned = 0.0
     total_points_possible = 0
     stats_by_course = {}
-    if user.role.value == "student":
-        for c in courses:
+    student_courses = [
+        c for c in courses
+        if c["role_in_course"] == CourseRole.STUDENT.value
+    ]
+    if student_courses:
+        for c in student_courses:
             course_id = c["id"]
             tasks = session.exec(
                 select(Task).where(Task.course_id == course_id)
@@ -409,6 +448,10 @@ async def index(
     if total_points_possible > 0:
         pct = round(total_points_earned / total_points_possible * 100, 1)
 
+    # Rolle anzeigen: Admin bleibt "Admin", User zeigt die Rolle im aktuellen Kurs
+    # Auf dem Dashboard (kein Kurs) zeigen wir die globale Rolle
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -418,7 +461,7 @@ async def index(
                 "id": user.id,
                 "username": user.username,
                 "name": user.name,
-                "role": user.role.value,
+                "role": display_role,
             },
             "courses": courses,
             "selected_course_id": None,
@@ -459,7 +502,7 @@ async def _do_login(
     if not user:
         return None, "Ungültiger Username oder Password.", 401
     
-    token_data = {"sub": user.id, "username": user.username, "role": user.role.value}
+    token_data = {"sub": user.id, "username": user.username}
     token = create_access_token(token_data)
     
     return user, token, 200
@@ -547,7 +590,7 @@ async def course_page(
     courses = _get_user_courses(user, session)
     
     # Template je nach Rolle
-    is_tutor = membership.role_in_course in (UserRole.ADMIN, UserRole.TUTOR)
+    is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
     template = "tutor/course_overview.html" if is_tutor else "student/course_overview.html"
     
     # Für Studenten: my_points und has_feedback pro Aufgabe berechnen
@@ -627,7 +670,7 @@ async def new_task_page(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
     """Neue Aufgabe erstellen."""
     user, _ = user_and_course
@@ -636,6 +679,18 @@ async def new_task_page(
         raise HTTPException(404, "Kurs nicht gefunden.")
 
     courses = _get_user_courses(user, session)
+
+    # Rolle im Kurs ermitteln
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    course_role = membership.role_in_course.value if membership else "TUTOR"
+
+    # Global-Admin zeigt als PROF im Kurs-Kontext
+    if user.role == GlobalUserRole.ADMIN:
+        course_role = "PROF"
 
     return templates.TemplateResponse(
         "tutor/task_detail.html",
@@ -646,7 +701,7 @@ async def new_task_page(
                 "id": user.id,
                 "username": user.username,
                 "name": user.name,
-                "role": "tutor",
+                "role": course_role,
             },
             "courses": courses,
             "selected_course_id": course_id,
@@ -692,7 +747,7 @@ async def task_page(
     if not membership:
         raise HTTPException(403, "Kein Zugriff.")
     
-    is_tutor = membership.role_in_course in (UserRole.ADMIN, UserRole.TUTOR)
+    is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
     is_code = task.task_type.value == "code"
     
     template = (
@@ -813,8 +868,8 @@ async def overview_page(
         .where(UserCourse.course_id == course_id)
     ).first()
     
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
-        raise HTTPException(403, "Nur für Tutor/Admin.")
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Nur für PROF/Tutor.")
     
     courses = _get_user_courses(user, session)
     
@@ -859,8 +914,8 @@ async def submission_review_page(
         .where(UserCourse.course_id == course_id)
     ).first()
     
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
-        raise HTTPException(403, "Nur für Tutor/Admin.")
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Nur für PROF/Tutor.")
     
     task = session.get(Task, task_id)
     if not task or task.course_id != course_id:
@@ -911,6 +966,9 @@ async def settings_page(
     courses = _get_user_courses(user, session)
     use_ldap = not user.password_hash  # LDAP-User haben keinen DB-Password-Hash
 
+    # Rolle anzeigen: Admin bleibt "Admin", User zeigt generisch "User"
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
+
     return templates.TemplateResponse(
         "user_settings.html",
         {
@@ -920,7 +978,7 @@ async def settings_page(
                 "id": user.id,
                 "username": user.username,
                 "name": user.name,
-                "role": user.role.value,
+                "role": display_role,
             },
             "courses": courses,
             "selected_course_id": None,
@@ -937,7 +995,7 @@ async def admin_page(
 ):
     """Admin: Kurse verwalten, User erstellen, Settings."""
     # Admin-Check (manuell, da wir in Page-Route sind)
-    if user.role != UserRole.ADMIN:
+    if user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Nur für Administratoren.")
     
     courses = _get_user_courses(user, session)

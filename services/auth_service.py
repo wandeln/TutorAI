@@ -8,9 +8,8 @@ Unterstützt zwei Auth-Modi:
 JWT-Tokens werden in httpOnly-Cookies gespeichert.
 """
 
-import time
 from datetime import datetime, timedelta
-from typing import Optional, Tuple
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status, Request
 from sqlmodel import Session, select
@@ -20,7 +19,7 @@ from config import (
     LDAP_ENABLED, LDAP_SERVER, LDAP_BASE_DN, LDAP_USER_SEARCH,
 )
 from database.base import get_session
-from database.models import User, UserRole, UserCourse
+from database.models import User, GlobalUserRole, CourseRole, UserCourse
 import hashlib
 import secrets
 
@@ -142,8 +141,6 @@ def authenticate_ldap(user: User, password: str) -> Optional[User]:
 
 # ─── RBAC Middleware / Dependencies ─────────────────────────────
 
-# No HTTPCookieSecurity needed — we read cookies directly from Request
-
 
 async def get_current_user(
     request: Request,
@@ -178,13 +175,13 @@ async def get_current_user(
     return user
 
 
-def require_role(*allowed_roles: UserRole):
+def require_global_admin():
     """
-    Dependency-Factory: Prüft, ob der User die nötige Rolle hat.
+    Dependency-Factory: Prüft, ob der User global ADMIN ist.
     
     Usage:
         @router.get("/admin/stuff")
-        async def admin_stuff(user: User = Depends(require_role(UserRole.ADMIN))):
+        async def admin_stuff(user: User = Depends(require_global_admin())):
     """
     async def role_check(
         request: Request,
@@ -210,10 +207,10 @@ def require_role(*allowed_roles: UserRole):
         if not user:
             raise HTTPException(status_code=401, detail="User nicht gefunden.")
         
-        if user.role not in allowed_roles:
+        if user.role != GlobalUserRole.ADMIN:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Zugriff verweigert. Benötigte Rollen: {', '.join(r.value for r in allowed_roles)}",
+                detail="Zugriff verweigert. Nur Administratoren.",
             )
         
         return user
@@ -223,28 +220,28 @@ def require_role(*allowed_roles: UserRole):
 _COURSE_ID_CACHE = {}
 
 
-def require_course_access(*allowed_roles: UserRole):
+def require_course_access(*allowed_roles: CourseRole):
     """
     Dependency-Factory: Prüft Kurs-Zugehörigkeit + Rolle im Kurs.
     
     Die course_id wird automatisch vom URL-Path extrahiert (z.B. /courses/{course_id}/...).
     Kein manueller Parameter nötig!
     
-    Admin (global) hat immer Zugriff auf alle Kurse.
+    Global-Admin hat immer Zugriff auf alle Kurse.
     
     Usage:
         @router.get("/courses/{course_id}/tasks")
         async def list_tasks(
             course_id: int,
             session: Session = Depends(get_session),
-            user: User = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+            user: User = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
         ):
     """
     async def course_check(
         request: Request,
         user: User = Depends(get_current_user),
         session: Session = Depends(get_session),
-    ) -> Tuple[User, int]:
+    ) -> tuple[User, int]:
         # course_id aus Path-Parametern extrahieren
         course_id = request.path_params.get("course_id")
         if course_id is None:
@@ -255,7 +252,7 @@ def require_course_access(*allowed_roles: UserRole):
         course_id = int(course_id)
         
         # Global-Admin hat überall Zugriff
-        if user.role == UserRole.ADMIN:
+        if user.role == GlobalUserRole.ADMIN:
             return user, course_id
         
         # Prüfen, ob User Mitglied des Kurses ist

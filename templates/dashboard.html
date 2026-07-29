@@ -6,11 +6,11 @@
   <!-- Welcome Header -->
   <div class="mb-8">
     <h1 class="text-3xl font-bold text-gray-800">Willkommen, {{ current_user.name }}!</h1>
-    <p class="text-gray-500 mt-1">Hier ueberblickst du deine Kurse und deinen Fortschritt.</p>
+    <p class="text-gray-500 mt-1">Hier überblickst du deine Kurse und deinen Fortschritt.</p>
   </div>
 
-  <!-- Gesamtkennzahlen (nur fuer Studenten) -->
-  {% if current_user.role == 'student' %}
+  <!-- Gesamtkennzahlen (nur für Studenten — basiert auf stats_by_course) -->
+  {% if stats_by_course and stats_by_course|length > 0 %}
   <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
     <div class="bg-white rounded-xl shadow-lg border border-gray-200 text-center p-5">
       <div class="text-2xl font-bold text-blue-600">{{ courses|length }}</div>
@@ -35,8 +35,8 @@
 
       <!-- Top: colored accent bar -->
       <div class="h-1
-        {% if course.role_in_course == 'admin' %}bg-purple-500
-        {% elif course.role_in_course == 'tutor' %}bg-blue-500
+        {% if course.role_in_course == 'PROF' %}bg-purple-500
+        {% elif course.role_in_course == 'TUTOR' %}bg-blue-500
         {% else %}bg-green-500
         {% endif %}"></div>
 
@@ -46,15 +46,15 @@
       <div class="flex items-start justify-between mb-3">
         <h2 class="text-lg font-semibold text-gray-800 leading-tight">{{ course.name }}</h2>
         <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium
-          {% if course.role_in_course == 'admin' %}bg-purple-100 text-purple-700
-          {% elif course.role_in_course == 'tutor' %}bg-blue-100 text-blue-700
+          {% if course.role_in_course == 'PROF' %}bg-purple-100 text-purple-700
+          {% elif course.role_in_course == 'TUTOR' %}bg-blue-100 text-blue-700
           {% else %}bg-green-100 text-green-700
-          {% endif %}">
+          {% endif %}>">
           {{ course.role_in_course }}
         </span>
       </div>
 
-      {% if current_user.role == 'student' and stats_by_course|length > 0 %}
+      {% if course.role_in_course == 'STUDENT' and stats_by_course|length > 0 %}
         {% set cs = stats_by_course.get(course.id) %}
         {% if cs %}
           <!-- Aufgaben-Fortschritt -->
@@ -84,7 +84,7 @@
         {% else %}
           <p class="text-gray-400 text-sm mt-2">Noch keine Aufgaben</p>
         {% endif %}
-      {% elif current_user.role != 'student' %}
+      {% elif course.role_in_course != 'STUDENT' %}
         <p class="text-gray-500 text-sm mt-2">Zum Kurs öffnen →</p>
       {% else %}
         <p class="text-gray-400 text-sm mt-2">Noch keine Aufgaben</p>

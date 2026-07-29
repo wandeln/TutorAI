@@ -1,7 +1,7 @@
 """
 Tutor-Endpoints: Aufgaben-Management + Korrektur + Übersicht.
 
-Rollen: Tutor (im Kurs), Admin (global)
+Rollen: Tutor und PROF (im Kurs), Admin (global)
 """
 
 from datetime import datetime, timezone
@@ -14,8 +14,10 @@ from sqlmodel import Session, select
 from database.base import get_session
 from database.models import (
     Course,
+    CourseRole,
     Feedback,
     FeedbackSource,
+    GlobalUserRole,
     Submission,
     SubmissionStatus,
     Task,
@@ -24,7 +26,6 @@ from database.models import (
     TestCaseCreate,
     User,
     UserCourse,
-    UserRole,
 )
 from services.auth_service import get_current_user, require_course_access
 from services.export_service import ExportService
@@ -46,7 +47,7 @@ async def list_tasks(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
     """Alle Aufgaben eines Kurses auflisten."""
     tasks = list(session.exec(
@@ -76,7 +77,7 @@ async def create_task(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
     """Neue Aufgabe erstellen."""
     user, _ = user_and_course
@@ -151,14 +152,14 @@ async def get_task(
         raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
     
     is_tutor = (
-        user.role == UserRole.ADMIN
+        user.role == GlobalUserRole.ADMIN
         or (
             session.exec(
                 select(UserCourse.role_in_course)
                 .where(UserCourse.user_id == user.id)
                 .where(UserCourse.course_id == task.course_id)
             ).first()
-            in (UserRole.ADMIN, UserRole.TUTOR)
+            in (CourseRole.PROF, CourseRole.TUTOR)
         )
     )
     
@@ -219,7 +220,7 @@ async def update_task(
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == task.course_id)
     ).first()
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Keine Berechtigung, diese Aufgabe zu bearbeiten.")
     
     body = await request.json()
@@ -283,7 +284,7 @@ async def delete_task(
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == task.course_id)
     ).first()
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Keine Berechtigung, diese Aufgabe zu löschen.")
     
     # Delete related test cases first
@@ -338,7 +339,7 @@ async def ai_suggest_task(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
     """
     LLM generiert Aufgabenvorschlag.
@@ -409,7 +410,7 @@ async def generate_model_solution(
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Keine Berechtigung.")
     
     result = await llm_service.generate_model_solution(
@@ -566,7 +567,7 @@ async def get_student_submissions(
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Nur für Tutor/Admin.")
 
     task = session.get(Task, task_id)
@@ -651,7 +652,7 @@ async def get_overview(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
     filter_text: Optional[str] = None,
     type_filter: Optional[str] = None,
 ):
@@ -668,7 +669,7 @@ async def get_overview(
     members = session.exec(
         select(UserCourse)
         .where(UserCourse.course_id == course_id)
-        .where(UserCourse.role_in_course == UserRole.STUDENT)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
     ).all()
     
     students = [session.get(User, m.user_id) for m in members]
@@ -749,7 +750,7 @@ async def export_excel(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(UserRole.ADMIN, UserRole.TUTOR)),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
     filter_text: Optional[str] = None,
 ):
     """Excel-Export der Übersichtstabelle."""
@@ -761,7 +762,7 @@ async def export_excel(
     members = session.exec(
         select(UserCourse)
         .where(UserCourse.course_id == course_id)
-        .where(UserCourse.role_in_course == UserRole.STUDENT)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
     ).all()
     students = [session.get(User, m.user_id) for m in members]
     students = [s for s in students if s]

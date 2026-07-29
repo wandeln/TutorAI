@@ -19,10 +19,15 @@ from sqlmodel import SQLModel, Field, Relationship
 # ENUMS
 # ═══════════════════════════════════════════════════════════════════
 
-class UserRole(str, Enum):
-    ADMIN = "admin"
-    TUTOR = "tutor"
-    STUDENT = "student"
+class GlobalUserRole(str, Enum):
+    ADMIN = "ADMIN"
+    USER = "USER"
+
+
+class CourseRole(str, Enum):
+    PROF = "PROF"
+    TUTOR = "TUTOR"
+    STUDENT = "STUDENT"
 
 
 class TaskType(str, Enum):
@@ -55,7 +60,7 @@ class UserBase(SQLModel):
     username: str = Field(unique=True, index=True, max_length=100)
     email: str = Field(max_length=200)
     name: str = Field(max_length=200)
-    role: UserRole
+    role: GlobalUserRole = GlobalUserRole.USER    # Global: ADMIN oder USER
     password_hash: Optional[str] = Field(default=None)   # NULL bei LDAP-Users
     ldap_dn: Optional[str] = Field(default=None)         # Distinguished Name
 
@@ -126,7 +131,7 @@ class CourseRead(CourseBase):
 class UserCourseBase(SQLModel):
     user_id: int = Field(foreign_key="users.id")
     course_id: int = Field(foreign_key="courses.id")
-    role_in_course: UserRole
+    role_in_course: CourseRole
 
 
 class UserCourse(UserCourseBase, table=True):
@@ -140,14 +145,14 @@ class UserCourse(UserCourseBase, table=True):
 
 class UserCourseCreate(SQLModel):
     user_ids: List[int] = Field(default=[])   # IDs der User hinzuzufügen
-    role_in_course: UserRole
+    role_in_course: CourseRole
 
 
 class UserCourseRead(SQLModel):
     id: int
     user_id: int
     course_id: int
-    role_in_course: UserRole
+    role_in_course: CourseRole
     user: Optional[UserRead] = None
 
 

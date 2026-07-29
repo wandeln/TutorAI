@@ -13,11 +13,12 @@ from database.models import (
     CourseCreate,
     CourseSettings,
     CourseSettingsUpdate,
+    GlobalUserRole,
+    CourseRole,
     User,
     UserCourse,
-    UserRole,
 )
-from services.auth_service import hash_password, require_role
+from services.auth_service import hash_password, require_global_admin
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/api/admin", tags=["Admin"])
 @router.get("/courses")
 async def list_courses(
     session: Session = Depends(get_session),
-    user: User = Depends(require_role(UserRole.ADMIN)),
+    user: User = Depends(require_global_admin()),
 ):
     """Alle Kurse auflisten."""
     courses = session.exec(select(Course)).all()
@@ -50,7 +51,7 @@ async def list_courses(
 async def create_course(
     data: CourseCreate,
     session: Session = Depends(get_session),
-    user: User = Depends(require_role(UserRole.ADMIN)),
+    user: User = Depends(require_global_admin()),
 ):
     """Neuen Kurs erstellen."""
     course = Course(
@@ -63,11 +64,11 @@ async def create_course(
     session.commit()
     session.refresh(course)
     
-    # Admin automatisch als Kurs-Member hinzufügen
+    # Admin automatisch als Kurs-Member mit PROF-Rolle hinzufügen
     membership = UserCourse(
         user_id=user.id,  # type: ignore[arg-type]
         course_id=course.id,  # type: ignore[arg-type]
-        role_in_course=UserRole.ADMIN,
+        role_in_course=CourseRole.PROF,
     )
     session.add(membership)
     session.commit()
@@ -86,7 +87,7 @@ async def create_course(
 async def delete_course(
     course_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_role(UserRole.ADMIN)),
+    user: User = Depends(require_global_admin()),
 ):
     """Kurs löschen (inkl. aller Aufgaben und Einreichungen)."""
     course = session.get(Course, course_id)
@@ -106,7 +107,7 @@ async def delete_course(
 @router.get("/users")
 async def list_users(
     session: Session = Depends(get_session),
-    user: User = Depends(require_role(UserRole.ADMIN)),
+    user: User = Depends(require_global_admin()),
 ):
     """Alle User auflisten."""
     users = session.exec(select(User)).all()
@@ -126,15 +127,14 @@ async def list_users(
 async def create_user(
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_role(UserRole.ADMIN)),
+    user: User = Depends(require_global_admin()),
 ):
-    """Neuen User erstellen (Admin-only)."""
+    """Neuen User erstellen (Admin-only). Always GlobalUserRole.USER."""
     body = await request.json()
     
     username = body.get("username", "").strip()
     email = body.get("email", "").strip()
     name = body.get("name", "").strip()
-    role = body.get("role", "student")
     password = body.get("password", "")
     
     if not all([username, email, name]):
@@ -153,7 +153,7 @@ async def create_user(
         username=username,
         email=email,
         name=name,
-        role=UserRole(role),
+        role=GlobalUserRole.USER,
         password_hash=pw_hash,
     )
     
@@ -177,9 +177,9 @@ async def update_user(
     user_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
-    """User-Daten aktualisieren."""
+    """User-Daten aktualisieren (Name, Email, Password, globale Rolle)."""
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User nicht gefunden.")
@@ -191,7 +191,8 @@ async def update_user(
     if "email" in body:
         user.email = body["email"]
     if "role" in body:
-        user.role = UserRole(body["role"])
+        # Erlaube Änderung der globalen Rolle (z.B. USER -> ADMIN oder umgekehrt)
+        user.role = GlobalUserRole(body["role"].upper())
     if "password" in body and body["password"]:
         user.password_hash = hash_password(body["password"])
     
@@ -215,7 +216,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """User löschen."""
     if user_id == current_user.id:
@@ -231,7 +232,7 @@ async def delete_user(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# KURS-MITGLIEDER
+# KURS-MITGLIEDER (Admin)
 # ═══════════════════════════════════════════════════════════════════
 
 @router.post("/courses/{course_id}/members")
@@ -239,15 +240,15 @@ async def add_members_to_course(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """
-    Studenten / Tutoren zu einem Kurs hinzufügen.
+    User zu einem Kurs hinzufügen (Admin-only).
     
     Request:
         {
             "user_ids": [1, 2, 3],
-            "role_in_course": "student"  // oder "tutor"
+            "role_in_course": "prof" | "tutor" | "student"
         }
     """
     course = session.get(Course, course_id)
@@ -256,7 +257,7 @@ async def add_members_to_course(
     
     body = await request.json()
     user_ids = body.get("user_ids", [])
-    role_in_course = UserRole(body.get("role_in_course", "student"))
+    role_in_course = CourseRole(body.get("role_in_course", "STUDENT").upper())
     
     added = []
     for uid in user_ids:
@@ -296,7 +297,7 @@ async def add_members_to_course(
 async def list_course_members(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """Alle Mitglieder eines Kurses auflisten."""
     members = session.exec(
@@ -320,7 +321,7 @@ async def remove_member_from_course(
     course_id: int,
     user_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """Mitglied aus Kurs entfernen."""
     membership = session.exec(
@@ -345,7 +346,7 @@ async def remove_member_from_course(
 async def get_course_settings(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """Kurs-Einstellungen laden (LLM-Config, LDAP, Prompts)."""
     settings = session.exec(
@@ -375,7 +376,7 @@ async def update_course_settings(
     course_id: int,
     data: CourseSettingsUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    current_user: User = Depends(require_global_admin()),
 ):
     """Kurs-Einstellungen aktualisieren."""
     settings = session.exec(

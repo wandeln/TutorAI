@@ -110,13 +110,13 @@
         </select>
 
         <!-- User Info -->
-        <div class="flex items-center gap-2 text-sm" id="user-info">
+        <a href="/settings" class="flex items-center gap-2 text-sm hover:opacity-80 transition" id="user-info">
           <span>👤</span>
           <span>{{ current_user.name }}</span>
           <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
             {{ current_user.role }}
           </span>
-        </div>
+        </a>
 
         <!-- Logout -->
         <button
@@ -153,13 +153,13 @@
           {% endfor %}
         </select>
 
-        <div class="flex items-center gap-2 text-sm">
+        <a href="/settings" class="flex items-center gap-2 text-sm hover:opacity-80 transition">
           <span>👤</span>
           <span>{{ current_user.name }}</span>
           <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
             {{ current_user.role }}
           </span>
-        </div>
+        </a>
 
         <button
           hx-post="/api/auth/logout"

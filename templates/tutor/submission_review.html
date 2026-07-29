@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <div class="flex items-center gap-3 mb-2">
+        <a href="/courses/{{ course_id }}" class="text-blue-600 hover:underline text-sm">
+          ← Kursübersicht
+        </a>
+        <span class="text-gray-400">/</span>
+        <a href="/courses/{{ course_id }}/overview" class="text-blue-600 hover:underline text-sm">
+          Punktübersicht
+        </a>
+        <span class="text-gray-400">/</span>
+        <span class="text-sm text-gray-500">Bewertung</span>
+      </div>
+      <h1 class="text-2xl font-bold text-gray-900">Einreichung bewerten</h1>
+    </div>
+  </div>
+
+  <!-- Student & Task Info -->
+  <div class="card mb-6">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+      <div>
+        <span class="text-gray-500">Student</span>
+        <p class="font-medium text-gray-900">{{ student_name }} ({{ student_username }})</p>
+      </div>
+      <div>
+        <span class="text-gray-500">Aufgabe</span>
+        <p class="font-medium text-gray-900">{{ task_title }}</p>
+      </div>
+      <div>
+        <span class="text-gray-500">Aufgabentyp</span>
+        <p class="font-medium text-gray-900">{{ task_type_display }}</p>
+      </div>
+      <div>
+        <span class="text-gray-500">Max. Punkte</span>
+        <p class="font-medium text-gray-900">{{ max_points }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Task Description -->
+  <div class="card mb-6">
+    <h2 class="text-lg font-semibold text-gray-800 mb-3">Aufgabenstellung</h2>
+    <div id="task-description" class="markdown-preview-area"></div>
+    <div id="model-solution-container" class="hidden mt-4 pt-4 border-t border-gray-200">
+      <h3 class="text-sm font-semibold text-gray-600 mb-2">Musterlösung (versteckt für Studenten)</h3>
+      <div id="model-solution" class="markdown-preview-area"></div>
+    </div>
+  </div>
+
+  <!-- Submissions -->
+  <div class="space-y-6" id="submissions-container">
+    <!-- Filled by JS -->
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  var courseId = {{ course_id }};
+  var taskId = {{ task_id }};
+  var studentId = {{ student_id }};
+
+  /**
+   * renderMarkdownHtml — wie renderMarkdown, aber gibt den HTML-String zur\u00FCck
+   * statt in ein DOM-Element zu schreiben. Benutzt dieselbe Pipeline:
+   * LaTeX-Extraction → marked → KaTeX → hljs → entity decode.
+   */
+  function renderMarkdownHtml(text) {
+    if (!text || typeof text !== 'string') return '';
+
+    var latexBlocks = [];
+    var processed = text.replace(/\$\$([\s\S]*?)\$\$/g, function(match, latex) {
+      var idx = latexBlocks.length;
+      latexBlocks.push(latex.trim());
+      return '%%LATEX_BLOCK_' + idx + '%%';
+    });
+
+    var mdHtml = marked.parse(processed, {
+      breaks: true,
+      gfm: true,
+      headerIds: false,
+      mangle: false,
+    });
+
+    var html = mdHtml;
+    latexBlocks.forEach(function(latex, idx) {
+      var rendered;
+      try {
+        rendered = katex.renderToString(latex, { displayMode: true, throwOnError: false, trust: true });
+      } catch (e) {
+        rendered = '<pre class="text-red-500 bg-red-50 p-2 rounded">KaTeX Error: ' + e.message + '</pre>';
+      }
+      html = html.replace('%%LATEX_BLOCK_' + idx + '%%', rendered);
+    });
+
+    // Inline LaTeX
+    var parts = html.split(/(<[^>]*>)/g);
+    html = parts.map(function(part, i) {
+      if (i % 2 === 0 && part.indexOf('$') !== -1) {
+        return part.replace(/\$([^\$]+?)\$/g, function(match, latex) {
+          try {
+            return katex.renderToString(latex.trim(), { displayMode: false, throwOnError: false, trust: true });
+          } catch (e) {
+            return '<span class="text-red-500">\\(' + latex + '\\)</span>';
+          }
+        });
+      }
+      return part;
+    }).join('');
+
+    // Syntax highlighting
+    html = html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, function(match, attrs, code) {
+      var decoded = code.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+      var isPython = attrs.indexOf('python') !== -1 || !attrs.trim();
+      if (isPython && typeof hljs !== 'undefined') {
+        try {
+          var highlighted = hljs.highlight(decoded.trim(), { language: 'python' }).value;
+          return '<pre><code class="language-python">' + highlighted + '</code></pre>';
+        } catch (e) {}
+      }
+      var escaped = decoded.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return '<pre><code' + attrs + '>' + escaped + '</code></pre>';
+    });
+
+    // Decode text entities
+    var parts2 = html.split(/(<pre>[\s\S]*?<\/pre>|<[^>]*>)/g);
+    html = parts2.map(function(part, i) {
+      if (i % 2 === 0) {
+        return part.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      }
+      return part;
+    }).join('');
+
+    return html;
+  }
+
+  // ─── Load Data ────────────────────────────────────────────────
+  async function loadData() {
+    try {
+      var url = '/api/courses/' + courseId + '/tasks/' + taskId + '/students/' + studentId + '/submissions';
+      var res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) {
+        var data = await res.json();
+        showToast(data.detail || 'Fehler beim Laden.', 'error');
+        return;
+      }
+      var data = await res.json();
+      render(data);
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Render ───────────────────────────────────────────────────
+  function render(data) {
+    // Aufgabenstellung — renderMarkdown setzt innerHTML mit markdown-preview wrapper
+    renderMarkdown(data.task.description, document.getElementById('task-description'));
+
+    // Musterlösung — gleiches Rendering
+    if (data.task.model_solution) {
+      renderMarkdown(data.task.model_solution, document.getElementById('model-solution'));
+      document.getElementById('model-solution-container').classList.remove('hidden');
+    }
+
+    var container = document.getElementById('submissions-container');
+    if (data.submissions.length === 0) {
+      container.innerHTML = '<div class="card text-center py-8 text-gray-500">Keine Einreichungen gefunden.</div>';
+      return;
+    }
+
+    var html = '';
+    data.submissions.forEach(function(sub) {
+      var statusColors = {
+        pending: 'bg-yellow-100 text-yellow-800',
+        graded: 'bg-blue-100 text-blue-800',
+        overridden: 'bg-green-100 text-green-800',
+      };
+      var statusLabels = {
+        pending: 'Ausstehend',
+        graded: 'Bewertet (LLM)',
+        overridden: 'Von Tutor bewertet',
+      };
+      var statusClass = statusColors[sub.status] || 'bg-gray-100 text-gray-800';
+      var statusLabel = statusLabels[sub.status] || sub.status;
+
+      html += '<div class="card">';
+      html += '  <div class="flex items-center justify-between mb-4">';
+      html += '    <h3 class="text-lg font-semibold text-gray-800">Versuch #' + sub.attempt_number + '</h3>';
+      html += '    <div class="flex items-center gap-3">';
+      html += '      <span class="text-sm text-gray-500">' + formatDate(sub.submitted_at) + '</span>';
+      html += '      <span class="badge ' + statusClass + '">' + statusLabel + '</span>';
+      html += '    </div>';
+      html += '  </div>';
+
+      // Solution
+      html += '  <div class="mb-4">';
+      html += '    <h4 class="text-sm font-semibold text-gray-600 mb-2">Lösung des Students</h4>';
+      html += '    <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">';
+      if (sub.code_solution) {
+        html += '      <pre class="bg-gray-900 text-gray-100 p-4 rounded-lg text-sm overflow-x-auto"><code>' + escapeHtml(sub.code_solution) + '</code></pre>';
+      } else {
+        html += '      <div class="markdown-preview">' + renderMarkdownHtml(sub.solution) + '</div>';
+      }
+      html += '    </div>';
+      html += '  </div>';
+
+      // Feedback List
+      html += '  <div class="space-y-3">';
+
+      if (sub.feedback.length === 0) {
+        html += '    <p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>';
+      } else {
+        sub.feedback.forEach(function(fb) {
+          var isLlm = fb.source === 'llm';
+          var sourceIcon = isLlm ? '\uD83E\uDD16' : '\uD83D\uDC64';
+          var sourceClass = isLlm ? 'border-l-purple-500' : 'border-l-blue-500';
+          var sourceLabel = isLlm ? 'LLM-Bewertung' : 'Tutor-Bewertung';
+          var sourceHeaderClass = isLlm ? 'text-purple-700' : 'text-blue-700';
+
+          html += '    <div class="feedback-box ' + sourceClass + ' rounded-lg">';
+          html += '      <div class="flex items-center justify-between mb-2">';
+          html += '        <h5 class="text-sm font-semibold ' + sourceHeaderClass + '">' + sourceIcon + ' ' + sourceLabel + '</h5>';
+          html += '        <div class="flex items-center gap-2">';
+          html += '          <span class="text-sm font-mono font-bold">' + fb.points_earned + ' / ' + data.task.max_points + ' P</span>';
+          html += '          <span class="text-xs text-gray-400">' + fb.giver + ' \u00B7 ' + formatDate(fb.created_at) + '</span>';
+          html += '        </div>';
+          html += '      </div>';
+          html += '      <div class="markdown-preview">' + renderMarkdownHtml(fb.comment) + '</div>';
+
+          // Action Buttons
+          html += '      <div class="flex items-center gap-2 mt-3">';
+
+          if (isLlm) {
+            html += '        <button onclick="approveLlm(' + sub.id + ', ' + fb.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"';
+            html += '                class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition">';
+            html += '          \u2713 LLM-Bewertung übernehmen';
+            html += '        </button>';
+          } else {
+            html += '        <span class="text-sm text-gray-500">\u2705 Diese Bewertung ist aktiv (Tutor-Überschreibung)</span>';
+          }
+
+          html += '        <button onclick="openOverridePanel(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"';
+          html += '                class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">';
+          html += '          \u270F\uFE0F Korrekturen bearbeiten';
+          html += '        </button>';
+          html += '      </div>';
+
+          // Override Panel (hidden by default)
+          html += '      <div id="override-panel-' + sub.id + '" class="hidden mt-4 pt-4 border-t border-gray-200">';
+          html += '        <h5 class="text-sm font-semibold text-gray-700 mb-2">Feedback bearbeiten</h5>';
+          html += '        <div class="space-y-3">';
+          html += '          <div>';
+          html += '            <label class="block text-xs font-medium text-gray-600 mb-1">Punkte (0 — ' + data.task.max_points + ')</label>';
+          html += '            <input type="number" id="override-points-' + sub.id + '" min="0" max="' + data.task.max_points + '" step="0.5"';
+          html += '                   value="' + fb.points_earned + '" class="w-32 border border-gray-300 rounded px-3 py-2 text-sm">';
+          html += '          </div>';
+          html += '          <div>';
+          html += '            <label class="block text-xs font-medium text-gray-600 mb-1">Feedback-Text (Markdown + LaTeX)</label>';
+          html += '            <textarea id="override-comment-' + sub.id + '" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' + escapeHtml(fb.comment) + '</textarea>';
+          html += '          </div>';
+          html += '          <div class="flex items-center gap-2">';
+          html += '            <button onclick="submitOverride(' + sub.id + ', ' + data.task.max_points + ')" class="text-sm bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">';
+          html += '              \uD83D\uDCBE Überschreiben & speichern';
+          html += '            </button>';
+          html += '            <button onclick="closeOverridePanel(' + sub.id + ')" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-2">Abbrechen</button>';
+          html += '          </div>';
+          html += '        </div>';
+          html += '      </div>';
+          html += '    </div>';
+        });
+      }
+
+      html += '  </div>';
+      html += '</div>';
+    });
+
+    container.innerHTML = html;
+  }
+
+  // ─── Actions ──────────────────────────────────────────────────
+
+  function openOverridePanel(subId, points, comment) {
+    document.getElementById('override-points-' + subId).value = points;
+    document.getElementById('override-comment-' + subId).value = comment;
+    var panel = document.getElementById('override-panel-' + subId);
+    panel.classList.remove('hidden');
+  }
+
+  function closeOverridePanel(subId) {
+    var panel = document.getElementById('override-panel-' + subId);
+    panel.classList.add('hidden');
+  }
+
+  async function approveLlm(subId, fbId, points, comment) {
+    if (!confirm('LLM-Bewertung (' + points + ' Punkte) als Tutor-Bewertung übernehmen?')) return;
+
+    try {
+      var url = '/api/tasks/' + taskId + '/submissions/' + subId + '/feedback';
+      var res = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points_earned: points, comment: comment }),
+      });
+
+      var data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Übernehmen.', 'error');
+        return;
+      }
+
+      showToast('LLM-Bewertung wurde vom Tutor übernommen.', 'success');
+      loadData();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  async function submitOverride(subId, maxPoints) {
+    var pointsInput = document.getElementById('override-points-' + subId);
+    var commentInput = document.getElementById('override-comment-' + subId);
+
+    var points = parseFloat(pointsInput.value);
+    if (isNaN(points) || points < 0 || points > maxPoints) {
+      showToast('Punkte müssen zwischen 0 und ' + maxPoints + ' liegen.', 'error');
+      return;
+    }
+
+    var comment = commentInput.value.trim();
+    if (!comment) {
+      showToast('Bitte gib einen Feedback-Text ein.', 'error');
+      return;
+    }
+
+    try {
+      var url = '/api/tasks/' + taskId + '/submissions/' + subId + '/feedback';
+      var res = await fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points_earned: points, comment: comment }),
+      });
+
+      var data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Speichern.', 'error');
+        return;
+      }
+
+      showToast('Bewertung wurde überschrieben.', 'success');
+      loadData();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Helpers ──────────────────────────────────────────────────
+
+  function formatDate(isoStr) {
+    if (!isoStr) return '\u2014';
+    var d = new Date(isoStr);
+    return d.toLocaleString('de-DE', {
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function escapeForAttr(str) {
+    return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
+  }
+
+  // ─── Initial Load ─────────────────────────────────────────────
+  loadData();
+</script>
+{% endblock %}

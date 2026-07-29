@@ -10,17 +10,19 @@ Unterstützt:
 
 import asyncio
 import json
+import logging
 import time
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+from typing import Optional, Any
 
 from jinja2 import Template
 from openai import AsyncOpenAI
 
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
-from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE, GRADING_PROMPT_TEMPLATE
+from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_PROMPT_TEMPLATE
 from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
 from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE
+
+logger = logging.getLogger(__name__)
 
 
 class LLMService:
@@ -63,6 +65,8 @@ class LLMService:
             result = result.replace(placeholder, str(value))
         return result
 
+    # ── Public methods ───────────────────────────────────────────
+
     async def grade_text_task(
         self,
         task_description: str,
@@ -70,7 +74,7 @@ class LLMService:
         student_solution: str,
         max_points: int,
         custom_prompt: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ):
         """Korrigiert eine Textaufgabe via LLM."""
 
         prompt = self._render_prompt(
@@ -91,7 +95,7 @@ class LLMService:
         test_results: str,
         max_points: int,
         custom_prompt: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ):
         """Korrigiert eine Codeaufgabe via LLM (inkl. Test-Ergebnissen)."""
 
         prompt = self._render_prompt(
@@ -112,7 +116,7 @@ class LLMService:
         task_type: str,
         title: str = "",
         context: str = "",
-    ) -> Dict[str, Any]:
+    ):
         """Generiert knappen Aufgabenvorschlag (nur Titel + Aufgabenstellung)."""
 
         prompt = Template(CREATION_PROMPT_TEMPLATE).render(
@@ -132,7 +136,7 @@ class LLMService:
         max_points: int,
         code_template: str = "",
         title: str = "",
-    ) -> Dict[str, Any]:
+    ):
         """Generiert Musterlösung als einfachen Text (kein JSON)."""
 
         code_template_section = ""
@@ -152,22 +156,129 @@ class LLMService:
 
         return await self._call_plain(prompt)
 
-    async def _call_plain(self, prompt: str) -> Dict[str, Any]:
+    async def convert_image_to_latex(
+        self,
+        image_base64: str,
+        mime_type: str = "image/png",
+    ):
+        """Konvertiert ein Foto einer handgeschriebenen Notiz mit Formeln in Markdown mit LaTeX.
+
+        Nutzt die multimodalen Faehigkeiten des LLM, um das Bild zu analysieren
+        und den enthaltenen Text und die enthaltene(n) Formel(n) als Markdown mit LaTeX-Code zurueckzugeben.
+        """
+        max_retries = 2
+        last_error = None
+
+        system_prompt = (
+            "Du bist ein Experte fuer das Erkennen von Text und mathematischen Formeln in Bildern. "
+            "Analysiere das Foto und konvertiere den Text und alle sichtbaren Formeln in gueltigen Markdown mit LaTeX-Code. "
+            "Antworte NUR mit Markdown und LaTeX-Code, keine Erklaerungen. "
+            "Nutze $ ... $ fuer inline Math und $$ ... $$ fuer display Math. "
+        )
+
+        deadline = time.monotonic() + self.timeout
+
+        for attempt in range(max_retries):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"convert_image_to_latex total timeout")
+                break
+
+            try:
+                start = time.time()
+
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt,
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{mime_type};base64,{image_base64}"
+                                        },
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "Konvertiere die Formel(n) in diesem Foto in LaTeX-Code. "
+                                            "Gib NUR den LaTeX-Code zurueck."
+                                        ),
+                                    },
+                                ],
+                            },
+                        ],
+                        temperature=0.0,
+                    ),
+                    timeout=remaining,
+                )
+
+                elapsed = time.time() - start
+                content = response.choices[0].message.content or "(keine Antwort)"
+
+                return {
+                    "success": True,
+                    "data": {"latex": content.strip()},
+                    "latency_ms": round(elapsed * 1000),
+                    "raw_response": content,
+                }
+
+            except asyncio.TimeoutError:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"convert_image_to_latex timeout (attempt {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"convert_image_to_latex error: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
+        return {
+            "success": False,
+            "error": last_error,
+            "data": {"latex": ""},
+            "latency_ms": 0,
+            "raw_response": "",
+        }
+
+    # ── Private call methods ─────────────────────────────────────
+
+    async def _call_plain(self, prompt: str):
         """Einfacher LLM-Aufruf ohne JSON-Parser — gibt rohen Text zurück."""
         max_retries = 2
         last_error = None
 
+        deadline = time.monotonic() + self.timeout
+
         for attempt in range(max_retries):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"_call_plain total timeout")
+                break
+
             try:
                 start = time.time()
 
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": "Du bist ein hilfsbereiter Tutor."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=self.temperature,
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": "Du bist ein hilfsbereiter Tutor."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        temperature=self.temperature,
+                    ),
+                    timeout=remaining,
                 )
 
                 elapsed = time.time() - start
@@ -180,8 +291,15 @@ class LLMService:
                     "raw_response": content,
                 }
 
+            except asyncio.TimeoutError:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"_call_plain timeout (attempt {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
             except Exception as e:
                 last_error = str(e)
+                logger.error(f"_call_plain error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
 
@@ -193,7 +311,7 @@ class LLMService:
             "raw_response": "",
         }
 
-    async def _call_with_json(self, prompt: str, response_format: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None):
         """
         Generischer LLM-Aufruf mit JSON-Response-Format.
 
@@ -202,22 +320,33 @@ class LLMService:
         max_retries = 2
         last_error = None
 
-        create_kwargs: Dict[str, Any] = dict(
-            model=self.model,
-            messages=[
+        create_kwargs = {
+            "model": self.model,
+            "messages": [
                 {"role": "system", "content": "Du bist ein hilfsbereiter Tutor. Antworte NUR mit gültigem JSON."},
                 {"role": "user", "content": prompt},
             ],
-            temperature=self.temperature,
-        )
+            "temperature": self.temperature,
+        }
         if response_format is not None:
             create_kwargs["response_format"] = response_format
 
+        deadline = time.monotonic() + self.timeout
+
         for attempt in range(max_retries):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"_call_with_json total timeout")
+                break
+
             try:
                 start = time.time()
 
-                response = await self.client.chat.completions.create(**create_kwargs)
+                response = await asyncio.wait_for(
+                    self.client.chat.completions.create(**create_kwargs),
+                    timeout=remaining,
+                )
 
                 elapsed = time.time() - start
 
@@ -240,8 +369,15 @@ class LLMService:
                     "raw_response": content,
                 }
 
+            except asyncio.TimeoutError:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                logger.warning(f"_call_with_json timeout (attempt {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
             except Exception as e:
                 last_error = str(e)
+                logger.error(f"_call_with_json error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
 

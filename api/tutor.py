@@ -390,21 +390,27 @@ async def generate_model_solution(
             "code_template": "...",
         }
     """
-    # Zugriff prüfen (bei neuer Aufgabe: course_id im body)
+    body = await request.json()
+
+    # Zugriff prüfen
     if task_id > 0:
         task = session.get(Task, task_id)
         if not task:
             raise HTTPException(404, "Aufgabe nicht gefunden.")
-        
-        membership = session.exec(
-            select(UserCourse)
-            .where(UserCourse.user_id == user.id)
-            .where(UserCourse.course_id == task.course_id)
-        ).first()
-        if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
-            raise HTTPException(403, "Keine Berechtigung.")
-    
-    body = await request.json()
+        course_id = task.course_id
+    else:
+        # Neue Aufgabe: course_id aus body
+        course_id = body.get("course_id")
+        if not course_id:
+            raise HTTPException(400, "course_id required for new tasks.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+        raise HTTPException(403, "Keine Berechtigung.")
     
     result = await llm_service.generate_model_solution(
         description=body.get("description", ""),
@@ -417,8 +423,11 @@ async def generate_model_solution(
     if not result.get("success"):
         raise HTTPException(500, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
     
+    data = result.get("data", {})
+    solution_text = data.get("model_solution", "") if isinstance(data, dict) else str(data)
+    
     return {
-        "solution": result.get("data", {}),
+        "solution": solution_text,
         "latency_ms": result.get("latency_ms", 0),
     }
 
@@ -539,6 +548,100 @@ async def override_feedback(
     }
 
 
+@router.get("/courses/{course_id}/tasks/{task_id}/students/{student_id}/submissions")
+async def get_student_submissions(
+    course_id: int,
+    task_id: int,
+    student_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """
+    Lädt alle Einreichungen eines Students für eine Aufgabe — für die Tutor-Bewertungsseite.
+    Enthält Aufgabenstellung, Lösungen, und alle Feedback-Einträge (LLM + Human).
+    """
+    # Berechtigungscheck
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+        raise HTTPException(403, "Nur für Tutor/Admin.")
+
+    task = session.get(Task, task_id)
+    if not task or task.course_id != course_id:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    student = session.get(User, student_id)
+    if not student:
+        raise HTTPException(404, "Student nicht gefunden.")
+
+    # Student muss Kursmitglied sein
+    student_membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == student_id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not student_membership:
+        raise HTTPException(403, "Student ist kein Mitglied dieses Kurses.")
+
+    # Alle Submissions des Students für diese Aufgabe
+    submissions = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task_id)
+        .where(Submission.student_id == student_id)
+        .order_by(Submission.submitted_at.asc())  # type: ignore[attr-defined]
+    ).all()
+
+    # Test-Case-Infos (für Code-Aufgaben)
+    test_cases = session.exec(
+        select(TestCase).where(TestCase.task_id == task_id)
+    ).all()
+
+    return {
+        "task": {
+            "id": task.id,
+            "title": task.title,
+            "task_type": task.task_type.value,
+            "description": task.description,
+            "model_solution": task.model_solution,
+            "max_points": task.max_points,
+            "code_template": task.code_template,
+            "test_count": len(test_cases),
+        },
+        "student": {
+            "id": student.id,
+            "username": student.username,
+            "name": student.name,
+        },
+        "course_id": course_id,
+        "submissions": [
+            {
+                "id": s.id,
+                "solution": s.solution,
+                "code_solution": s.code_solution,
+                "attempt_number": s.attempt_number,
+                "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+                "status": s.status.value,
+                "feedback": [
+                    {
+                        "id": f.id,
+                        "source": f.source.value,
+                        "points_earned": f.points_earned,
+                        "comment": f.comment,
+                        "giver": f.giver.name if f.giver else "LLM",
+                        "giver_id": f.giver_id,
+                        "created_at": f.created_at.isoformat() if f.created_at else None,
+                    }
+                    for f in s.feedback_list
+                ],
+            }
+            for s in submissions
+        ],
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════
 # ÜBERSICHTSTABELLE + EXCEL-EXPORT
 # ═══════════════════════════════════════════════════════════════════
@@ -585,13 +688,14 @@ async def get_overview(
         filter_lower = filter_text.lower()
         tasks = [t for t in tasks if filter_lower in t.title.lower()]
     
-    # Punkte-Matrix berechnen: {student_id: {task_id: max_points}}
+    # Punkte-Matrix berechnen: {student_id: {task_id: points}}
+    # Menschliche Bewertung hat Vorrang vor LLM-Bewertung
     scores = {}
+    has_override = {}  # {student_id: {task_id: bool}}
     for student in students:
         scores[student.id] = {}
+        has_override[student.id] = {}
         for task in tasks:
-            # Bestes Feedback pro Submission finden
-            best_points = 0
             statement = (
                 select(Submission)
                 .where(Submission.task_id == task.id)
@@ -599,11 +703,21 @@ async def get_overview(
             )
             submissions = session.exec(statement).all()
             
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
+            
             for sub in submissions:
                 for fb in sub.feedback_list:
-                    best_points = max(best_points, fb.points_earned)
+                    if fb.source == FeedbackSource.HUMAN:
+                        human_points = max(human_points, fb.points_earned)
+                        override_exists = True
+                    else:
+                        llm_points = max(llm_points, fb.points_earned)
             
-            scores[student.id][task.id] = best_points
+            final_points = human_points if override_exists else llm_points
+            scores[student.id][task.id] = final_points
+            has_override[student.id][task.id] = override_exists
     
     return {
         "course": {"id": course.id, "name": course.name},
@@ -626,6 +740,7 @@ async def get_overview(
             for t in tasks
         ],
         "scores": scores,
+        "has_override": has_override,
     }
 
 
@@ -663,7 +778,9 @@ async def export_excel(
     for student in students:
         scores[student.id] = {}
         for task in tasks:
-            best_points = 0
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
             submissions = session.exec(
                 select(Submission)
                 .where(Submission.task_id == task.id)
@@ -671,8 +788,12 @@ async def export_excel(
             ).all()
             for sub in submissions:
                 for fb in sub.feedback_list:
-                    best_points = max(best_points, fb.points_earned)
-            scores[student.id][task.id] = best_points
+                    if fb.source == FeedbackSource.HUMAN:
+                        human_points = max(human_points, fb.points_earned)
+                        override_exists = True
+                    else:
+                        llm_points = max(llm_points, fb.points_earned)
+            scores[student.id][task.id] = human_points if override_exists else llm_points
     
     # Generate Excel
     excel_bytes = export_service.generate_overview_bytes(

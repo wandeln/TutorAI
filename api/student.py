@@ -18,11 +18,13 @@ from database.models import (
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
+from services.llm_service import LLMService
 from services.sandbox_runner import SandboxedRunner
 
 router = APIRouter(prefix="/api/student", tags=["Student"])
 grading_service = GradingService()
 sandbox_runner = SandboxedRunner()
+llm = LLMService()
 
 
 # =================================================================
@@ -421,4 +423,54 @@ async def get_my_points(
         "total_possible": total_possible,
         "percentage": round(percentage, 1),
         "task_points": task_points,
+    }
+
+
+# =================================================================
+# BILD -> LATEX KONVERTIERUNG
+# =================================================================
+
+@router.post("/latex-from-image")
+async def latex_from_image(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """
+    Konvertiert ein hochgeladenes Foto einer handgeschriebenen Formel
+    in LaTeX-Code via multimodalem LLM.
+
+    Request: { "image_base64": "...", "mime_type": "image/png" }
+    """
+    body = await request.json()
+    image_base64 = body.get("image_base64", "")
+    mime_type = body.get("mime_type", "image/png")
+
+    if not image_base64:
+        raise HTTPException(400, "Kein Bild uebergeben.")
+
+    # Validate mime_type
+    allowed_mimes = ["image/png", "image/jpeg", "image/webp", "image/gif"]
+    if mime_type not in allowed_mimes:
+        raise HTTPException(400, f"Nicht unterstuetztes Bildformat. Erlaubt: {', '.join(allowed_mimes)}")
+
+    # Basic size check (base64 of 10MB image ~ 13MB text)
+    max_base64_length = 13_312_000
+    if len(image_base64) > max_base64_length:
+        raise HTTPException(400, "Bild zu gross. Maximum sind ca. 10 MB.")
+
+    result = await llm.convert_image_to_latex(
+        image_base64=image_base64,
+        mime_type=mime_type,
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            503,
+            f"LLM-Konvertierung fehlgeschlagen: {result.get('error', 'Unbekannter Fehler')}",
+        )
+
+    return {
+        "latex": result["data"]["latex"],
+        "latency_ms": result["latency_ms"],
     }

@@ -7,13 +7,16 @@ Tutor gibt Aufgabenstellung ein → LLM generiert Musterlösung.
 SOLUTION_PROMPT_TEMPLATE = """\
 Du bist ein erfahrener Tutor. Schreibe eine knappe, präzise Musterlösung.
 
-AUFgabENTITEL: {{ title }}
+AUFGABENTITEL: {{ title }}
 AUFGABENTYP: {{ task_type_description }}
 
 AUFGABENSTELLUNG:
 {{ description }}
 
-{% if code_template_section %}{{ code_template_section }}{% endif %}
+{% if code_template_section %}
+CODETEMPLATE:
+{{ code_template_section }}
+{% endif %}
 
 Gib NUR die Lösung selbst aus — keine Einleitung, kein JSON, keine Meta-Kommentare.
 Bei Code: Nur den funktionalen Code.

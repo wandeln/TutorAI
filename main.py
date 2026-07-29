@@ -17,10 +17,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from config import BASE_DIR
+from config import BASE_DIR, LLM_TIMEOUT
 from database.base import create_db_and_tables, engine, get_session
 from database.models import (
     Course,
+
+    FeedbackSource,
     Task,
     TaskType,
     TestCase,
@@ -32,7 +34,7 @@ from database.models import (
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
 
-from api import admin, auth, student, tutor
+from api import admin, auth, student, tutor, user_settings
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -298,6 +300,7 @@ if (BASE_DIR / "static").exists():
 
 # API-Routes
 app.include_router(auth.router)
+app.include_router(user_settings.router)
 app.include_router(admin.router)
 app.include_router(tutor.router)
 app.include_router(student.router)
@@ -557,12 +560,19 @@ async def course_page(
                 .where(Submission.student_id == user.id)
             ).all()
             
-            my_points = 0
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
             has_feedback = False
             for sub in subs:
                 for fb in sub.feedback_list:
-                    my_points = max(my_points, fb.points_earned)
                     has_feedback = True
+                    if fb.source == FeedbackSource.HUMAN:
+                        human_points = max(human_points, fb.points_earned)
+                        override_exists = True
+                    else:
+                        llm_points = max(llm_points, fb.points_earned)
+            my_points = human_points if override_exists else llm_points
             
             task_list.append({
                 "id": t.id,
@@ -648,6 +658,7 @@ async def new_task_page(
             "is_tutor": True,
             "is_code": False,
             "code_editor": False,
+            "LLM_TIMEOUT": LLM_TIMEOUT,
         },
     )
 
@@ -701,11 +712,30 @@ async def task_page(
             .where(Submission.student_id == user.id)
             .order_by(Submission.submitted_at.desc())
         ).all()
-        my_submissions = subs
+        # Serialize zu sichere Dicts — keine rohen ORM-Objekte ans Template!
+        my_submissions = []
         for sub in subs:
+            feedbacks = []
             for fb in sub.feedback_list:
+                feedbacks.append({
+                    "id": fb.id,
+                    "source": fb.source.value,
+                    "points_earned": fb.points_earned,
+                    "comment": fb.comment,
+                    "giver_name": fb.giver.name if fb.giver else "LLM",
+                    "created_at": fb.created_at,
+                })
                 if fb.points_earned > best_points:
                     best_points = fb.points_earned
+            my_submissions.append({
+                "id": sub.id,
+                "solution": sub.solution,
+                "code_solution": sub.code_solution,
+                "attempt_number": sub.attempt_number,
+                "submitted_at": sub.submitted_at,
+                "status": sub.status.value,
+                "feedback_list": feedbacks,
+            })
     
     return templates.TemplateResponse(
         template,
@@ -760,6 +790,7 @@ async def task_page(
                 for tc in task.test_cases
                 if str(tc.visibility) == "public"
             ],
+            "LLM_TIMEOUT": LLM_TIMEOUT,
         },
     )
 
@@ -804,6 +835,96 @@ async def overview_page(
                 "id": course.id,
                 "name": course.name,
             },
+        },
+    )
+
+
+@app.get("/courses/{course_id}/tasks/{task_id}/students/{student_id}/review")
+async def submission_review_page(
+    course_id: int,
+    task_id: int,
+    student_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Tutor: Bewertungsseite für eine Studenteneinreichung."""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+    
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    
+    if not membership or membership.role_in_course not in (UserRole.ADMIN, UserRole.TUTOR):
+        raise HTTPException(403, "Nur für Tutor/Admin.")
+    
+    task = session.get(Task, task_id)
+    if not task or task.course_id != course_id:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+    
+    student = session.get(User, student_id)
+    if not student:
+        raise HTTPException(404, "Student nicht gefunden.")
+    
+    courses = _get_user_courses(user, session)
+    
+    task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe", "mc": "Multiple Choice"}.get(
+        task.task_type.value, task.task_type.value
+    )
+    
+    return templates.TemplateResponse(
+        "tutor/submission_review.html",
+        {
+            "request": request,
+            "page_title": f"Bewertung — {task.title}",
+            "current_user": {
+                "id": user.id,
+                "username": user.username,
+                "name": user.name,
+                "role": membership.role_in_course.value,
+            },
+            "courses": courses,
+            "selected_course_id": course_id,
+            "course_id": course_id,
+            "task_id": task_id,
+            "student_id": student_id,
+            "task_title": task.title,
+            "task_type_display": task_type_display,
+            "max_points": task.max_points,
+            "student_name": student.name,
+            "student_username": student.username,
+        },
+    )
+
+
+@app.get("/settings")
+async def settings_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """User-Einstellungen: Name / Passwort ändern."""
+    courses = _get_user_courses(user, session)
+    use_ldap = not user.password_hash  # LDAP-User haben keinen DB-Password-Hash
+
+    return templates.TemplateResponse(
+        "user_settings.html",
+        {
+            "request": request,
+            "page_title": "Einstellungen",
+            "current_user": {
+                "id": user.id,
+                "username": user.username,
+                "name": user.name,
+                "role": user.role.value,
+            },
+            "courses": courses,
+            "selected_course_id": None,
+            "use_ldap": use_ldap,
         },
     )
 

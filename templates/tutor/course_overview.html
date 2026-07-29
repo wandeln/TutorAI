@@ -36,16 +36,16 @@
              class="text-lg font-semibold text-blue-600 hover:underline">
             {{ task.title }}
           </a>
+        </div>
+        <div class="text-sm text-gray-500 mt-1">
+          {{ task.max_points }} Punkte · {{ task.test_count }} Tests
           <span class="px-2 py-0.5 rounded text-xs font-medium
             {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
             {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
             {% else %}bg-gray-100 text-gray-600
-            {% endif %}">
+            {% endif %}" style="align-content: center;">
             {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
           </span>
-        </div>
-        <div class="text-sm text-gray-500 mt-1">
-          {{ task.max_points }} Punkte · {{ task.test_count }} Tests
         </div>
       </div>
       <div class="flex items-center gap-4">
@@ -55,8 +55,8 @@
         </div>
         {% endif %}
         <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
-           class="text-blue-600 hover:text-blue-800 transition">
-          Bearbeiten →
+           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
+          Bearbeiten
         </a>
         <button type="button"
                 onclick="confirmDeleteTask({{ task.id }}, '{{ task.title }}')"

@@ -14,6 +14,7 @@
         <span class="text-sm text-gray-500">Übersicht</span>
       </div>
       <h1 class="text-2xl font-bold text-gray-900">Punktübersicht</h1>
+      <p class="text-sm text-gray-500 mt-1">Klicke auf eine Punktezahl, um die Einreichung zu bewerten.</p>
     </div>
     <div class="flex gap-3">
       <button id="export-excel-btn"
@@ -21,6 +22,11 @@
         📊 Excel exportieren
       </button>
     </div>
+  </div>
+
+  <!-- Summary Stats -->
+  <div id="summary-stats" class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
+    <!-- Wird dynamisch per JS gefüllt -->
   </div>
 
   <!-- Filters -->
@@ -41,11 +47,18 @@
         </select>
       </div>
       <div class="flex items-end">
-        <button id="clear-filter-btn" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2">
+        <button id="clear-filter-btn" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2" style="margin-top:20px">
           ✕ Filter löschen
         </button>
       </div>
     </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="flex items-center gap-4 mb-4 text-sm text-gray-500">
+    <span>🖊️ = Tutor-Bewertung (Überschreibung)</span>
+    <span>·</span>
+    <span>Grün ≥ 80% · Gelb ≥ 50% · Rot < 50%</span>
   </div>
 
   <!-- Loading State -->
@@ -57,8 +70,8 @@
   </div>
 
   <!-- Overview Table -->
-  <div id="table-container" class="table-container">
-    <table class="w-full border-collapse" id="overview-table">
+  <div id="table-container" class="table-container overflow-x-auto rounded-lg border border-gray-200">
+    <table class="min-w-[100%] border-collapse" id="overview-table">
       <thead id="table-header">
         <!-- Wird dynamisch per JS gefüllt -->
       </thead>
@@ -68,10 +81,6 @@
     </table>
   </div>
 
-  <!-- Summary Stats -->
-  <div id="summary-stats" class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4">
-    <!-- Wird dynamisch per JS gefüllt -->
-  </div>
 </div>
 {% endblock %}
 
@@ -91,7 +100,7 @@
       const params = new URLSearchParams({ filter_text: filterText });
       if (typeFilter) params.set('type_filter', typeFilter);
 
-      const res = await fetch(`/api/courses/${courseId}/overview?${params}`, {
+      const res = await fetch('/api/courses/' + courseId + '/overview?' + params, {
         credentials: 'same-origin',
       });
 
@@ -106,7 +115,7 @@
       renderStats(data);
 
     } catch (err) {
-      showToast(`Fehler: ${err.message}`, 'error');
+      showToast('Fehler: ' + err.message, 'error');
     } finally {
       loading.classList.add('hidden');
       tableContainer.classList.remove('hidden');
@@ -120,20 +129,20 @@
 
     // Header
     let headerHtml = '<tr class="bg-gray-100">';
-    headerHtml += '<th class="text-left py-3 px-4 font-semibold text-gray-700 border-b sticky left-0 bg-gray-100 z-10">Name</th>';
-    headerHtml += '<th class="text-left py-3 px-4 font-semibold text-gray-700 border-b">Matr.-Nr.</th>';
+    headerHtml += '<th class="text-left py-3 px-4 font-semibold text-gray-700 border-b sticky left-0 bg-gray-100 z-10 min-w-[180px]">Name</th>';
+    headerHtml += '<th class="text-left py-3 px-4 font-semibold text-gray-700 border-b min-w-[120px]">Matr.-Nr.</th>';
 
     data.tasks.forEach(task => {
       const typeBadge = {
         text: '📝', code: '💻', mc: '☑️'
       }[task.task_type] || '📋';
-      headerHtml += `<th class="text-center py-3 px-3 font-semibold text-gray-700 border-b text-xs" title="${task.title}">
-        ${typeBadge} ${task.title} ${task.max_points}P
-      </th>`;
+      headerHtml += '<th class="text-center py-3 px-3 font-semibold text-gray-700 border-b text-xs min-w-[120px]" title="' + task.title + '">' +
+        typeBadge + ' ' + task.title + ' ' + task.max_points + 'P' +
+      '</th>';
     });
 
-    headerHtml += '<th class="text-center py-3 px-4 font-bold text-gray-800 border-b bg-blue-50">Summe</th>';
-    headerHtml += '<th class="text-center py-3 px-4 font-bold text-gray-800 border-b bg-blue-50">Anteil</th>';
+    headerHtml += '<th class="text-center py-3 px-4 font-bold text-gray-800 border-b bg-blue-50 min-w-[80px]">Summe</th>';
+    headerHtml += '<th class="text-center py-3 px-4 font-bold text-gray-800 border-b bg-blue-50 min-w-[80px]">Anteil</th>';
     headerHtml += '</tr>';
     thead.innerHTML = headerHtml;
 
@@ -142,28 +151,34 @@
 
     let bodyHtml = '';
     data.students.forEach(student => {
-      bodyHtml += `<tr class="hover:bg-gray-50 transition">`;
-      bodyHtml += `<td class="py-2 px-4 font-medium text-gray-900 border-b sticky left-0 bg-white">${student.name}</td>`;
-      bodyHtml += `<td class="py-2 px-4 text-sm text-gray-500 border-b font-mono">${student.username}</td>`;
+      bodyHtml += '<tr class="hover:bg-gray-50 transition">';
+      bodyHtml += '<td class="py-2 px-4 font-medium text-gray-900 border-b sticky left-0 bg-white z-10 min-w-[180px]">' + student.name + '</td>';
+      bodyHtml += '<td class="py-2 px-4 text-sm text-gray-500 border-b font-mono min-w-[120px]">' + student.username + '</td>';
 
       let totalPoints = 0;
       data.tasks.forEach(task => {
         const points = data.scores[student.id]?.[task.id] || 0;
+        const overridden = data.has_override?.[student.id]?.[task.id] || false;
         totalPoints += points;
         const pct = task.max_points > 0 ? points / task.max_points : 0;
         const cellClass = pct >= 0.8 ? 'score-pass' : pct >= 0.5 ? 'score-warning' : 'score-fail';
         const bgClass = pct >= 0.8 ? 'bg-green-50' : pct >= 0.5 ? 'bg-yellow-50' : points > 0 ? 'bg-red-50' : 'bg-gray-50';
 
-        bodyHtml += `<td class="py-2 px-3 text-center border-b ${bgClass} font-mono text-sm" title="${task.title}: ${points}/${task.max_points}">
-          ${points > 0 ? points : '-'}
-        </td>`;
+        const overrideBadge = overridden ? ' 🖊️' : '';
+        const displayVal = points > 0 ? points : '-';
+        const titleText = task.title + ': ' + points + '/' + task.max_points + (overridden ? ' (Tutor-Bewertung)' : '');
+        const reviewUrl = '/courses/' + courseId + '/tasks/' + task.id + '/students/' + student.id + '/review';
+
+        bodyHtml += '<td class="py-2 px-3 text-center border-b ' + bgClass + ' font-mono text-sm cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-blue-400 hover:rounded transition" title="' + titleText + '" onclick="window.location.href=\'' + reviewUrl + '\'">' +
+          displayVal + overrideBadge +
+        '</td>';
       });
 
       const pctTotal = maxTotal > 0 ? (totalPoints / maxTotal * 100) : 0;
       const sumColor = pctTotal >= 80 ? 'text-green-700' : pctTotal >= 50 ? 'text-yellow-700' : 'text-red-700';
 
-      bodyHtml += `<td class="py-2 px-4 text-center font-bold border-b bg-blue-50 ${sumColor}">${totalPoints}</td>`;
-      bodyHtml += `<td class="py-2 px-4 text-center font-bold border-b bg-blue-50 ${sumColor}">${pctTotal.toFixed(1)}%</td>`;
+      bodyHtml += '<td class="py-2 px-4 text-center font-bold border-b bg-blue-50 ' + sumColor + '">' + totalPoints + '</td>';
+      bodyHtml += '<td class="py-2 px-4 text-center font-bold border-b bg-blue-50 ' + sumColor + '">' + pctTotal.toFixed(1) + '%</td>';
       bodyHtml += '</tr>';
     });
 
@@ -199,24 +214,23 @@
     avgPoints = students.length > 0 ? avgPoints / students.length : 0;
     minPoints = minPoints === Infinity ? 0 : minPoints;
 
-    statsDiv.innerHTML = `
-      <div class="card text-center">
-        <div class="text-2xl font-bold text-blue-600">${students.length}</div>
-        <div class="text-sm text-gray-500">Studenten</div>
-      </div>
-      <div class="card text-center">
-        <div class="text-2xl font-bold text-green-600">${avgPoints.toFixed(1)}</div>
-        <div class="text-sm text-gray-500">Ø Punkte</div>
-      </div>
-      <div class="card text-center">
-        <div class="text-2xl font-bold text-purple-600">${maxPoints} / ${minPoints}</div>
-        <div class="text-sm text-gray-500">Max / Min</div>
-      </div>
-      <div class="card text-center">
-        <div class="text-2xl font-bold ${passed50 === students.length ? 'text-green-600' : 'text-orange-600'}">${passed50}</div>
-        <div class="text-sm text-gray-500">≥ 50% erreicht</div>
-      </div>
-    `;
+    statsDiv.innerHTML = 
+      '<div class="text-center p-3 rounded-lg bg-blue-50">' +
+        '<div class="text-2xl font-bold text-blue-600">' + students.length + '</div>' +
+        '<div class="text-sm text-gray-500">Studenten</div>' +
+      '</div>' +
+      '<div class="text-center p-3 rounded-lg bg-green-50">' +
+        '<div class="text-2xl font-bold text-green-600">' + avgPoints.toFixed(1) + '</div>' +
+        '<div class="text-sm text-gray-500">Ø Punkte</div>' +
+      '</div>' +
+      '<div class="text-center p-3 rounded-lg bg-purple-50">' +
+        '<div class="text-2xl font-bold text-purple-600">' + maxPoints + ' / ' + minPoints + '</div>' +
+        '<div class="text-sm text-gray-500">Max / Min</div>' +
+      '</div>' +
+      '<div class="text-center p-3 rounded-lg bg-orange-50">' +
+        '<div class="text-2xl font-bold ' + (passed50 === students.length ? 'text-green-600' : 'text-orange-600') + '">' + passed50 + '</div>' +
+        '<div class="text-sm text-gray-500">≥ 50% erreicht</div>' +
+      '</div>';
   }
 
   // ─── Filter Events ──────────────────────────────────────────
@@ -243,7 +257,7 @@
 
     try {
       const params = new URLSearchParams({ filter_text: filterText });
-      const res = await fetch(`/api/courses/${courseId}/export-excel?${params}`, {
+      const res = await fetch('/api/courses/' + courseId + '/export-excel?' + params, {
         method: 'POST',
         credentials: 'same-origin',
       });
@@ -259,15 +273,15 @@
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const filename = `punktestand_{{ course.name | replace(' ', '_') }}.xlsx`;
+      const filename = "punktestand_{{ course.name | replace(' ', '_') }}.xlsx";
       a.download = filename;
       a.click();
       window.URL.revokeObjectURL(url);
 
-      showToast(`Excel-Datei "${filename}" heruntergeladen.`, 'success');
+      showToast('Excel-Datei "' + filename + '" heruntergeladen.', 'success');
 
     } catch (err) {
-      showToast(`Export-Fehler: ${err.message}`, 'error');
+      showToast('Export-Fehler: ' + err.message, 'error');
     }
   });
 

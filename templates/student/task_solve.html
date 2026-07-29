@@ -171,6 +171,58 @@
                     class="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     placeholder="Schreibe hier deine Lösung...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$"></textarea>
 
+          <!-- Unified toolbar: Preview + LaTeX-Upload -->
+          <div id="text-editor-toolbar" class="flex items-center gap-2 mt-2">
+            <!-- Preview button injected by createMarkdownEditor (anchor: text-editor-toolbar) -->
+            <button id="latex-upload-btn" type="button"
+                    class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5"
+                    title="Foto einer handgeschriebenen Formel in LaTeX umwandeln">
+              <span>📷</span> Foto → LaTeX
+            </button>
+          </div>
+
+          <!-- Latex Upload Area -->
+          <div id="latex-upload-area" class="hidden mt-3">
+            <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
+              <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
+                <div class="text-2xl mb-1">📸</div>
+                <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto hinein</p>
+                <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
+              </div>
+              <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
+            </div>
+            <div id="latex-preview-container" class="hidden mt-2">
+              <div class="flex items-center gap-3">
+                <img id="latex-preview" class="max-h-28 rounded border border-gray-200" />
+                <div class="flex-1 min-w-0">
+                  <p id="latex-file-name" class="text-xs text-gray-500 truncate"></p>
+                  <div id="latex-conversion-status" class="text-xs text-indigo-600 mt-1"></div>
+                </div>
+                <button id="latex-cancel-btn" type="button" class="text-gray-400 hover:text-gray-600 text-lg flex-shrink-0" title="Abbrechen">✕</button>
+              </div>
+              <!-- Conversion progress bar -->
+              <div id="latex-progress" class="hidden mt-2">
+                <div class="flex items-center gap-2 text-xs text-indigo-700 mb-1">
+                  <span class="animate-spin">⏳</span>
+                  <span>LLM erkennt Formel...</span>
+                  <span id="latex-timer" class="font-mono">0s</span>
+                </div>
+                <div class="w-full bg-indigo-200 rounded-full h-1.5">
+                  <div id="latex-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
+                </div>
+              </div>
+              <div id="latex-result-area" class="hidden mt-2">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-semibold text-green-700">Erkanntes LaTeX:</span>
+                  <button id="latex-insert-btn" type="button" class="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition">
+                    In Lösung einfügen
+                  </button>
+                </div>
+                <div id="latex-result" class="font-mono text-xs bg-green-50 border border-green-200 rounded p-2 text-green-800 break-all max-h-24 overflow-y-auto"></div>
+              </div>
+            </div>
+          </div>
+
           <button id="submit-btn"
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
             📤 Lösung einreichen
@@ -201,6 +253,58 @@
           <textarea id="mc-answer"
                     class="w-full h-32 border border-gray-300 rounded-lg p-3 text-sm"
                     placeholder="Gib deine Antwort ein...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, $Math$"></textarea>
+
+          <!-- Unified toolbar: Preview + LaTeX-Upload -->
+          <div id="mc-editor-toolbar" class="flex items-center gap-2 mt-3">
+            <!-- Preview button injected by createMarkdownEditor (anchor: mc-editor-toolbar) -->
+            <button id="latex-upload-btn" type="button"
+                    class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5"
+                    title="Foto einer handgeschriebenen Formel in LaTeX umwandeln">
+              <span>📷</span> Foto → LaTeX
+            </button>
+          </div>
+
+          <!-- Latex Upload Area -->
+          <div id="latex-upload-area" class="hidden mt-3">
+            <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
+              <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
+                <div class="text-2xl mb-1">📸</div>
+                <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto hinein</p>
+                <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
+              </div>
+              <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
+            </div>
+            <div id="latex-preview-container" class="hidden mt-2">
+              <div class="flex items-center gap-3">
+                <img id="latex-preview" class="max-h-28 rounded border border-gray-200" />
+                <div class="flex-1 min-w-0">
+                  <p id="latex-file-name" class="text-xs text-gray-500 truncate"></p>
+                  <div id="latex-conversion-status" class="text-xs text-indigo-600 mt-1"></div>
+                </div>
+                <button id="latex-cancel-btn" type="button" class="text-gray-400 hover:text-gray-600 text-lg flex-shrink-0" title="Abbrechen">✕</button>
+              </div>
+              <!-- Conversion progress bar -->
+              <div id="latex-progress" class="hidden mt-2">
+                <div class="flex items-center gap-2 text-xs text-indigo-700 mb-1">
+                  <span class="animate-spin">⏳</span>
+                  <span>LLM erkennt Formel...</span>
+                  <span id="latex-timer" class="font-mono">0s</span>
+                </div>
+                <div class="w-full bg-indigo-200 rounded-full h-1.5">
+                  <div id="latex-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
+                </div>
+              </div>
+              <div id="latex-result-area" class="hidden mt-2">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="text-xs font-semibold text-green-700">Erkanntes LaTeX:</span>
+                  <button id="latex-insert-btn" type="button" class="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition">
+                    In Lösung einfügen
+                  </button>
+                </div>
+                <div id="latex-result" class="font-mono text-xs bg-green-50 border border-green-200 rounded p-2 text-green-800 break-all max-h-24 overflow-y-auto"></div>
+              </div>
+            </div>
+          </div>
 
           <button id="submit-btn"
                   class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
@@ -233,7 +337,7 @@
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
                   <span class="text-sm font-semibold">
-                    {% if fb.source == 'llm' %}🤖 LLM{% else %}👤 {{ fb.giver }}{% endif %}
+                    {% if fb.source == 'llm' %}🤖 LLM{% else %}👤 {{ fb.giver_name }}{% endif %}
                   </span>
                   <span class="badge {% if fb.points_earned >= task.max_points * 0.5 %}badge-pass{% else %}badge-fail{% endif %}">
                     {{ fb.points_earned }} / {{ task.max_points }} Punkte
@@ -302,9 +406,9 @@
 
     // ─── Create Markdown editors for text/mc tasks ─────────────
     {% if task.task_type == 'text' %}
-    createMarkdownEditor('text-editor-container');
+    createMarkdownEditor('text-editor-container', { buttonAnchor: 'text-editor-toolbar' });
     {% elif task.task_type == 'mc' %}
-    createMarkdownEditor('mc-editor-container');
+    createMarkdownEditor('mc-editor-container', { buttonAnchor: 'mc-editor-toolbar' });
     {% endif %}
   });
 
@@ -414,6 +518,17 @@
     }
   });
 
+  const LLM_TIMEOUT = {{ LLM_TIMEOUT | default(120) }};
+
+  // Berechnet Progress-Bar-Prozent basierend auf verstrichener Zeit.
+  // Beginnt schneller (erste 10s => 15%), dann verlangsamt sich bis 95% bei Timeout.
+  function llmProgressPct(elapsed) {
+    const t = LLM_TIMEOUT || 120;
+    if (elapsed <= 0) return 5;
+    const f = elapsed / t;
+    return Math.min(Math.round(79 * Math.pow(f, 0.5) + 16 * f), 95);
+  }
+
   // ─── Update Progress Bars After Submission ─────────────────
   function updateProgressBars(data) {
     const pointsText = document.getElementById('points-text');
@@ -450,7 +565,202 @@
     }
   }
 
-  // ─── Submit Solution ───────────────────────────────────────
+
+
+  // ─── LaTeX Image Upload ──────────────────────────────────────
+  {% if task.task_type != 'code' %}
+  (function() {
+    const uploadBtn = document.getElementById("latex-upload-btn");
+    const uploadArea = document.getElementById("latex-upload-area");
+    const dropZone = document.getElementById("latex-drop-zone");
+    const fileInput = document.getElementById("latex-file-input");
+    const previewContainer = document.getElementById("latex-preview-container");
+    const previewImg = document.getElementById("latex-preview");
+    const fileNameEl = document.getElementById("latex-file-name");
+    const statusEl = document.getElementById("latex-conversion-status");
+    const cancelBtn = document.getElementById("latex-cancel-btn");
+    const resultArea = document.getElementById("latex-result-area");
+    const resultEl = document.getElementById("latex-result");
+    const insertBtn = document.getElementById("latex-insert-btn");
+    const latexProgress = document.getElementById("latex-progress");
+    const latexTimer = document.getElementById("latex-timer");
+    const latexProgressBar = document.getElementById("latex-progress-bar");
+
+    if (!uploadBtn || !uploadArea) return;
+
+    let currentLatex = "";
+
+    // Toggle upload area visibility
+    uploadBtn.addEventListener("click", () => {
+      const isHidden = uploadArea.classList.contains("hidden");
+      if (isHidden) {
+        uploadArea.classList.remove("hidden");
+        previewContainer.classList.add("hidden");
+        resultArea.classList.add("hidden");
+        latexProgress.classList.add("hidden");
+        uploadBtn.classList.add("bg-blue-50", "border-blue-300", "text-blue-700");
+      } else {
+        closeUpload();
+      }
+    });
+
+    function closeUpload() {
+      uploadArea.classList.add("hidden");
+      previewContainer.classList.add("hidden");
+      resultArea.classList.add("hidden");
+      latexProgress.classList.add("hidden");
+      uploadBtn.classList.remove("bg-blue-50", "border-blue-300", "text-blue-700");
+      fileInput.value = "";
+      currentLatex = "";
+    }
+
+    cancelBtn.addEventListener("click", closeUpload);
+
+    // Drag and drop
+    if (dropZone) {
+      dropZone.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dropZone.parentElement.classList.add("border-indigo-500", "bg-indigo-100");
+      });
+      dropZone.addEventListener("dragleave", () => {
+        dropZone.parentElement.classList.remove("border-indigo-500", "bg-indigo-100");
+      });
+      dropZone.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dropZone.parentElement.classList.remove("border-indigo-500", "bg-indigo-100");
+        const files = e.dataTransfer.files;
+        if (files.length > 0) handleFile(files[0]);
+      });
+    }
+
+    // File input change
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
+    });
+
+    function handleFile(file) {
+      // Validate
+      const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
+      if (!allowedTypes.includes(file.type)) {
+        showToast("Nicht unterstuetztes Format. Verwende PNG, JPEG oder WebP.", "error");
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        showToast("Bild zu gross. Maximum sind 10 MB.", "error");
+        return;
+      }
+
+      // Show preview
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        previewImg.src = e.target.result;
+        fileNameEl.textContent = file.name + " (" + (file.size / 1024).toFixed(0) + " KB)";
+        previewContainer.classList.remove("hidden");
+        resultArea.classList.add("hidden");
+
+        // Convert
+        convertToLatex(e.target.result, file.type);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function convertToLatex(dataUrl, mimeType) {
+      // Hide status text, show progress bar
+      statusEl.innerHTML = "";
+      latexProgress.classList.remove("hidden");
+      latexTimer.textContent = "0s";
+      latexProgressBar.style.width = llmProgressPct(0) + "%";
+
+      let elapsed = 0;
+      const timerInterval = setInterval(() => {
+        elapsed++;
+        latexTimer.textContent = elapsed + "s";
+        latexProgressBar.style.width = llmProgressPct(elapsed) + "%";
+      }, 1000);
+
+      // Strip data: prefix for the API
+      const base64Data = dataUrl.split(",")[1];
+
+      fetch("/api/student/latex-from-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          image_base64: base64Data,
+          mime_type: mimeType
+        }),
+      })
+      .then(async (res) => {
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          data = { detail: "Server-Fehler" };
+        }
+        if (!res.ok) {
+          throw new Error(data.detail || "Konvertierung fehlgeschlagen");
+        }
+        return data;
+      })
+      .then((data) => {
+        clearInterval(timerInterval);
+        latexProgressBar.style.width = "100%";
+
+        currentLatex = data.latex;
+        resultEl.textContent = data.latex;
+        resultArea.classList.remove("hidden");
+
+        // Hide progress, show success status
+        latexProgress.classList.add("hidden");
+        statusEl.innerHTML = '<span class="text-green-600">✅ Formel erkannt (' + (data.latency_ms || 0) + 'ms)</span>';
+      })
+      .catch((err) => {
+        clearInterval(timerInterval);
+        latexProgress.classList.add("hidden");
+
+        currentLatex = "";
+        resultArea.classList.add("hidden");
+        statusEl.innerHTML = '<span class="text-red-600">❌ ' + err.message + '</span>';
+      });
+    }
+
+    // Insert LaTeX into solution
+    insertBtn.addEventListener("click", () => {
+      if (!currentLatex.trim()) return;
+
+      {% if task.task_type == 'text' %}
+      const textarea = document.getElementById("text-solution");
+      {% elif task.task_type == 'mc' %}
+      const textarea = document.getElementById("mc-answer");
+      {% endif %}
+
+      if (textarea) {
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const before = textarea.value.substring(0, start);
+        const after = textarea.value.substring(end);
+
+        // Add newline if needed
+        const prefix = (before.length > 0 && !before.endsWith("\n")) ? "\n" : "";
+
+        textarea.value = before + prefix + currentLatex + after;
+
+        // Set cursor after inserted text
+        const newPos = start + prefix.length + currentLatex.length;
+        textarea.setSelectionRange(newPos, newPos);
+        textarea.focus();
+
+        // Trigger input event for any linked editors
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+
+        showToast("LaTeX in Loesung eingefuegt!", "success");
+        closeUpload();
+      }
+    });
+  })();
+  {% endif %}
+
+  // ─── Submit Solution ────────────────────────────────────────
   let gradingTimerInterval = null;
 
   document.getElementById("submit-btn")?.addEventListener("click", async () => {
@@ -483,13 +793,12 @@
     progressDiv.classList.remove("hidden");
     let elapsed = 0;
     timerSpan.textContent = "0s";
-    progressBar.style.width = "10%";
+    progressBar.style.width = llmProgressPct(0) + "%";
     if (gradingTimerInterval) clearInterval(gradingTimerInterval);
     gradingTimerInterval = setInterval(() => {
       elapsed++;
       timerSpan.textContent = elapsed + "s";
-      const pct = Math.min(10 + (elapsed / 120) * 85, 95);
-      progressBar.style.width = pct + "%";
+      progressBar.style.width = llmProgressPct(elapsed) + "%";
     }, 1000);
 
     try {

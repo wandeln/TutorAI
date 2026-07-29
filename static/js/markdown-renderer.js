@@ -89,12 +89,19 @@ function renderLatexInline(latex) {
 }
 
 function processInlineLatex(html) {
-  // Process $...$ that appear outside of HTML tags and code blocks
+  // Process $...$ that appear outside of HTML tags and code blocks.
+  // marked has already escaped < and > to &lt;/&gt; in the text, so we
+  // decode them _before_ handing the LaTeX to KaTeX.
   const parts = html.split(/(<[^>]*>)/g);
   return parts.map((part, i) => {
     if (i % 2 === 0 && part.includes('$')) {
       return part.replace(/\$([^\$]+?)\$/g, (match, latex) => {
-        return renderLatexInline(latex.trim());
+        // Decode entities that marked escaped inside the LaTeX expression
+        const decoded = latex.trim()
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&amp;/g, '&');
+        return renderLatexInline(decoded);
       });
     }
     return part;
@@ -138,13 +145,13 @@ function decodeTextEntities(html) {
   // Decode &lt; and &gt; in text nodes only, leaving real HTML tags intact.
   // Splits on HTML tags and <pre> blocks so we only touch text content
   // (even-indexed parts after the split).
-  const parts = html.split(/(<pre>[\s\S]*?<\/pre>|<[^>]*>)/g);
+  const parts = html.split(/(<pre>[\s\S]*?<\/pre>|<span class="katex(?:-display)?">[\s\S]*?<\/span>|<[^>]*>)/g);
   return parts.map((part, i) => {
     if (i % 2 === 0) {
       // Text node — decode escaped angle brackets
       return part.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     }
-    // HTML tag / pre block — leave as-is
+    // HTML tag / pre block / KaTeX output — leave as-is
     return part;
   }).join('');
 }
@@ -181,22 +188,25 @@ function createMarkdownEditor(containerId, options = {}) {
   toggleBtn.type = 'button';
   toggleBtn.className = 'text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5';
   toggleBtn.innerHTML = '<span>👁️</span> <span>Preview</span>';
-  toggleBtn.style.marginTop = '0.5rem';
 
   // Insert preview div after textarea
   textarea.parentNode.insertBefore(previewDiv, textarea.nextSibling);
 
-  // Insert toggle button at anchor element (after it), or fallback to after textarea
+  // Insert toggle button
+  //   — if anchor given: append *into* the anchor element (e.g. a toolbar flex container)
+  //   — otherwise: insert after the textarea (standalone, needs margin-top spacing)
   const anchorId = options.buttonAnchor;
   if (anchorId) {
     const anchorEl = document.getElementById(anchorId);
     if (anchorEl) {
-      anchorEl.parentNode.insertBefore(toggleBtn, anchorEl.nextSibling);
+      anchorEl.appendChild(toggleBtn);
     } else {
+      toggleBtn.style.marginTop = '0.5rem';
       textarea.parentNode.insertBefore(toggleBtn, textarea.nextSibling);
     }
   } else {
     // Fallback: insert after textarea
+    toggleBtn.style.marginTop = '0.5rem';
     textarea.parentNode.insertBefore(toggleBtn, textarea.nextSibling);
   }
 

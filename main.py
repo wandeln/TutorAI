@@ -1091,7 +1091,7 @@ async def submission_review_page(
     
     courses = _get_user_courses(user, session)
     
-    task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe", "mc": "Multiple Choice"}.get(
+    task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(
         task.task_type.value, task.task_type.value
     )
     

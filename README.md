@@ -11,14 +11,13 @@ Tutoren erstellen Aufgaben mit LLM-Unterstützung, Studenten lösen Aufgaben und
 | Rolle | Kann |
 |---|---|
 | **Administrator** | Kurse erstellen, User verwalten, LLM-Endpoint konfigurieren, LDAP einrichten, Grading-Prompts anpassen |
-| **Tutor** | Aufgaben erstellen (Text/Code/MC), LLM bei Erstellung nutzen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
+| **Tutor** | Aufgaben erstellen (Text/Code), LLM bei Erstellung nutzen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
 | **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben) |
 
 ### Aufgabentypen
 
 - **Textaufgaben** — Freier Text, LLM-basierte Korrektur
 - **Codeaufgaben** — Python-Code mit Unit-Tests (public/private), sandbox-basierte Ausführung
-- **Multiple Choice** — Auswahlaufgaben
 
 ### LLM-Integration
 

@@ -33,7 +33,7 @@ class CourseRole(str, Enum):
 class TaskType(str, Enum):
     TEXT = "text"
     CODE = "code"
-    MC = "mc"
+
 
 
 class SubmissionStatus(str, Enum):
@@ -268,7 +268,7 @@ class TestCaseUpdate(SQLModel):
 class SubmissionBase(SQLModel):
     task_id: int = Field(foreign_key="tasks.id")
     student_id: int = Field(foreign_key="users.id")
-    solution: str = Field(default="")          # Für Text/MC-Aufgaben
+    solution: str = Field(default="")          # Für Text-Aufgaben
     code_solution: str = Field(default="")     # Für Code-Aufgaben
     attempt_number: int = Field(default=1)
 

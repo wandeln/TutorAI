@@ -57,7 +57,7 @@ class GradingService:
         custom_prompt: Optional[str] = None,
     ) -> dict:
         """
-        Korrigiert eine Einreichung (Text, Code, oder MC).
+        Korrigiert eine Einreichung (Text oder Code).
 
         Returns:
             {
@@ -72,8 +72,6 @@ class GradingService:
         """
         if task.task_type.value == "code":
             result = await self._grade_code(task, submission, session, custom_prompt)
-        elif task.task_type.value == "mc":
-            result = self._grade_mc(task, submission, session)
         else:
             result = await self._grade_text(task, submission, session, custom_prompt)
 
@@ -215,22 +213,7 @@ class GradingService:
             "tests_total": len(test_cases),
         }
 
-    def _grade_mc(
-        self, task: Task, submission: Submission, session: Session,
-    ) -> dict:
-        """
-        Multiple-Choice: Einfacher Abgleich (kein LLM noetig).
-        Student gibt Index der gewaehlten Antwort ein.
-        """
-        # TODO: MC-Antworten noch in Model integrieren
-        # Fuer jetzt: LLM-basiert wie Textaufgabe
-        return {
-            "points": 0,
-            "max_points": task.max_points,
-            "feedback": None,
-            "comment": "",
-            "error": "MC-Grading noch nicht vollstaendig implementiert",
-        }
+
 
     def _format_test_results(self, sandbox_result: dict, test_cases: list) -> str:
         """Formatiert Sandbox-Output als lesbaren Text fuer den LLM."""

@@ -35,10 +35,9 @@
           Max. {{ task.max_points }} Punkte
           <span class="px-2 py-0.5 rounded text-xs font-medium
             {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
-            {% elif task.task_type == 'mc' %}bg-purple-100 text-purple-700
             {% else %}bg-gray-100 text-gray-600
             {% endif %}" style="align-content: center;">
-            {{ '💻 Code' if task.task_type == 'code' else ('📝 MC' if task.task_type == 'mc' else '📄 Text') }}
+            {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
           </span>
         </div>
       </div>

@@ -26,6 +26,5 @@ Regeln:
 - Die Schwierigkeit muss der Vorgabe entsprechen
 - Bei Text-Aufgaben: Beschreibe die Aufgabenstellung. Verwende Markdown-Formatierung (**fett**, *kursiv*, Listen, $Math$, $$Display-Math$$) für bessere Lesbarkeit.
 - Bei Code-Aufgaben: Beschreibe was implementiert werden soll. Verwende $...$ für mathematische Notation.
-- Bei MC-Aufgaben: Formuliere die Frage und liste die Optionen. Verwende - Listen und **fett** für Optionen.
 - Keine Musterlösung, keine Punkte — das kommt später
 """

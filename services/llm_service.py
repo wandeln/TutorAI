@@ -143,7 +143,7 @@ class LLMService:
         if task_type == "code" and code_template:
             code_template_section = f"CODE-TEMPLATE:\n{code_template}\n\n"
 
-        task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe", "mc": "Multiple Choice"}.get(task_type, task_type)
+        task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(task_type, task_type)
 
         prompt = Template(SOLUTION_PROMPT_TEMPLATE).render(
             title=title,

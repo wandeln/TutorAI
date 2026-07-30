@@ -920,6 +920,21 @@ async def task_page(
     courses = _get_user_courses(user, session)
     
     # Student: eigene Submissions laden
+    # Find previous and next task in the same course
+    prev_task = session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.id < task_id)  # type: ignore[operator]
+        .order_by(Task.id.desc())  # type: ignore[attr-defined]
+    ).first()
+
+    next_task = session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.id > task_id)  # type: ignore[operator]
+        .order_by(Task.id.asc())  # type: ignore[attr-defined]
+    ).first()
+
     my_submissions = []
     best_points = 0
     if not is_tutor:
@@ -927,7 +942,7 @@ async def task_page(
             select(Submission)
             .where(Submission.task_id == task.id)
             .where(Submission.student_id == user.id)
-            .order_by(Submission.submitted_at.desc())
+            .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
         ).all()
         # Serialize zu sichere Dicts — keine rohen ORM-Objekte ans Template!
         my_submissions = []
@@ -1009,6 +1024,8 @@ async def task_page(
                 if str(tc.visibility) == "public"
             ],
             "LLM_TIMEOUT": LLM_TIMEOUT,
+            "prev_task": {"id": prev_task.id, "title": prev_task.title} if prev_task else None,
+            "next_task": {"id": next_task.id, "title": next_task.title} if next_task else None,
         },
     )
 

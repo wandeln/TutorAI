@@ -16,12 +16,16 @@ from sqlmodel import Session, select
 
 from config import (
     SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES,
-    LDAP_ENABLED, LDAP_SERVER, LDAP_BASE_DN, LDAP_USER_SEARCH,
+    LDAP_SERVER, LDAP_BASE_DN, LDAP_USER_SEARCH,
+    LDAP_BIND_DN, LDAP_BIND_PW,
 )
 from database.base import get_session
 from database.models import User, GlobalUserRole, CourseRole, UserCourse
 import hashlib
 import secrets
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ─── Password Hashing (SHA-256 + salt, kein passlib nötig) ─────
 def hash_password(password: str) -> str:
@@ -89,22 +93,37 @@ async def authenticate_user(
     password: str,
     session: Session = Depends(get_session),
     use_ldap: bool = False,
+    ldap_server: Optional[str] = None,
+    ldap_base_dn: Optional[str] = None,
+    ldap_bind_dn: Optional[str] = None,
+    ldap_bind_pw: Optional[str] = None,
+    ldap_user_search: Optional[str] = None,
 ) -> Optional[User]:
     """
     Authenticiert einen User via DB ODER LDAP.
-    Gibt den User zurück, oder None bei Fehler.
+    Gibt den User zurueck, oder None bei Fehler.
     """
     # 1. User aus DB laden (muss existieren, auch bei LDAP)
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
     
     if not user:
+        logger.warning(f"[Auth] User '{username}' nicht in DB gefunden.")
         return None
     
-    # 2. Auth-Modus wählen
-    if use_ldap and LDAP_ENABLED:
-        return authenticate_ldap(user, password)
+    # 2. Auth-Modus waehlen
+    if use_ldap and not user.password_hash:
+        # LDAP-User (kein DB-Password) -> nur LDAP
+        return authenticate_ldap(
+            user, password,
+            ldap_server=ldap_server,
+            ldap_base_dn=ldap_base_dn,
+            ldap_bind_dn=ldap_bind_dn,
+            ldap_bind_pw=ldap_bind_pw,
+            ldap_user_search=ldap_user_search,
+        )
     else:
+        # DB-User (hat password_hash) -> DB-Auth
         return authenticate_db(user, password)
 
 
@@ -117,25 +136,90 @@ def authenticate_db(user: User, password: str) -> Optional[User]:
     return user
 
 
-def authenticate_ldap(user: User, password: str) -> Optional[User]:
-    """LDAP-Auth: Bind gegen LDAP-Server"""
-    if not LDAP_ENABLED:
+def authenticate_ldap(
+    user: User,
+    password: str,
+    ldap_server: Optional[str] = None,
+    ldap_base_dn: Optional[str] = None,
+    ldap_bind_dn: Optional[str] = None,
+    ldap_bind_pw: Optional[str] = None,
+    ldap_user_search: Optional[str] = None,
+) -> Optional[User]:
+    """
+    LDAP-Auth mit ldap3: Bind mit Service-Account, User suchen, dann User-DN+PW authentifizieren.
+
+    Falls course-spezifische Parameter uebergeben wurden, nutzen diese.
+    Sonst fallback zu globalen LDAP-Config aus .env.
+    """
+    from ldap3 import Server, Connection, SUBTREE, ALL
+
+    # Course-spezifische Settings oder globale Config
+    server = ldap_server or LDAP_SERVER
+    base_dn = ldap_base_dn or LDAP_BASE_DN
+    bind_dn = ldap_bind_dn or LDAP_BIND_DN
+    bind_pw = ldap_bind_pw or LDAP_BIND_PW
+    search_filter = ldap_user_search or LDAP_USER_SEARCH
+
+    if not server:
+        logger.error("[LDAP] Kein Server konfiguriert.")
         return None
+
     try:
-        import ldap
-        conn = ldap.initialize(LDAP_SERVER)
-        conn.protocol_version = ldap.VERSION3
-        conn.set_option(ldap.OPT_REFERRALS, 0)
-        
-        # User-DN konstruieren
-        user_search = LDAP_USER_SEARCH.format(username=user.username)
-        dn = user.ldap_dn or f"uid={user.username},{LDAP_BASE_DN}"
-        
-        # Bind als User
-        conn.simple_bind_s(dn, password)
-        conn.unbind_s()
+        # 1. Server-Verbindung (ohne TLS-Verifikation fuer Dev; fuer Prod: tls=Tls(validate=ssl.CERT_REQUIRED))
+        ldap_conn = None
+        try:
+            ldap_server_obj = Server(server, get_info=ALL)
+            # Zuerst mit Bind-DN verbinden (Service-Account)
+            if bind_dn and bind_pw:
+                logger.info(f"[LDAP] Bind als Service-Account: {bind_dn}")
+                ldap_conn = Connection(ldap_server_obj, user=bind_dn, password=bind_pw, auto_bind=True)
+            else:
+                logger.info("[LDAP] Anonymes Bind (kein Bind-DN konfiguriert)")
+                ldap_conn = Connection(ldap_server_obj, auto_bind=True)
+        except Exception as e:
+            logger.error(f"[LDAP] Bind mit Service-Account fehlgeschlagen: {e}")
+            return None
+
+        # 2. User im LDAP suchen
+        user_filter = search_filter.format(username=user.username)
+        logger.info(f"[LDAP] Suche User '{user.username}' mit Filter '{user_filter}' in {base_dn}")
+
+        result = ldap_conn.search(base_dn, user_filter, search_scope=SUBTREE)
+        entries = ldap_conn.entries
+
+        if not result or not entries:
+            logger.error(f"[LDAP] User '{user.username}' nicht gefunden.")
+            ldap_conn.unbind()
+            return None
+
+        # ldap3: entry_dn gibt den DN zurueck (auch bei AD)
+        user_dn = entries[0].entry_dn
+        logger.info(f"[LDAP] Gefunden: {user_dn}")
+
+        ldap_conn.unbind()
+
+        # 3. Mit User-DN + Passwort binden
+        try:
+            ldap_server_obj2 = Server(server, get_info=ALL)
+            user_conn = Connection(ldap_server_obj2, user=user_dn, password=password, auto_bind=True)
+        except Exception as e:
+            logger.error(f"[LDAP] Ungueltige Credentials fuer '{user.username}': {e}")
+            return None
+
+        logger.info(f"[LDAP] Login erfolgreich fuer '{user.username}'")
+        user_conn.unbind()
+
+        # 4. user.ldap_dn aktualisieren (falls noch nicht gesetzt)
+        if not user.ldap_dn:
+            # Diese Aenderung wird nicht in der DB gespeichert, aber hilft beim naechsten Login
+            pass
+
         return user
-    except Exception:
+    except ImportError:
+        logger.error("[LDAP] Modul 'ldap3' nicht installiert.")
+        return None
+    except Exception as e:
+        logger.error(f"[LDAP] Fehler bei Auth fuer '{user.username}': {e}")
         return None
 
 

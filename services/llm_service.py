@@ -18,7 +18,7 @@ from jinja2 import Template
 from openai import AsyncOpenAI
 
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
-from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_PROMPT_TEMPLATE
+from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
 from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE
 
@@ -99,7 +99,7 @@ class LLMService:
         """Korrigiert eine Codeaufgabe via LLM (inkl. Test-Ergebnissen)."""
 
         prompt = self._render_prompt(
-            custom_prompt or GRADING_PROMPT_TEMPLATE,
+            custom_prompt or GRADING_CODE_PROMPT_TEMPLATE,
             task_description=task_description,
             model_solution=model_solution,
             student_solution=student_code,

@@ -41,7 +41,7 @@
             <tr>
               <th class="text-left px-4 py-2 font-semibold">Name</th>
               <th class="text-left px-4 py-2 font-semibold">Username</th>
-              <th class="text-left px-4 py-2 font-semibold">Rolle</th>
+              <th class="text-center px-4 py-2 font-semibold">Rolle</th>
               <th class="text-center px-4 py-2 font-semibold">Aktionen</th>
             </tr>
           </thead>
@@ -51,40 +51,41 @@
                 data-search="{{ member.name }} {{ member.username }} {{ member.role_in_course }}">
               <td class="px-4 py-3">{{ member.name }}</td>
               <td class="px-4 py-3 text-gray-500">{{ member.username }}</td>
-              <td class="px-4 py-3">
-                <span class="member-role px-2 py-0.5 rounded text-xs font-semibold
+              <td class="px-4 py-3 text-center">
+                {% if member.user_id != current_user.id %}
+                <select
+                  class="role-select border rounded px-2 py-1 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500
+                    {% if member.role_in_course == 'PROF' %}border-red-200 bg-red-50 text-red-700
+                    {% elif member.role_in_course == 'TUTOR' %}border-blue-200 bg-blue-50 text-blue-700
+                    {% else %}border-green-200 bg-green-50 text-green-700{% endif %}"
+                  data-user-id="{{ member.user_id }}"
+                  onchange="changeRole({{ course.id }}, {{ member.user_id }}, this)"
+                  {% if member.role_in_course == 'PROF' and not is_admin %}disabled{% endif %}
+                >
+                  <option value="PROF"{% if member.role_in_course == 'PROF' %} selected{% endif %}>PROF</option>
+                  <option value="TUTOR"{% if member.role_in_course == 'TUTOR' %} selected{% endif %}>TUTOR</option>
+                  <option value="STUDENT"{% if member.role_in_course == 'STUDENT' %} selected{% endif %}>STUDENT</option>
+                </select>
+                {% else %}
+                <span class="inline-block px-2 py-0.5 rounded text-xs font-semibold
                   {% if member.role_in_course == 'PROF' %}bg-red-100 text-red-700
                   {% elif member.role_in_course == 'TUTOR' %}bg-blue-100 text-blue-700
                   {% else %}bg-green-100 text-green-700{% endif %}">
-                  {{ member.role_in_course }}
+                  {{ member.role_in_course }} (Du)
                 </span>
+                {% endif %}
               </td>
               <td class="px-4 py-3 text-center">
                 {% if member.user_id != current_user.id %}
-                <div class="flex items-center justify-center gap-2">
-                  <!-- Rolle ändern -->
-                  <select
-                    class="role-select border rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    data-user-id="{{ member.user_id }}"
-                    onchange="changeRole({{ course.id }}, {{ member.user_id }}, this)"
-                    {% if member.role_in_course == 'PROF' and not is_admin %}disabled{% endif %}
-                  >
-                    <option value="PROF"{% if member.role_in_course == 'PROF' %} selected{% endif %}>PROF</option>
-                    <option value="TUTOR"{% if member.role_in_course == 'TUTOR' %} selected{% endif %}>TUTOR</option>
-                    <option value="STUDENT"{% if member.role_in_course == 'STUDENT' %} selected{% endif %}>STUDENT</option>
-                  </select>
-
-                  <!-- Entfernen -->
-                  <button
-                    onclick="removeMember({{ course.id }}, {{ member.user_id }}, '{{ member.username }}', this)"
-                    class="text-red-500 hover:text-red-700 transition text-xs font-medium px-2 py-1"
-                    title="Entfernen"
-                  >
-                    ✕
-                  </button>
-                </div>
+                <button
+                  onclick="removeMember({{ course.id }}, {{ member.user_id }}, '{{ member.username }}', this)"
+                  class="text-red-500 hover:text-red-700 transition text-xs font-medium px-2 py-1"
+                  title="Entfernen"
+                >
+                  ✕
+                </button>
                 {% else %}
-                <span class="text-gray-400 text-xs">(Du)</span>
+                <span class="text-gray-400 text-xs">—</span>
                 {% endif %}
               </td>
             </tr>
@@ -199,21 +200,27 @@
       const data = await res.json();
       if (!res.ok) {
         showToast(data.detail || 'Fehler beim Rollenwechsel.', 'error');
-        selectEl.value = selectEl.querySelector(':checked')?.value || newRole;
-        // Reset to previous value
-        const options = selectEl.querySelectorAll('option');
-        options.forEach(opt => opt.selected = false);
+        location.reload();
         return;
       }
 
-      // Update Badge-Farben
+      // Dropdown bleibt am Platz — Farbcodierung aktualisieren
+      if (newRole === 'PROF') {
+        selectEl.className = 'role-select border border-red-200 rounded px-2 py-1 text-xs font-semibold bg-red-50 text-red-700 focus:outline-none focus:ring-2 focus:ring-blue-500';
+      } else if (newRole === 'TUTOR') {
+        selectEl.className = 'role-select border border-blue-200 rounded px-2 py-1 text-xs font-semibold bg-blue-50 text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500';
+      } else {
+        selectEl.className = 'role-select border border-green-200 rounded px-2 py-1 text-xs font-semibold bg-green-50 text-green-700 focus:outline-none focus:ring-2 focus:ring-blue-500';
+      }
+      selectEl.value = newRole;
+
+      // data-search Attribut aktualisieren
       const row = selectEl.closest('tr');
-      const badge = row.querySelector('.member-role');
-      const roleClass = newRole === 'PROF' ? 'bg-red-100 text-red-700'
-        : newRole === 'TUTOR' ? 'bg-blue-100 text-blue-700'
-        : 'bg-green-100 text-green-700';
-      badge.className = 'member-role px-2 py-0.5 rounded text-xs font-semibold ' + roleClass;
-      badge.textContent = newRole;
+      if (row) {
+        const name = row.querySelector('td:first-child')?.textContent || '';
+        const username = row.querySelector('td:nth-child(2)')?.textContent || '';
+        row.dataset.search = name + ' ' + username + ' ' + newRole;
+      }
 
       showToast(data.message || 'Rolle geändert.', 'success');
     } catch (err) {

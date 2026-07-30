@@ -73,7 +73,7 @@ class GradingService:
         if task.task_type.value == "code":
             result = await self._grade_code(task, submission, session, custom_prompt)
         elif task.task_type.value == "mc":
-            result = await self._grade_mc(task, submission, session)
+            result = self._grade_mc(task, submission, session)
         else:
             result = await self._grade_text(task, submission, session, custom_prompt)
 
@@ -119,6 +119,40 @@ class GradingService:
             "comment": comment,
         }
 
+    async def _grade_text_with_code(
+        self, task: Task, submission: Submission, session: Session,
+        custom_prompt: Optional[str] = None,
+    ) -> dict:
+        """Code-Aufgabe ohne Tests -> LLM korrigiert Code als Textloesung."""
+        llm_result = await self.llm.grade_text_task(
+            task_description=task.description,
+            model_solution=task.model_solution or "(Keine Musterloesung hinterlegt — bitte eigenstaendig bewerten)",
+            student_solution=submission.code_solution,  # <-- Code statt solution!
+            max_points=task.max_points,
+            custom_prompt=custom_prompt,
+        )
+
+        data = llm_result.get("data", {})
+        points = float(data.get("points", 0))
+        comment = data.get("feedback", "Kein Feedback generiert.")
+
+        feedback = Feedback(
+            submission_id=submission.id,
+            source=FeedbackSource.LLM,
+            points_earned=points,
+            comment=comment,
+        )
+        session.add(feedback)
+        session.commit()
+        session.refresh(feedback)
+
+        return {
+            "points": points,
+            "max_points": task.max_points,
+            "feedback": feedback,
+            "comment": comment,
+        }
+
     async def _grade_code(
         self, task: Task, submission: Submission, session: Session,
         custom_prompt: Optional[str] = None,
@@ -132,8 +166,8 @@ class GradingService:
         ).all()
 
         if not test_cases:
-            # Keine Tests -> rein LLM-basiert
-            return await self._grade_text(task, submission, session, custom_prompt)
+            # Keine Tests -> Code als Textloesung graded
+            return await self._grade_text_with_code(task, submission, session, custom_prompt)
 
         # 2. Tests als Code zusammenfuegen
         tests_code = "\n\n".join(tc.code for tc in test_cases)

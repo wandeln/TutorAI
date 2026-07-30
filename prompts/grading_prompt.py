@@ -26,13 +26,13 @@ Bewerte die Lösung fair und konstruktiv. Gib als Antwort EINZIG ein JSON-Objekt
 WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Klammern sein. Verwende KEINE Backticks und KEINE Code-Blcke.
 
 Das JSON hat NUR zwei Felder:
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Verwende Markdown / katex -Formatierung fuer bessere Lesbarkeit: **fett** fuer Hervorhebungen, *kursiv* fuer Betonung, - Listen fuer Aufzählungen, und $...$ bzw. $$...$$ fuer mathematische Formeln (LaTeX). Schreibe ein konstruktives Feedback, das Staerken, Verbesserungspotenzial und ggf. Tipps direkt als natuerliche Saetze formuliert.
 - "points": Zahl (0 bis __MAX_POINTS__)
-- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Verwende Markdown-Formatierung fuer bessere Lesbarkeit: **fett** fuer Hervorhebungen, *kursiv* fuer Betonung, - Listen fuer Aufzählungen, und $...$ bzw. $$...$$ fuer mathematische Formeln (LaTeX). Schreibe ein konstruktives Feedback, das Staerken, Verbesserungspotenzial und ggf. Tipps direkt als natuerliche Saetze formuliert.
 
 Beispiel-Antwortformat:
 {
-  "points": 7,
-  "feedback": "**Gute Lösung overall.** Du hast den Algorithmus korrekt erkannt. Die Formel $f(n) = f(n-1) + f(n-2)$ ist richtig. Allerdings fehlen die **Basisfälle** — fuege $f(0) = 0$ und $f(1) = 1$ hinzu. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher."
+  "feedback": "**Gute Lösung overall.** Du hast den Algorithmus korrekt erkannt. Die Formel $f(n) = f(n-1) + f(n-2)$ ist richtig. Allerdings fehlen die **Basisfälle** — fuege $f(0) = 0$ und $f(1) = 1$ hinzu. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher.",
+  "points": 7
 }
 
 Bewertungskriterien:
@@ -40,6 +40,8 @@ Bewertungskriterien:
 - Korrektheit: Sind die Ergebnisse/Argumente richtig?
 - Qualitaet: Ist die Loesung elegant und gut strukturiert?
 - Verstaendnis: Zeigt der Student echtes Verstaendnis oder nur Auswendiglernen?
+
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
 """
 
 
@@ -65,13 +67,13 @@ Bewerte den Code und gib als Antwort EINZIG ein JSON-Objekt zurueck (NICHT in Co
 WICHTIG: Deine gesamte Antwort MUSS ein gueltiges JSON-Objekt in geschweiften Klammern sein. Verwende KEINE Backticks und KEINE Code-Blcke.
 
 Das JSON hat NUR zwei Felder:
+- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Beruecksichtige die Test-Ergebnisse und die Code-Qualitaet. Verwende Markdown / katex -Formatierung: **fett** fuer Wichtige Punkte, *kursiv* fuer Betonung, und $...$ fuer mathematische Ausdruecke.
 - "points": Zahl (0 bis __MAX_POINTS__)
-- "feedback": Ein zusammenhaengender Text mit deiner Bewertung. Beruecksichtige die Test-Ergebnisse und die Code-Qualitaet. Verwende Markdown-Formatierung: **fett** fuer Wichtige Punkte, *kursiv* fuer Betonung, und $...$ fuer mathematische Ausdruecke.
 
 Beispiel-Antwortformat:
 {
-  "points": 10,
-  "feedback": "**3 von 4 Tests bestanden.** Der Algorithmus ist im Kern korrekt. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine **Praefuerung** `if not lst: return 0` am Anfang hinzu. Die Zeitkomplexitaet $O(n)$ ist optimal."
+  "feedback": "**3 von 4 Tests bestanden.** Der Algorithmus ist im Kern korrekt. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine **Praefuerung** `if not lst: return 0` am Anfang hinzu. Die Zeitkomplexitaet $O(n)$ ist optimal.",
+  "points": 10
 }
 
 Beruecksichtige bei der Bewertung:
@@ -80,6 +82,8 @@ Beruecksichtige bei der Bewertung:
 - Effizienz (Laufzeitkomplexitaet)
 - Edge-Cases (Umgang mit Sonderfaellen)
 - Verstaendlichkeit (Kommentare, Variablennamen)
+
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
 """
 
 

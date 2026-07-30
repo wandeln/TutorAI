@@ -11,6 +11,7 @@ pyjwt==2.10.1
 # No passlib needed — we use hashlib + secrets (built-in, no compatibility issues)
 # python-ldap==3.4.4  # Optional: Needs libldap-dev. Install with:
 #   apt install libldap2-dev libsasl2-dev && pip install python-ldap
+ldap3==2.9.1  # Pure-Python LDAP client (works without compilation)
 
 # LLM
 openai==1.61.1

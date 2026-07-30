@@ -349,6 +349,8 @@ class CourseSettingsBase(SQLModel):
     ldap_server: Optional[str] = None
     ldap_base_dn: Optional[str] = None
     ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
+    ldap_user_search: Optional[str] = None  # e.g. (uid={username}) or (sAMAccountName={username})
 
 
 class CourseSettings(CourseSettingsBase, table=True):
@@ -367,6 +369,8 @@ class CourseSettingsCreate(SQLModel):
     ldap_server: Optional[str] = None
     ldap_base_dn: Optional[str] = None
     ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
+    ldap_user_search: Optional[str] = None
 
 
 class CourseSettingsRead(CourseSettingsBase):
@@ -381,3 +385,5 @@ class CourseSettingsUpdate(SQLModel):
     ldap_server: Optional[str] = None
     ldap_base_dn: Optional[str] = None
     ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
+    ldap_user_search: Optional[str] = None

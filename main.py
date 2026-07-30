@@ -10,6 +10,14 @@ oder:
 
 from contextlib import asynccontextmanager
 from typing import Any
+import logging
+
+# Logging konfigurieren
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -49,6 +57,12 @@ async def lifespan(app: FastAPI):
     
     # 2. Migration: Alte UserRole-Werte in neue Enums umwandeln
     _migrate_roles()
+    
+    # 2b. Migration: ldap_bind_pw Spalte zu course_settings hinzufuegen
+    _migrate_course_settings_bind_pw()
+    
+    # 2c. Migration: ldap_user_search Spalte zu course_settings hinzufuegen
+    _migrate_course_settings_search_filter()
     
     # 3. Seed-Daten (wenn DB leer)
     with Session(engine) as session:
@@ -90,8 +104,54 @@ def _migrate_roles():
             print("Rollen-Migration abgeschlossen.")
         except Exception as e:
             # Wenn die Tabelle noch nicht existiert oder Migration bereits gelaufen ist
-            print(f"Rollen-Migration übersprungen: {e}")
+            print(f"Rollen-Migration uebersprungen: {e}")
             session.rollback()
+
+
+def _migrate_course_settings_bind_pw():
+    """
+    Fügt die ldap_bind_pw-Spalte zur course_settings-Tabelle hinzu,
+    falls sie noch nicht existiert (SQLite-Erweiterung).
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        try:
+            session.execute(text(
+                "ALTER TABLE course_settings ADD COLUMN ldap_bind_pw TEXT DEFAULT NULL"
+            ))
+            session.commit()
+            print("Migration: ldap_bind_pw zu course_settings hinzugefuegt.")
+        except Exception as e:
+            # Spalte existiert bereits oder Tabelle noch nicht da
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "already exists" in err_str or "no such table" in err_str:
+                print("Migration ldap_bind_pw: Bereits vorhanden.")
+            else:
+                print(f"Migration ldap_bind_pw fehlgeschlagen: {e}")
+                session.rollback()
+
+
+def _migrate_course_settings_search_filter():
+    """
+    Fügt die ldap_user_search-Spalte zur course_settings-Tabelle hinzu.
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        try:
+            session.execute(text(
+                "ALTER TABLE course_settings ADD COLUMN ldap_user_search TEXT DEFAULT NULL"
+            ))
+            session.commit()
+            print("Migration: ldap_user_search zu course_settings hinzugefuegt.")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "already exists" in err_str or "no such table" in err_str:
+                print("Migration ldap_user_search: Bereits vorhanden.")
+            else:
+                print(f"Migration ldap_user_search fehlgeschlagen: {e}")
+                session.rollback()
 
 
 def _seed_demo_data(session: Session):
@@ -495,10 +555,37 @@ async def _do_login(
     if not username or not password:
         return None, "Username und Password erforderlich.", 400
     
-    from config import LDAP_ENABLED
+    from database.models import CourseSettings
     from services.auth_service import authenticate_user, create_access_token
     
-    user = await authenticate_user(username, password, session, LDAP_ENABLED)
+    # LDAP-Setting aus CourseSettings lesen
+    first_settings = session.exec(
+        select(CourseSettings).where(CourseSettings.use_ldap == True)
+    ).first()
+    
+    use_ldap = False
+    ldap_server = None
+    ldap_base_dn = None
+    ldap_bind_dn = None
+    ldap_bind_pw = None
+    ldap_user_search = None
+    
+    if first_settings:
+        use_ldap = True
+        ldap_server = first_settings.ldap_server
+        ldap_base_dn = first_settings.ldap_base_dn
+        ldap_bind_dn = first_settings.ldap_bind_dn
+        ldap_bind_pw = first_settings.ldap_bind_pw
+        ldap_user_search = first_settings.ldap_user_search
+    
+    user = await authenticate_user(
+        username, password, session, use_ldap,
+        ldap_server=ldap_server,
+        ldap_base_dn=ldap_base_dn,
+        ldap_bind_dn=ldap_bind_dn,
+        ldap_bind_pw=ldap_bind_pw,
+        ldap_user_search=ldap_user_search,
+    )
     
     if not user:
         return None, "Ungültiger Username oder Password.", 401
@@ -1078,7 +1165,27 @@ async def admin_page(
     if user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Nur für Administratoren.")
     
-    courses = _get_user_courses(user, session)
+    # Alle Kurse für den Überblick
+    all_courses = session.exec(select(Course)).all()
+    
+    # Memberships des Users sammeln (für Link-Logik)
+    user_memberships = session.exec(
+        select(UserCourse).where(UserCourse.user_id == user.id)
+    ).all()
+    member_course_ids = {m.course_id for m in user_memberships}
+    membership_roles = {m.course_id: m.role_in_course.value for m in user_memberships}
+    
+    courses = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "semester": c.semester,
+            "role_in_course": membership_roles.get(c.id, "NONE"),
+            "is_member": c.id in member_course_ids,
+        }
+        for c in all_courses
+    ]
+    
     all_users = session.exec(select(User)).all()
     
     return templates.TemplateResponse(

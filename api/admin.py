@@ -5,16 +5,21 @@ Rollen: Administrator (global)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from database.base import get_session
 from database.models import (
     Course,
     CourseCreate,
+    CourseRole,
     CourseSettings,
     CourseSettingsUpdate,
+    Feedback,
     GlobalUserRole,
-    CourseRole,
+    Submission,
+    Task,
+    TestCase,
     User,
     UserCourse,
 )
@@ -89,15 +94,46 @@ async def delete_course(
     session: Session = Depends(get_session),
     user: User = Depends(require_global_admin()),
 ):
-    """Kurs löschen (inkl. aller Aufgaben und Einreichungen)."""
+    """Kurs löschen (inkl. aller abhängigen Daten)."""
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
     
-    # TODO: Cascading deletes oder manuell löschen
+    course_name = course.name
+
+    # Manuelle Cascading deletes in korrekter Reihenfolge
+    # 1. Alle Tasks des Kurses finden
+    tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
+    for task in tasks:
+        task_id = task.id
+        # 2. Alle Submissions der Tasks
+        submissions = session.exec(select(Submission).where(Submission.task_id == task_id)).all()
+        for sub in submissions:
+            # 3. Alle Feedbacks der Submissions
+            feedbacks = session.exec(select(Feedback).where(Feedback.submission_id == sub.id)).all()
+            for fb in feedbacks:
+                session.delete(fb)
+            session.delete(sub)
+        # 4. Alle TestCases der Tasks
+        test_cases = session.exec(select(TestCase).where(TestCase.task_id == task_id)).all()
+        for tc in test_cases:
+            session.delete(tc)
+        session.delete(task)
+
+    # 5. Alle CourseSettings
+    settings = session.exec(select(CourseSettings).where(CourseSettings.course_id == course_id)).first()
+    if settings:
+        session.delete(settings)
+
+    # 6. Alle UserCourse-Mitgliedschaften
+    memberships = session.exec(select(UserCourse).where(UserCourse.course_id == course_id)).all()
+    for mc in memberships:
+        session.delete(mc)
+
+    # 7. Schließlich den Kurs selbst
     session.delete(course)
     session.commit()
-    return {"message": f"Kurs '{course.name}' gelöscht."}
+    return {"message": f"Kurs '{course_name}' gelöscht."}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -368,6 +404,8 @@ async def get_course_settings(
         "use_ldap": settings.use_ldap,
         "ldap_server": settings.ldap_server,
         "ldap_base_dn": settings.ldap_base_dn,
+        "ldap_bind_dn": settings.ldap_bind_dn,
+        "ldap_user_search": settings.ldap_user_search,
     }
 
 
@@ -386,8 +424,10 @@ async def update_course_settings(
     if not settings:
         settings = CourseSettings(course_id=course_id)
     
-    # Nur nicht-None Werte updaten
+    # Nur nicht-None und nicht-leere Werte updaten
     update_data = data.model_dump(exclude_none=True)
+    # Empty string für ldap_bind_pw ausschließen (bestehendes PW beibehalten)
+    update_data = {k: v for k, v in update_data.items() if not (k == "ldap_bind_pw" and v == "")}
     for key, value in update_data.items():
         setattr(settings, key, value)
     
@@ -395,8 +435,65 @@ async def update_course_settings(
     session.commit()
     session.refresh(settings)
     
-    return {"message": "Einstellungen aktualisiert.", "settings": {
-        "id": settings.id,
-        "use_ldap": settings.use_ldap,
-        "llm_model": settings.llm_model,
-    }}
+    return {
+        "message": "Einstellungen aktualisiert.", "settings": {
+            "id": settings.id,
+            "use_ldap": settings.use_ldap,
+            "llm_model": settings.llm_model,
+            "ldap_server": settings.ldap_server,
+            "ldap_base_dn": settings.ldap_base_dn,
+            "ldap_bind_dn": settings.ldap_bind_dn,
+        }
+    }
+
+
+class LdapTestRequest(BaseModel):
+    ldap_server: str = ""
+    ldap_base_dn: str = ""
+    ldap_bind_dn: str = ""
+    ldap_bind_pw: str = ""
+
+
+@router.post("/ldap/test")
+async def test_ldap(
+    data: LdapTestRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_global_admin()),
+):
+    """
+    Testet die LDAP-Verbindung mit den eingegebenen Einstellungen.
+    Bindet den Service-Account und fuehrt eine Test-Suche durch.
+    """
+    from ldap3 import Server, Connection, SUBTREE, ALL
+
+    server = data.ldap_server or ""
+    base_dn = data.ldap_base_dn or ""
+    bind_dn = data.ldap_bind_dn or ""
+    bind_pw = data.ldap_bind_pw or ""
+
+    if not server or not base_dn:
+        return {"success": False, "error": "Server und Base DN sind erforderlich."}
+
+    try:
+        ldap_server_obj = Server(server, get_info=ALL)
+        if bind_dn and bind_pw:
+            conn = Connection(ldap_server_obj, user=bind_dn, password=bind_pw, auto_bind=True)
+        else:
+            conn = Connection(ldap_server_obj, auto_bind=True)
+    except Exception as e:
+        return {"success": False, "error": f"Bind fehlgeschlagen: {e}"}
+
+    try:
+        # Test-Suche: Nur die erste Entry finden
+        conn.search(base_dn, "(objectClass=*)", search_scope=SUBTREE, size_limit=1)
+        entries = conn.entries
+        count = len(entries)
+        detail = f"Bind erfolgreich. {count} Eintrag(e) gefunden in {base_dn}."
+        if entries and count > 0:
+            detail += f" Erstes: {entries[0].entry_dn}"
+    except Exception as e:
+        detail = f"Suche fehlgeschlagen: {e}"
+    finally:
+        conn.unbind()
+
+    return {"success": True, "detail": detail}

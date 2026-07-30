@@ -256,12 +256,13 @@ async def update_course_name(
     auth_result: tuple = Depends(require_prof_or_admin()),
 ):
     """
-    Kursnamen beschreiben (PROF oder Admin).
+    Kurstitel, Beschreibung und Semester beschreiben (PROF oder Admin).
 
     Request:
         {
-            "name": "Neuer Kursname",
+            "name": "Neuer Kurstitel",
             "description": "Neue Beschreibung",
+            "semester": "WS 2025/26",
         }
     """
     course = session.get(Course, course_id)
@@ -273,6 +274,8 @@ async def update_course_name(
         course.name = body["name"]
     if "description" in body:
         course.description = body["description"]
+    if "semester" in body:
+        course.semester = body["semester"]
 
     session.add(course)
     session.commit()
@@ -284,6 +287,7 @@ async def update_course_name(
             "id": course.id,
             "name": course.name,
             "description": course.description,
+            "semester": course.semester,
         },
     }
 

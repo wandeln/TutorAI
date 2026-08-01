@@ -52,42 +52,57 @@ def filter_public_test_results(test_results: list) -> list:
 
 
 # Helper: Formatiere Test-Ausgabe fuer Studierende
-def format_test_error(output: str) -> str:
+def format_test_error(output: str) -> dict:
     """
-    Wandelt den rohen Traceback in eine hilfreichere Meldung um.
-    Extrahiert nur die relevanten Zeilen (Fehlermeldung + Zeilennummer).
+    Bereitet die Fehlermeldung eines Tests auf.
+    Bewahrt Assert-Messages und den vollen Traceback auf.
+    Gibt ein Dict zurueck mit 'summary' (lesbare Kurzform) und 'full' (kompletter Traceback).
     """
     if not output:
-        return "Test fehlgeschlagen. Details unbekannt."
+        return {"summary": "Test fehlgeschlagen. Details unbekannt.", "full": ""}
     
-    # Extrahiere die eigentliche Fehlermeldung (AssertionError, etc.)
     lines = output.strip().split('\n')
     
-    # Suche nach der eigentlichen Exception
+    # Suche nach der Exception-Zeile und ggf. Assert-Message
+    error_type = ""
     error_msg = ""
-    expected_line = ""
-    actual_line = ""
+    found_exception = False
     
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if 'AssertionError' in stripped:
-            error_msg = stripped
-            # Hole die vorherige Zeile als Kontext
-            if i > 0:
-                expected_line = lines[i-1].strip()
-        if 'assertEqual' in stripped and 'expected' in stripped.lower():
-            expected_line = stripped
+        if not found_exception:
+            # Suche nach Exception-Klasse (z.B. AssertionError, ValueError, ...)
+            for exc in ('AssertionError', 'ValueError', 'TypeError', 'KeyError', 'IndexError', 'NameError', 'AttributeError', 'RuntimeError', 'ZeroDivisionError'):
+                if exc in stripped and '(' in stripped:
+                    found_exception = True
+                    error_type = exc
+                    # Extrahiere die Message aus der Exception-Zeile
+                    paren_idx = stripped.index('(')
+                    msg_part = stripped[paren_idx+1:].rstrip(')').strip().strip("'\"")
+                    error_msg = msg_part
+                    break
+        else:
+            break
     
-    # Wenn wir eine gute Fehlermeldung haben
-    if error_msg and expected_line:
-        return f"Test fehlgeschlagen: {error_msg} (Kontext: {expected_line[:80]}...)"
+    # Baue eine gut lesbare Zusammenfassung
+    readable_parts = []
+    if error_type:
+        readable_parts.append(f"{error_type}")
+        if error_msg:
+            readable_parts[-1] += f": {error_msg}"
     
-    # Fallback: Zeige nur die letzten 3 Zeilen des Tracebacks
-    if len(lines) > 3:
-        relevant = lines[-3:]
-        return " | ".join(r.strip() for r in relevant if r.strip())
+    # Wenn die Exception-Meldung leer war (z.B. AssertionError ohne Message),
+    # verwende die erste signifikante Zeile des Tracebacks
+    if error_type and not error_msg:
+        for l in lines:
+            stripped = l.strip()
+            if stripped and stripped != error_type:
+                readable_parts[-1] += f": {stripped[:120]}"
+                break
     
-    return output.strip()[:200]
+    readable = " — ".join(readable_parts) if readable_parts else output.strip()[:300]
+    
+    return {"summary": readable, "full": output.strip()}
 
 
 # =================================================================
@@ -333,19 +348,21 @@ async def get_submission_result(
     # Graded (oder overridden) — Ergebnis zusammenbauen
     all_feedback = submission.feedback_list
 
-    # Find best points
+    # Find latest points (from most recent submission)
     existing = session.exec(
         select(Submission)
         .where(Submission.task_id == task.id)
         .where(Submission.student_id == user.id)
+        .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
     ).all()
     total_attempts = len(existing)
 
-    best_points = 0.0
-    for sub in existing:
-        for fb in sub.feedback_list:
-            if fb.points_earned > best_points:
-                best_points = fb.points_earned
+    latest_points = 0.0
+    if existing:
+        latest_sub = existing[0]  # newest
+        for fb in latest_sub.feedback_list:
+            if fb.points_earned > latest_points:
+                latest_points = fb.points_earned
 
     points = 0.0
     comment = ""
@@ -365,7 +382,7 @@ async def get_submission_result(
         "total_attempts": total_attempts,
         "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else "",
         "points": points,
-        "best_points": best_points,
+        "best_points": latest_points,
         "max_points": task.max_points,
         "max_attempts": task.max_attempts,
         "comment": comment,
@@ -419,16 +436,15 @@ async def run_code(
     # Fuehre Code in Sandbox aus (async, mit Timeout)
     result = await sandbox_runner.run_code_only(code=code)
 
-    stdout = result.get("stdout", "").strip()
-    stderr = result.get("stderr", "").strip()
+    stdout = result.get("stdout", "")
+    stderr = result.get("stderr", "")
 
+    # Behalte den vollen Python-Traceback anstelle ihn zu ersetzen
     if stderr:
-        # Uebersetze haeufige Fehler fuer Studierende
         if "IndentationError" in stderr:
-            # Extrahiere die Zeilennummer
             match = re.search(r'line\s+(\d+)', stderr)
             line = match.group(1) if match else "unbekannt"
-            stderr = f"Eindeckungsfehler (Indentation) in Zeile {line}. Ueberpruefe deine Einrueckung (Tab vs. Leerzeichen)."
+            stderr = f"Eindeckungsfehler (Indentation) in Zeile {line}. Ueberpruefe deine Einrueckung (Tab vs. Leerzeichen).\n\nOriginal:\n{stderr}"
 
     images = result.get("images", [])
 
@@ -495,7 +511,8 @@ async def run_public_tests(
         }
         if not formatted["passed"]:
             raw_output = t.get("output", "")
-            formatted["error"] = format_test_error(raw_output)
+            formatted_error = format_test_error(raw_output)
+            formatted["error"] = formatted_error
         formatted_results.append(formatted)
 
     has_timeout = result.get("timeout", False)
@@ -508,6 +525,7 @@ async def run_public_tests(
         "test_results": formatted_results,
         "tests_passed": sum(1 for t in formatted_results if t.get("passed")),
         "tests_total": len(formatted_results),
+        "stdout": result.get("stdout", ""),
         "stderr": stderr_val,
         "timeout": has_timeout,
     }
@@ -549,19 +567,17 @@ async def get_my_submissions(
         if not subs:
             continue
 
-        best_points = 0.0
-        best_sub = None
-        for sub in subs:
-            for fb in sub.feedback_list:
-                if fb.points_earned > best_points:
-                    best_points = fb.points_earned
-                    best_sub = sub
+        latest_sub = subs[0]  # newest (already ordered desc)
+        latest_points = 0.0
+        for fb in latest_sub.feedback_list:
+            if fb.points_earned > latest_points:
+                latest_points = fb.points_earned
 
         my_submissions.append({
             "task_id": task.id,
             "task_title": task.title,
             "max_points": task.max_points,
-            "best_points": best_points,
+            "best_points": latest_points,
             "attempt_count": len(subs),
         })
 
@@ -599,14 +615,16 @@ async def get_my_points(
             select(Submission)
             .where(Submission.task_id == task.id)
             .where(Submission.student_id == user.id)
+            .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
         ).all()
 
-        best_points = 0.0
-        for sub in subs:
-            for fb in sub.feedback_list:
-                if fb.points_earned > best_points:
-                    best_points = fb.points_earned
-        total_points += best_points
+        latest_points = 0.0
+        if subs:
+            latest_sub = subs[0]  # newest
+            for fb in latest_sub.feedback_list:
+                if fb.points_earned > latest_points:
+                    latest_points = fb.points_earned
+        total_points += latest_points
 
     return {
         "total_points": round(total_points, 1),

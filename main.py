@@ -627,15 +627,16 @@ async def index(
                     select(Submission)
                     .where(Submission.task_id == task.id)
                     .where(Submission.student_id == user.id)
+                    .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
                 ).all()
-                best = 0.0
-                for sub in subs:
-                    for fb in sub.feedback_list:
-                        if fb.points_earned > best:
-                            best = fb.points_earned
-                if best > 0:
+                latest = 0.0
+                if subs:
+                    for fb in subs[0].feedback_list:
+                        if fb.points_earned > latest:
+                            latest = fb.points_earned
+                if latest > 0:
                     completed_count += 1
-                course_earned += best
+                course_earned += latest
             total_completed += completed_count
             total_points_earned += course_earned
             total_points_possible += course_possible
@@ -844,14 +845,16 @@ async def course_page(
                 select(Submission)
                 .where(Submission.task_id == t.id)
                 .where(Submission.student_id == user.id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
             ).all()
-            
+
             human_points = 0.0
             llm_points = 0.0
             override_exists = False
             has_feedback = False
-            for sub in subs:
-                for fb in sub.feedback_list:
+            if subs:
+                latest_sub = subs[0]  # newest
+                for fb in latest_sub.feedback_list:
                     has_feedback = True
                     if fb.source == FeedbackSource.HUMAN:
                         human_points = max(human_points, fb.points_earned)
@@ -1225,7 +1228,7 @@ async def task_page(
     next_task = session.exec(next_query).first()
 
     my_submissions = []
-    best_points = 0
+    latest_points = 0
     if not is_tutor:
         subs = session.exec(
             select(Submission)
@@ -1246,8 +1249,6 @@ async def task_page(
                     "giver_name": fb.giver.name if fb.giver else "LLM",
                     "created_at": fb.created_at,
                 })
-                if fb.points_earned > best_points:
-                    best_points = fb.points_earned
             my_submissions.append({
                 "id": sub.id,
                 "solution": sub.solution,
@@ -1293,7 +1294,7 @@ async def task_page(
             "is_code": is_code,
             "code_editor": is_code,
             "my_submissions": my_submissions,
-            "best_points": best_points,
+            "best_points": latest_points,
             "total_attempts": len(my_submissions),
 
             "LLM_TIMEOUT": LLM_TIMEOUT,

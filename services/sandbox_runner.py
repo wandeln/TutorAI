@@ -14,11 +14,12 @@ Kein Docker-Overhead — rein asyncio subprocess + resource Limits.
 import asyncio
 import json
 import os
+import re
 import resource
 import signal
 import shutil
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 
 from config import (
     SANDBOX_TIMEOUT, SANDBOX_MEMORY_MB, SANDBOX_CPU_SECONDS,
@@ -76,9 +77,11 @@ class SandboxedRunner:
     async def run_code_only(self, code: str, timeout: Optional[int] = None) -> Dict[str, Any]:
         """
         Fuehrt Code aus OHNE Tests — gibt stdout/stderr + Matplotlib-Bilder zurueck.
+
+        stderr-Zeilennummern werden so korrigiert, dass sie zum Studenten-Editor passen.
         """
         img_dir = tempfile.mkdtemp(prefix="sandbox_img_")
-        full_script = self._wrap_code_only(code, img_dir)
+        full_script, line_offset = self._wrap_code_only(code, img_dir)
         runner_timeout = timeout or self.timeout
         runner_memory = self.memory_mb
 
@@ -95,6 +98,8 @@ class SandboxedRunner:
             clean_stdout = self._strip_image_markers(result.get("stdout", ""))
             result["stdout"] = clean_stdout
             result["images"] = images
+            # Korrigiere Zeilennummern im stderr (funktioniert auch bei SyntaxError)
+            result["stderr"] = self._adjust_stderr_line_numbers(result["stderr"], line_offset)
             return result
         finally:
             try:
@@ -287,71 +292,107 @@ class SandboxedRunner:
             "}))",
         ])
 
-    def _wrap_code_only(self, code: str, img_dir: str) -> str:
+    def _wrap_code_only(self, code: str, img_dir: str) -> Tuple[str, int]:
         """
         Wrapper fuer Code ohne Tests mit Resource-Limits + Matplotlib-Support.
 
         plt.show() wird automatisch in PNG umgewandelt und als Base64
         im stdout ausgegeben (markiert mit IMG_MARKER).
+
+        Gibt (script, line_offset) zurueck. Der line_offset gibt an,
+        wie viele Zeilen VOR dem Studenten-Code liegen.
+
+        Die Zeilenkorrektur erfolgt im Backend (run_code_only),
+        damit sie auch bei Syntax/IndentationError funktioniert.
         """
         cpu_soft = self.cpu_seconds
         cpu_hard = self.cpu_seconds + 5
 
-        # Matplotlib-Erfassung als Python-Code-Block
-        mpl_capture = (
-            "import base64, os\n"
-            "_plot_dir = '" + img_dir + "'\n"
-            "_plot_count = 0\n"
-            "def _capture_plots():\n"
-            "    global _plot_count\n"
-            "    try:\n"
-            "        import matplotlib.pyplot as plt\n"
-            "    except ImportError:\n"
-            "        return\n"
-            "    figs = []\n"
-            "    for name, obj in list(globals().items()):\n"
-            "        if isinstance(obj, plt.Figure) and not getattr(obj, '_sandbox_emitted', False):\n"
-            "            figs.append(obj)\n"
-            "            obj._sandbox_emitted = True\n"
-            "    try:\n"
-            "        current = plt.gcf()\n"
-            "        if current not in figs and not getattr(current, '_sandbox_emitted', False) and len(current.get_axes()) > 0:\n"
-            "            figs.append(current)\n"
-            "            current._sandbox_emitted = True\n"
-            "    except Exception:\n"
-            "        pass\n"
-            "    for fig in figs:\n"
-            "        _plot_count += 1\n"
-            "        path = os.path.join(_plot_dir, 'plot_' + str(_plot_count) + '.png')\n"
-            "        fig.savefig(path, dpi=100, bbox_inches='tight')\n"
-            "        plt.close(fig)\n"
-            "        with open(path, 'rb') as f:\n"
-            "            b64 = base64.b64encode(f.read()).decode()\n"
-            "        print('===PLOT_BASE64_START===' + b64 + '===PLOT_BASE64_END===', flush=True)\n"
-            "\n"
-            "# Monkey-patch plt.show()\n"
-            "try:\n"
-            "    import matplotlib.pyplot as plt\n"
-            "    plt.show = _capture_plots\n"
-            "except ImportError:\n"
-            "    pass\n"
-        )
-
-        return "\n".join([
-            "import resource, signal, os, traceback",
+        # Preamble: alle Zeilen die VOR dem Studenten-Code kommen.
+        # Als Liste aufgebaut -> exakte Zeilenzaehlung.
+        preamble = [
+            "import resource, signal, os, traceback, sys",
             "",
             f"resource.setrlimit(resource.RLIMIT_CPU, ({cpu_soft}, {cpu_hard}))",
             "",
             "signal.alarm(10)",
             "",
-            mpl_capture,
+            "import base64, os",
+            f"_plot_dir = '{img_dir}'",
+            "_plot_count = 0",
+            "def _capture_plots():",
+            "    global _plot_count",
+            "    try:",
+            "        import matplotlib.pyplot as plt",
+            "    except ImportError:",
+            "        return",
+            "    figs = []",
+            "    for name, obj in list(globals().items()):",
+            "        if isinstance(obj, plt.Figure) and not getattr(obj, '_sandbox_emitted', False):",
+            "            figs.append(obj)",
+            "            obj._sandbox_emitted = True",
+            "    try:",
+            "        current = plt.gcf()",
+            "        if current not in figs and not getattr(current, '_sandbox_emitted', False) and len(current.get_axes()) > 0:",
+            "            figs.append(current)",
+            "            current._sandbox_emitted = True",
+            "    except Exception:",
+            "        pass",
+            "    for fig in figs:",
+            "        _plot_count += 1",
+            "        path = os.path.join(_plot_dir, 'plot_' + str(_plot_count) + '.png')",
+            "        fig.savefig(path, dpi=100, bbox_inches='tight')",
+            "        plt.close(fig)",
+            "        with open(path, 'rb') as f:",
+            "            b64 = base64.b64encode(f.read()).decode()",
+            "        print('===PLOT_BASE64_START===' + b64 + '===PLOT_BASE64_END===', flush=True)",
+            "",
+            "# Monkey-patch plt.show()",
+            "try:",
+            "    import matplotlib.pyplot as plt",
+            "    plt.show = _capture_plots",
+            "except ImportError:",
+            "    pass",
             "",
             "# ---- STUDENT CODE ----",
-            code,
+        ]
+
+        # Der Studenten-Code beginnt bei Zeile len(preamble) + 1 (1-based)
+        line_offset = len(preamble)
+
+        # Fuege Studenten-Code direkt ein (kein extra try/except wrapper)
+        for line in code.split("\n"):
+            preamble.append(line)
+
+        # Rest nach dem Code
+        preamble.extend([
             "",
             "# Plots am Ende noch einmal erfassen (falls kein plt.show())",
             "_capture_plots()",
         ])
+
+        return "\n".join(preamble), line_offset
+
+    def _adjust_stderr_line_numbers(self, stderr: str, offset: int) -> str:
+        """
+        Subtrahiert den Preamble-Offset von allen 'line N' Referenzen im stderr.
+
+        Funktioniert fuer Tracebacks von:
+        - RuntimeError / ZeroDivisionError etc. (Traceback + line N)
+        - SyntaxError / IndentationError (File ... line N)
+        """
+        if not stderr or offset <= 0:
+            return stderr
+
+        def _replace_line(m: re.Match) -> str:
+            prefix = m.group(1)       # z.B. "  File \"/tmp/...\" line "
+            num = int(m.group(2))     # Original-Zeilennummer
+            corrected = max(num - offset, 1)
+            return prefix + str(corrected)
+
+        # Match: (optional whitespace + File ... line ) + digits
+        pattern = r'(\s*File\s+[^)]+line\s+)(\d+)'
+        return re.sub(pattern, _replace_line, stderr, flags=re.MULTILINE)
 
     # ──────────────────────────────────────────────────────────────
     # UTILITIES
@@ -441,3 +482,6 @@ class SandboxedRunner:
             "timeout": False,
             "error": None if passed else stderr.strip() or f"Exit code: {returncode}",
         }
+
+
+sandbox_runner = SandboxedRunner()

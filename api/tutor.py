@@ -4,6 +4,7 @@ Tutor-Endpoints: Aufgaben-Management + Korrektur + Übersicht.
 Rollen: Tutor und PROF (im Kurs), Admin (global)
 """
 
+import io
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -400,13 +401,15 @@ async def get_course_overview(
                 select(Submission)
                 .where(Submission.task_id == task.id)
                 .where(Submission.student_id == student.id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
             ).all()
 
             human_points = 0.0
             llm_points = 0.0
             override_exists = False
-            for sub in subs:
-                for fb in sub.feedback_list:
+            if subs:
+                latest_sub = subs[0]  # newest
+                for fb in latest_sub.feedback_list:
                     if fb.source == FeedbackSource.HUMAN:
                         human_points = max(human_points, fb.points_earned)
                         override_exists = True
@@ -752,3 +755,88 @@ async def add_feedback_to_submission(
         "giver": user.name,
         "created_at": feedback.created_at.isoformat() if feedback.created_at else "",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EXCEL-EXPORT
+# ═══════════════════════════════════════════════════════════════════
+
+@router.post("/courses/{course_id}/export-excel")
+async def export_excel(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Excel-Export der Übersichtstabelle: Alle Studenten x Aufgaben mit Punkten."""
+    _, _ = user_and_course
+
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    # Query-Parameter
+    filter_text = request.query_params.get("filter_text", "").strip()
+
+    # Alle Aufgaben des Kurses
+    tasks = list(session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+    ).all())
+
+    # Filter nach Suchbegriff
+    if filter_text:
+        tasks = [t for t in tasks if filter_text.lower() in t.title.lower()]
+
+    # Alle Studenten des Kurses
+    memberships = session.exec(
+        select(UserCourse)
+        .where(UserCourse.course_id == course_id)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
+    ).all()
+    students = [m.user for m in memberships]
+
+    # Scores berechnen
+    scores = {}  # { student_id: { task_id: points } }
+    for student in students:
+        scores[student.id] = {}
+        for task in tasks:
+            subs = session.exec(
+                select(Submission)
+                .where(Submission.task_id == task.id)
+                .where(Submission.student_id == student.id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+            ).all()
+
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
+            if subs:
+                latest_sub = subs[0]
+                for fb in latest_sub.feedback_list:
+                    if fb.source == FeedbackSource.HUMAN:
+                        human_points = max(human_points, fb.points_earned)
+                        override_exists = True
+                    else:
+                        llm_points = max(llm_points, fb.points_earned)
+
+            point_val = human_points if override_exists else llm_points
+            scores[student.id][task.id] = point_val
+
+    # Excel-Datei generieren
+    excel_bytes = export_service.generate_overview_bytes(
+        course_name=course.name,
+        students=students,
+        tasks=tasks,
+        scores=scores,
+        session=session,
+        filter_text=filter_text or None,
+    )
+
+    filename = f"punktestand_{course.name.replace(' ', '_')}.xlsx"
+    return StreamingResponse(
+        io.BytesIO(excel_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

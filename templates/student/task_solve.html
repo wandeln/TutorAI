@@ -183,6 +183,18 @@
             </button>
           </div>
 
+          <!-- ─── Grading Progress ──────────────────────────────── -->
+          <div id="grading-progress" class="hidden mt-3">
+            <div class="flex items-center gap-2 text-sm text-green-700">
+              <span class="animate-spin">⏳</span>
+              <span>LLM korrigiert deine Loesung...</span>
+              <span id="grading-timer" class="font-mono">0s</span>
+            </div>
+            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
+              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
+            </div>
+          </div>
+
           <!-- ─── Console Output ──────────────────────────────────── -->
           <div id="console-output" class="hidden mt-3">
             <div class="bg-gray-900 text-green-400 rounded-lg p-3 font-mono text-sm">
@@ -200,18 +212,6 @@
                 </div>
                 <div id="plot-gallery" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
               </div>
-            </div>
-          </div>
-
-          <!-- ─── Grading Progress ──────────────────────────────── -->
-          <div id="grading-progress" class="hidden mt-4">
-            <div class="flex items-center gap-2 text-sm text-green-700">
-              <span class="animate-spin">⏳</span>
-              <span>LLM korrigiert deine Loesung...</span>
-              <span id="grading-timer" class="font-mono">0s</span>
-            </div>
-            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
-              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
             </div>
           </div>
         </div>
@@ -337,6 +337,13 @@
 
 {% block extra_scripts %}
 <script>
+  // ─── Helper: escape HTML entities ──────────────────────────
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   // ─── Helper: create a solution wrapper with copy button ─────
   function createSolutionWrapper(rawText, isCode) {
     const wrapper = document.createElement('div');
@@ -473,23 +480,21 @@
         return;
       }
 
-      // Zeige stdout
+      // Zeige stdout (immer sichtbar, auch bei Fehlern)
       let output = data.stdout || "";
       if (data.timeout) {
-        output += "\n[TIMEOUT: Code hat die Zeituberschreitung erreicht.]";
+        output += "\n[TIMEOUT: Code hat die Zeitueberschreitung erreicht.]"
       }
+      // Fuege stderr/Anhang falls vorhanden
       if (data.stderr && data.stderr.trim()) {
-        output += "\n[STDERR: " + data.stderr.trim().substring(0, 200) + "]";
-      }
-      if (data.error) {
-        output = data.error;
+        output += "\n\n--- FEHLER ---\n" + data.stderr.trim();
       }
       if (!output.trim()) {
-        output = "(Keine Ausgabe)";
+        output = "(Keine Ausgabe)"
       }
 
       consoleText.textContent = output;
-      consoleText.style.color = data.error || data.stderr ? "#f87171" : "#86efac";
+      consoleText.style.color = data.stderr ? "#f87171" : "#86efac";
 
       // Zeige Matplotlib-Bilder falls vorhanden
       if (data.images && data.images.length > 0) {
@@ -596,12 +601,23 @@
       data.test_results.forEach(t => {
         const icon = t.passed ? '✅' : '❌';
         const color = t.passed ? 'text-green-600' : 'text-red-600';
-        // Zeige formatierte Fehlermeldung oder rohen Output
-        const errorMsg = t.error || t.output;
         let detailHtml = '';
-        if (!t.passed && errorMsg) {
-          const shortMsg = errorMsg.length > 200 ? errorMsg.substring(0, 200) + '...' : errorMsg;
-          detailHtml = `<div class="ml-4 mt-1 text-xs text-red-500 bg-red-50 p-2 rounded whitespace-pre-wrap">Fehler: ${shortMsg}</div>`;
+        if (!t.passed && t.error) {
+          // error kann ein String oder ein Objekt {summary, full} sein
+          let summary = '';
+          let fullTraceback = '';
+          if (typeof t.error === 'object' && t.error.summary) {
+            summary = t.error.summary;
+            fullTraceback = t.error.full;
+          } else {
+            summary = t.error;
+            fullTraceback = t.error;
+          }
+          detailHtml = '<div class="ml-4 mt-1">'
+          if (fullTraceback && fullTraceback.length > summary.length) {
+            detailHtml += `<details class="mt-1"><summary class="text-xs text-red-400 cursor-pointer">Traceback anzeigen</summary><pre class="text-xs text-red-500 bg-red-50 p-2 rounded whitespace-pre-wrap font-mono mt-1">${escapeHtml(fullTraceback)}</pre></details>`;
+          }
+          detailHtml += `</div>`;
         }
         html += `
           <div class="flex items-start gap-2 text-sm mb-2 ${color}">
@@ -614,8 +630,8 @@
         `;
       });
 
-      if (data.stderr && total > 0 && !allPassed) {
-        html += `<div class="mt-2 text-xs text-red-400 font-mono bg-red-50 p-2 rounded">${data.stderr}</div>`;
+      if (data.stderr && data.stderr.trim()) {
+        html += `<div class="mt-2 text-xs text-red-400 font-mono bg-red-50 p-2 rounded">Stderr: ${escapeHtml(data.stderr.trim())}</div>`;
       }
 
       html += `</div>`;

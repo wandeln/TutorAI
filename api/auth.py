@@ -17,6 +17,8 @@ from services.auth_service import (
     get_current_user,
 )
 
+from config import DEBUG
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["Authentifizierung"])
@@ -77,8 +79,8 @@ async def login(
     response.set_cookie(
         key="access_token",
         value=token,
-        httponly=False,  # False für Dev (Browser-JS kann Cookie lesen). In Prod: True + HTTPS!
-        secure=False,
+        httponly=not DEBUG,
+        secure=not DEBUG,
         samesite="lax",
         max_age=8 * 3600,
         path="/",

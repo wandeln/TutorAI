@@ -63,14 +63,14 @@ def format_test_error(output: str) -> dict:
     """
     if not output:
         return {"summary": "Test fehlgeschlagen. Details unbekannt.", "full": ""}
-    
+
     lines = output.strip().split('\n')
-    
+
     # Suche nach der Exception-Zeile und ggf. Assert-Message
     error_type = ""
     error_msg = ""
     found_exception = False
-    
+
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not found_exception:
@@ -86,14 +86,14 @@ def format_test_error(output: str) -> dict:
                     break
         else:
             break
-    
+
     # Baue eine gut lesbare Zusammenfassung
     readable_parts = []
     if error_type:
         readable_parts.append(f"{error_type}")
         if error_msg:
             readable_parts[-1] += f": {error_msg}"
-    
+
     # Wenn die Exception-Meldung leer war (z.B. AssertionError ohne Message),
     # verwende die erste signifikante Zeile des Tracebacks
     if error_type and not error_msg:
@@ -102,9 +102,9 @@ def format_test_error(output: str) -> dict:
             if stripped and stripped != error_type:
                 readable_parts[-1] += f": {stripped[:120]}"
                 break
-    
+
     readable = " — ".join(readable_parts) if readable_parts else output.strip()[:300]
-    
+
     return {"summary": readable, "full": output.strip()}
 
 
@@ -364,9 +364,16 @@ async def get_submission_result(
     best_points = 0.0
     if existing:
         latest_sub = existing[0]  # newest
+        human_points = 0.0
+        llm_points = 0.0
+        override_exists = False
         for fb in latest_sub.feedback_list:
-            if fb.points_earned > best_points:
-                best_points = fb.points_earned
+            if fb.source == FeedbackSource.HUMAN:
+                human_points = max(human_points, fb.points_earned)
+                override_exists = True
+            else:
+                llm_points = max(llm_points, fb.points_earned)
+        best_points = human_points if override_exists else llm_points
 
     points = 0.0
     comment = ""
@@ -569,10 +576,17 @@ async def get_my_submissions(
             continue
 
         latest_sub = subs[0]  # newest (already ordered desc)
-        latest_points = 0.0
+        human_points = 0.0
+        llm_points = 0.0
+        override_exists = False
         for fb in latest_sub.feedback_list:
-            if fb.points_earned > latest_points:
-                latest_points = fb.points_earned
+            if fb.source == FeedbackSource.HUMAN:
+                human_points = max(human_points, fb.points_earned)
+                override_exists = True
+            else:
+                llm_points = max(llm_points, fb.points_earned)
+        latest_points = human_points if override_exists else llm_points
+
 
         my_submissions.append({
             "task_id": task.id,
@@ -622,9 +636,17 @@ async def get_my_points(
         latest_points = 0.0
         if subs:
             latest_sub = subs[0]  # newest
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
             for fb in latest_sub.feedback_list:
-                if fb.points_earned > latest_points:
-                    latest_points = fb.points_earned
+                if fb.source == FeedbackSource.HUMAN:
+                    human_points = max(human_points, fb.points_earned)
+                    override_exists = True
+                else:
+                    llm_points = max(llm_points, fb.points_earned)
+            latest_points = human_points if override_exists else llm_points
+
         total_points += latest_points
 
     return {

@@ -114,12 +114,12 @@
           <div id="points-progress">
             <div class="flex justify-between mb-1">
               <span class="text-gray-600">Punkte</span>
-              <span id="points-text" class="font-semibold {% if best_points >= task.max_points %}text-green-600{% elif best_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+              <span id="points-text" class="font-semibold {% if best_points >= task.max_points * 0.8 %}text-green-600{% elif best_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
                 {{ best_points }} / {{ task.max_points }}
               </span>
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2.5">
-              <div id="points-bar" class="{% if best_points >= task.max_points %}bg-green-500{% elif best_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
+              <div id="points-bar" class="{% if best_points >= task.max_points * 0.8 %}bg-green-500{% elif best_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
                    style="width: {{ (best_points / task.max_points * 100) if best_points else 0 }}%"></div>
             </div>
           </div>
@@ -663,14 +663,14 @@
     const attemptsBar = document.getElementById('attempts-bar');
 
     const maxPoints = {{ task.max_points }};
-    const bestPoints = data.best_points;
-    const pctPoints = maxPoints > 0 ? (bestPoints / maxPoints * 100) : 0;
+    const latestPoints = data.points;
+    const pctPoints = maxPoints > 0 ? (latestPoints / maxPoints * 100) : 0;
 
     // Update points
-    pointsText.textContent = `${bestPoints} / ${maxPoints}`;
-    pointsText.className = `font-semibold ${bestPoints >= maxPoints ? 'text-green-600' : bestPoints >= maxPoints * 0.5 ? 'text-yellow-600' : 'text-red-600'}`;
+    pointsText.textContent = `${latestPoints} / ${maxPoints}`;
+    pointsText.className = `font-semibold ${latestPoints >= maxPoints ? 'text-green-600' : latestPoints >= maxPoints * 0.5 ? 'text-yellow-600' : 'text-red-600'}`;
     pointsBar.style.width = `${pctPoints}%`;
-    pointsBar.className = `${bestPoints >= maxPoints ? 'bg-green-500' : bestPoints >= maxPoints * 0.5 ? 'bg-yellow-500' : 'bg-red-500'} h-2.5 rounded-full transition-all`;
+    pointsBar.className = `${latestPoints >= maxPoints ? 'bg-green-500' : latestPoints >= maxPoints * 0.5 ? 'bg-yellow-500' : 'bg-red-500'} h-2.5 rounded-full transition-all`;
 
     // Update attempts
     const maxAttempts = data.max_attempts;

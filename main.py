@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
-from config import BASE_DIR, LLM_TIMEOUT
+from config import BASE_DIR, DEBUG, LLM_TIMEOUT
 from database.base import create_db_and_tables, engine, get_session
 from database.models import (
     Course,
@@ -134,7 +134,7 @@ def _get_user_courses(user: User, session: Session) -> list[dict[str, Any]]:
         .where(UserCourse.user_id == user.id)
         .order_by(UserCourse.id.desc())
     ).all()
-    
+
     courses = []
     for m in memberships:
         course = session.get(Course, m.course_id)
@@ -158,14 +158,14 @@ async def index(
     token = request.cookies.get("access_token")
     if not token:
         return templates.TemplateResponse("login.html", {"request": request})
-    
+
     try:
         user = await get_current_user(request, session)
     except HTTPException:
         # Token ungültig → Login
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url="/login")
-    
+
     courses = _get_user_courses(user, session)
 
     # Quick Stats fuer Studenten (nur wenn User mindestens eine STUDENT-Rolle hat)
@@ -260,48 +260,31 @@ async def _do_login(
     Gemeinsame Login-Logik (wird von POST /login und POST /api/auth/login genutzt).
     """
     username = username.strip()
-    
+
     if not username or not password:
         return None, "Username und Password erforderlich.", 400
-    
-    from database.models import CourseSettings
+
+    from services.settings_resolver import get_effective_ldap_config
     from services.auth_service import authenticate_user, create_access_token
-    
-    # LDAP-Setting aus CourseSettings lesen
-    first_settings = session.exec(
-        select(CourseSettings).where(CourseSettings.use_ldap == True)
-    ).first()
-    
-    use_ldap = False
-    ldap_server = None
-    ldap_base_dn = None
-    ldap_bind_dn = None
-    ldap_bind_pw = None
-    ldap_user_search = None
-    
-    if first_settings:
-        use_ldap = True
-        ldap_server = first_settings.ldap_server
-        ldap_base_dn = first_settings.ldap_base_dn
-        ldap_bind_dn = first_settings.ldap_bind_dn
-        ldap_bind_pw = first_settings.ldap_bind_pw
-        ldap_user_search = first_settings.ldap_user_search
-    
+
+    ldap_cfg = get_effective_ldap_config(session)
+
     user = await authenticate_user(
-        username, password, session, use_ldap,
-        ldap_server=ldap_server,
-        ldap_base_dn=ldap_base_dn,
-        ldap_bind_dn=ldap_bind_dn,
-        ldap_bind_pw=ldap_bind_pw,
-        ldap_user_search=ldap_user_search,
+        username, password, session,
+        use_ldap=ldap_cfg["use_ldap"],
+        ldap_server=ldap_cfg["ldap_server"],
+        ldap_base_dn=ldap_cfg["ldap_base_dn"],
+        ldap_bind_dn=ldap_cfg["ldap_bind_dn"],
+        ldap_bind_pw=ldap_cfg["ldap_bind_pw"],
+        ldap_user_search=ldap_cfg["ldap_user_search"],
     )
-    
+
     if not user:
         return None, "Ungültiger Username oder Password.", 401
-    
+
     token_data = {"sub": user.id, "username": user.username}
     token = create_access_token(token_data)
-    
+
     return user, token, 200
 
 
@@ -312,14 +295,14 @@ async def login_submit(
 ):
     """
     Login per Formular-POST (direkt an /login).
-    
+
     Akzeptiert beide Content-Types:
     - application/x-www-form-urlencoded (normales HTML-Formular)
     - application/json (HTMX, Fetch-API, etc.)
     """
     content_type = request.headers.get("content-type", "")
     next_url = ""
-    
+
     if "application/json" in content_type:
         # JSON-Body (HTMX / Fetch)
         body: dict = await request.json()
@@ -340,26 +323,26 @@ async def login_submit(
         else:
             password = str(password_val)
         next_url = str(form.get("next_url", ""))
-    
+
     user, token, status = await _do_login(username, password, session, request)
-    
+
     if not user:
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": token,  # Fehlermeldung
             "next_url": next_url,
         }, status_code=status)
-    
+
     # Redirect zu next_url oder Default
     redirect_to = next_url if next_url else "/"
     # Sicherheitscheck: nur relative URLs erlauben (keine externen Redirects)
     if not redirect_to.startswith("/"):
         redirect_to = "/"
-    
+
     response = RedirectResponse(url=redirect_to, status_code=303)
     response.set_cookie(
         key="access_token", value=token,
-        httponly=False, secure=False, samesite="lax",
+        httponly=not DEBUG, secure=not DEBUG, samesite="lax",
         max_age=8 * 3600, path="/",
     )
     return response
@@ -376,30 +359,30 @@ async def course_page(
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
-    
+
     # Rolle im Kurs
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    
+
     if not membership:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
-    
+
     # Tasks laden
     tasks = session.exec(
         select(Task)
         .where(Task.course_id == course_id)
         .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all()
-    
+
     courses = _get_user_courses(user, session)
-    
+
     # Template je nach Rolle
     is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
     template = "tutor/course_overview.html" if is_tutor else "student/course_overview.html"
-    
+
     # Für Studenten: nur sichtbare Aufgaben, my_points und has_feedback pro Aufgabe berechnen
     if not is_tutor:
         task_list = []
@@ -427,7 +410,7 @@ async def course_page(
                     else:
                         llm_points = max(llm_points, fb.points_earned)
             my_points = human_points if override_exists else llm_points
-            
+
             task_list.append({
                 "id": t.id,
                 "title": t.title,
@@ -458,7 +441,7 @@ async def course_page(
             }
             for t in tasks
         ]
-    
+
     return templates.TemplateResponse(
         template,
         {
@@ -742,34 +725,34 @@ async def task_page(
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
-    
+
     if task.course_id != course_id:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
-    
+
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    
+
     if not membership:
         raise HTTPException(403, "Kein Zugriff.")
-    
+
     is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
-    
+
     # Studenten duerfen versteckte Aufgaben nicht sehen
     if not is_tutor and not task.is_visible:
         raise HTTPException(404, "Aufgabe nicht gefunden oder noch nicht freigeschaltet.")
-    
+
     is_code = task.task_type.value == "code"
-    
+
     template = (
         "tutor/task_detail.html" if is_tutor
         else "student/task_solve.html"
     )
-    
+
     courses = _get_user_courses(user, session)
-    
+
     # Find previous and next task in the same course
     # Studenten: nur sichtbar e Aufgaben, TUTs/PROFs: alle Aufgaben
     prev_query = (
@@ -823,7 +806,19 @@ async def task_page(
                 "status": sub.status.value,
                 "feedback_list": feedbacks,
             })
-    
+        if my_submissions:
+            latest_sub = my_submissions[0]  # newest (ordered desc)
+            human_points = 0.0
+            llm_points = 0.0
+            override_exists = False
+            for fb in latest_sub["feedback_list"]:
+                if fb["source"] == "human":
+                    human_points = max(human_points, fb["points_earned"])
+                    override_exists = True
+                else:
+                    llm_points = max(llm_points, fb["points_earned"])
+            latest_points = human_points if override_exists else llm_points
+
     return templates.TemplateResponse(
         template,
         {
@@ -880,18 +875,18 @@ async def overview_page(
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
-    
+
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    
+
     if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Nur für PROF/Tutor.")
-    
+
     courses = _get_user_courses(user, session)
-    
+
     return templates.TemplateResponse(
         "tutor/overview.html",
         {
@@ -927,30 +922,30 @@ async def submission_review_page(
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
-    
+
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == course_id)
     ).first()
-    
+
     if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Nur für PROF/Tutor.")
-    
+
     task = session.get(Task, task_id)
     if not task or task.course_id != course_id:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
-    
+
     student = session.get(User, student_id)
     if not student:
         raise HTTPException(404, "Student nicht gefunden.")
-    
+
     courses = _get_user_courses(user, session)
-    
+
     task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(
         task.task_type.value, task.task_type.value
     )
-    
+
     return templates.TemplateResponse(
         "tutor/submission_review.html",
         {
@@ -1020,17 +1015,17 @@ async def admin_page(
     # Admin-Check (manuell, da wir in Page-Route sind)
     if user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Nur für Administratoren.")
-    
+
     # Alle Kurse für den Überblick
     all_courses = session.exec(select(Course)).all()
-    
+
     # Memberships des Users sammeln (für Link-Logik)
     user_memberships = session.exec(
         select(UserCourse).where(UserCourse.user_id == user.id)
     ).all()
     member_course_ids = {m.course_id for m in user_memberships}
     membership_roles = {m.course_id: m.role_in_course.value for m in user_memberships}
-    
+
     courses = [
         {
             "id": c.id,
@@ -1042,9 +1037,9 @@ async def admin_page(
         }
         for c in all_courses
     ]
-    
+
     all_users = session.exec(select(User)).all()
-    
+
     return templates.TemplateResponse(
         "admin/dashboard.html",
         {
@@ -1071,4 +1066,3 @@ async def admin_page(
             ],
         },
     )
-

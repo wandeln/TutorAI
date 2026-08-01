@@ -32,7 +32,8 @@
           </a>
         </div>
         <div class="text-sm text-gray-500 mt-1">
-          Max. {{ task.max_points }} Punkte
+          {{ task.attempts_used }}{% if task.max_attempts is not none %}/{{ task.max_attempts }}{% endif %} Versuche
+          {% if task.deadline %}· ⏰ Deadline {{ task.deadline[:10] }}{% endif %}
           <span class="px-2 py-0.5 rounded text-xs font-medium
             {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
             {% else %}bg-gray-100 text-gray-600
@@ -53,10 +54,6 @@
           </div>
           <div class="text-xs text-gray-400">Punkte</div>
         </div>
-        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
-           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
-          {{ 'Bearbeiten' if task.has_feedback else 'Lösen' }}
-        </a>
       </div>
     </div>
     {% endfor %}

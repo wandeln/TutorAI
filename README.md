@@ -75,7 +75,7 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 ### 1. Clone & Dependencies
 
 ```bash
-cd tutor-system
+cd TutorAI
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -134,7 +134,7 @@ Melde dich mit diesen Credentials an und erstelle über die **Admin-Konsole** de
 ## 📁 Projektstruktur
 
 ```
-tutor-system/
+TutorAI/
 ├── main.py                  # FastAPI App + Web-Routes
 ├── config.py                # Zentrale Konfiguration (env vars)
 ├── .env                     # Secrets & Settings

@@ -5,6 +5,7 @@ Rollen: Administrator (global)
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -16,6 +17,9 @@ from database.models import (
     CourseSettings,
     CourseSettingsUpdate,
     Feedback,
+    GlobalSettings,
+    GlobalSettingsUpdate,
+    GlobalSettingsRead,
     GlobalUserRole,
     Submission,
     Task,
@@ -23,6 +27,7 @@ from database.models import (
     UserCourse,
 )
 from services.auth_service import hash_password, require_global_admin
+from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
@@ -338,17 +343,66 @@ async def delete_user(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_global_admin()),
 ):
-    """User löschen."""
+    """User löschen — samt allen referenzierenden Daten."""
     if user_id == current_user.id:
         raise HTTPException(400, "Du kannst dich selbst nicht löschen.")
-    
+
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(404, "User nicht gefunden.")
-    
+
+    username = user.username
+
+    # 1. Alle Feedbacks, die dieser User gegeben hat
+    user_feedback = session.exec(
+        select(Feedback).where(Feedback.giver_id == user_id)
+    ).all()
+    for fb in user_feedback:
+        session.delete(fb)
+
+    # 2. Alle Einreichungen dieses Users (inkl. deren Feedbacks)
+    user_submissions = session.exec(
+        select(Submission).where(Submission.student_id == user_id)
+    ).all()
+    for sub in user_submissions:
+        # Feedbacks der Einreichung vorher löschen
+        sub_feedback = session.exec(
+            select(Feedback).where(Feedback.submission_id == sub.id)
+        ).all()
+        for fb in sub_feedback:
+            session.delete(fb)
+        session.delete(sub)
+
+    # 3. Alle Aufgaben, die dieser User erstellt hat
+    user_tasks = session.exec(
+        select(Task).where(Task.created_by == user_id)
+    ).all()
+    for task in user_tasks:
+        # Vorherige Einreichungen und Feedbacks der Aufgabe löschen
+        task_submissions = session.exec(
+            select(Submission).where(Submission.task_id == task.id)
+        ).all()
+        for sub in task_submissions:
+            sub_feedback = session.exec(
+                select(Feedback).where(Feedback.submission_id == sub.id)
+            ).all()
+            for fb in sub_feedback:
+                session.delete(fb)
+            session.delete(sub)
+        session.delete(task)
+
+    # 4. Alle Kurs-Mitgliedschaften dieses Users
+    user_memberships = session.exec(
+        select(UserCourse).where(UserCourse.user_id == user_id)
+    ).all()
+    for uc in user_memberships:
+        session.delete(uc)
+
+    # 5. Endlich den User selbst
     session.delete(user)
     session.commit()
-    return {"message": f"User '{user.username}' gelöscht."}
+
+    return {"message": f"User '{username}' samt allen referenzierenden Daten gelöscht."}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -459,6 +513,74 @@ async def remove_member_from_course(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SYSTEMEINSTELLUNGEN (global — Admin-Dashboard)
+# ═══════════════════════════════════════════════════════════════════
+
+def _ensure_global_settings(session: Session) -> GlobalSettings:
+    """Stellt sicher, dass genau eine GlobalSettings-Zeile existiert."""
+    gs = session.exec(select(GlobalSettings)).first()
+    if not gs:
+        gs = GlobalSettings(id=1)
+        session.add(gs)
+        session.commit()
+        session.refresh(gs)
+    return gs
+
+
+@router.get("/settings")
+async def get_global_settings(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_global_admin()),
+):
+    """Globale Systemeinstellungen laden (LLM-Config, LDAP, Prompts)."""
+    gs = _ensure_global_settings(session)
+    return {
+        "id": gs.id,
+        "llm_api_url": gs.llm_api_url,
+        "llm_model": gs.llm_model,
+        "grading_prompt": gs.grading_prompt,
+        "use_ldap": gs.use_ldap,
+        "ldap_server": gs.ldap_server,
+        "ldap_base_dn": gs.ldap_base_dn,
+        "ldap_bind_dn": gs.ldap_bind_dn,
+        "ldap_user_search": gs.ldap_user_search,
+    }
+
+
+@router.put("/settings")
+async def update_global_settings(
+    data: GlobalSettingsUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_global_admin()),
+):
+    """Globale Systemeinstellungen aktualisieren."""
+    gs = _ensure_global_settings(session)
+
+    # Nur nicht-None und nicht-leere Werte updaten
+    update_data = data.model_dump(exclude_none=True)
+    # Empty string fuer ldap_bindpw ausschliessen (bestehendes PW beibehalten)
+    update_data = {k: v for k, v in update_data.items() if not (k == "ldap_bind_pw" and v == "")}
+    for key, value in update_data.items():
+        setattr(gs, key, value)
+
+    session.add(gs)
+    session.commit()
+    session.refresh(gs)
+
+    return {
+        "message": "Globale Einstellungen aktualisiert.",
+        "settings": {
+            "id": gs.id,
+            "use_ldap": gs.use_ldap,
+            "llm_model": gs.llm_model,
+            "ldap_server": gs.ldap_server,
+            "ldap_base_dn": gs.ldap_base_dn,
+            "ldap_bind_dn": gs.ldap_bind_dn,
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
 # KURSEINSTELLUNGEN (LLM, LDAP, Prompts)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -468,28 +590,44 @@ async def get_course_settings(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_global_admin()),
 ):
-    """Kurs-Einstellungen laden (LLM-Config, LDAP, Prompts)."""
-    settings = session.exec(
+    """Kurs-Einstellungen laden mit effektiven Werten (global + Override)."""
+    from services.settings_resolver import get_effective_llm_config, get_effective_ldap_config
+
+    # Lese nur den kurs-spezifischen Override (fuer Editierbarkeit)
+    cs = session.exec(
         select(CourseSettings).where(CourseSettings.course_id == course_id)
     ).first()
-    
-    if not settings:
-        settings = CourseSettings(course_id=course_id)
-        session.add(settings)
-        session.commit()
-        session.refresh(settings)
-    
+
+    # Berechne effektive Werte (mit global + env Fallback)
+    llm_cfg = get_effective_llm_config(session, course_id)
+    ldap_cfg = get_effective_ldap_config(session, course_id)
+
     return {
-        "id": settings.id,
-        "course_id": settings.course_id,
-        "llm_api_url": settings.llm_api_url,
-        "llm_model": settings.llm_model,
-        "grading_prompt": settings.grading_prompt,
-        "use_ldap": settings.use_ldap,
-        "ldap_server": settings.ldap_server,
-        "ldap_base_dn": settings.ldap_base_dn,
-        "ldap_bind_dn": settings.ldap_bind_dn,
-        "ldap_user_search": settings.ldap_user_search,
+        # Kurs-Override (lokal gespeicherte Werte)
+        "course_settings": {
+            "id": cs.id if cs else None,
+            "course_id": cs.course_id if cs else course_id,
+            "llm_api_url": cs.llm_api_url if cs else None,
+            "llm_model": cs.llm_model if cs else None,
+            "grading_prompt": cs.grading_prompt if cs else None,
+            "use_ldap": cs.use_ldap if cs else False,
+            "ldap_server": cs.ldap_server if cs else None,
+            "ldap_base_dn": cs.ldap_base_dn if cs else None,
+            "ldap_bind_dn": cs.ldap_bind_dn if cs else None,
+            "ldap_user_search": cs.ldap_user_search if cs else None,
+        },
+        # Effektive Werte (was wirklich benutzt wird)
+        "effective": {
+            "llm_api_url": llm_cfg["api_url"],
+            "llm_model": llm_cfg["model"],
+            "grading_prompt": llm_cfg["grading_prompt"],
+            "use_ldap": ldap_cfg["use_ldap"],
+            "ldap_server": ldap_cfg["ldap_server"],
+            "ldap_base_dn": ldap_cfg["ldap_base_dn"],
+            "ldap_bind_dn": ldap_cfg["ldap_bind_dn"],
+            "ldap_user_search": ldap_cfg["ldap_user_search"],
+            "llm_source": llm_cfg["source"],
+        },
     }
 
 
@@ -531,11 +669,77 @@ async def update_course_settings(
     }
 
 
+class LlmTestRequest(BaseModel):
+    api_url: Optional[str] = None
+    api_key: Optional[str] = None
+    model: Optional[str] = None
+
+
+@router.post("/llm/test")
+async def test_llm(
+    data: LlmTestRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_global_admin()),
+):
+    """
+    Testet die LLM-Verbindung.
+    Nutzt die eingegebene URL/Modell oder falls leer die globale Konfiguration.
+    Sendet eine einfache Testanfrage und gibt Latenz zurueck.
+    """
+    from time import monotonic
+    from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, AuthenticationError
+
+    # Resolve: request body > global_settings > config.py default
+    cfg = get_effective_llm_config(session)
+    api_url = data.api_url or cfg["api_url"]
+    api_key = data.api_key or cfg["api_key"]
+    model = data.model or cfg["model"]
+
+    if not api_url or not model:
+        return {"success": False, "error": "API-URL und Modell sind erforderlich."}
+
+    client = AsyncOpenAI(
+        base_url=api_url,
+        api_key=api_key,
+        timeout=30,
+    )
+
+    start = monotonic()
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Beantworte nur mit: OK"}],
+            max_tokens=10,
+            temperature=0,
+        )
+        latency_ms = int((monotonic() - start) * 1000)
+
+        msg = response.choices[0].message if response.choices else None
+        content = (msg.content or "(keine Antwort)").strip() if msg else "(keine Antwort)"
+        return {
+            "success": True,
+            "latency_ms": latency_ms,
+            "model": model,
+            "response": content,
+            "source": "global" if not data.api_url else "input",
+        }
+    except APIConnectionError as e:
+        return {"success": False, "error": f"Keine Verbindung: {e}"}
+    except APITimeoutError:
+        return {"success": False, "error": "Zeitueberschreitung (>30s)."}
+    except AuthenticationError as e:
+        return {"success": False, "error": f"Authentifizierung fehlgeschlagen: {e}"}
+    except Exception as e:
+        return {"success": False, "error": f"Fehler: {e}"}
+    finally:
+        await client.close()
+
+
 class LdapTestRequest(BaseModel):
-    ldap_server: str = ""
-    ldap_base_dn: str = ""
-    ldap_bind_dn: str = ""
-    ldap_bind_pw: str = ""
+    ldap_server: Optional[str] = None
+    ldap_base_dn: Optional[str] = None
+    ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
 
 
 @router.post("/ldap/test")
@@ -546,14 +750,18 @@ async def test_ldap(
 ):
     """
     Testet die LDAP-Verbindung mit den eingegebenen Einstellungen.
+    Nutzt global_settings als Fallback, falls Felder nicht eingegeben wurden.
     Bindet den Service-Account und fuehrt eine Test-Suche durch.
     """
     from ldap3 import Server, Connection, SUBTREE, ALL
+    from services.settings_resolver import get_effective_ldap_config
 
-    server = data.ldap_server or ""
-    base_dn = data.ldap_base_dn or ""
-    bind_dn = data.ldap_bind_dn or ""
-    bind_pw = data.ldap_bind_pw or ""
+    # Resolve: request body > global_settings > config.py default
+    ldap_cfg = get_effective_ldap_config(session)
+    server = data.ldap_server or ldap_cfg["ldap_server"] or ""
+    base_dn = data.ldap_base_dn or ldap_cfg["ldap_base_dn"] or ""
+    bind_dn = data.ldap_bind_dn or ldap_cfg["ldap_bind_dn"] or ""
+    bind_pw = data.ldap_bind_pw or ldap_cfg["ldap_bind_pw"] or ""
 
     if not server or not base_dn:
         return {"success": False, "error": "Server und Base DN sind erforderlich."}

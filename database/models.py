@@ -1,7 +1,7 @@
 """
 Datenbank-Modelle (SQLModel).
 
-Alle Tabellen des Tutor-Systems. Jede Tabelle hat:
+Alle Tabellen von TutorAI. Jede Tabelle hat:
 - Ein Table-Model (für die DB)
 - Ein CreateSchema (für POST/PUT)
 - Ein ReadSchema (für Responses)
@@ -294,6 +294,63 @@ class FeedbackRead(FeedbackBase):
     giver_id: Optional[int]
     created_at: datetime
     giver: Optional[UserRead] = None
+
+
+# ================================================================
+# GLOBAL SETTINGS (LLM-Config, LDAP, Prompts — instanzweit)
+# ================================================================
+#
+# Diese Tabelle hat genau eine Zeile und bildet die globale Basis-
+# Konfiguration.  course_settings kann einzelne Felder pro Kurs
+# überschreiben.
+#
+# Priorität (höchste → tiefste):
+#   1. course_settings  (Kurs-Override)
+#   2. global_settings   (Admin-Dashboard)
+#   3. .env              (Umgebungsvariablen)
+#   4. config.py Default (hardcoded Fallback)
+#
+
+class GlobalSettings(SQLModel, table=True):
+    __tablename__ = "global_settings"
+
+    id: int = Field(default=1, primary_key=True)   # Always id=1, exactly one row
+    llm_api_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
+    grading_prompt: Optional[str] = None
+    use_ldap: bool = Field(default=False)
+    ldap_server: Optional[str] = None
+    ldap_base_dn: Optional[str] = None
+    ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
+    ldap_user_search: Optional[str] = None
+
+
+class GlobalSettingsUpdate(SQLModel):
+    llm_api_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_model: Optional[str] = None
+    grading_prompt: Optional[str] = None
+    use_ldap: Optional[bool] = None
+    ldap_server: Optional[str] = None
+    ldap_base_dn: Optional[str] = None
+    ldap_bind_dn: Optional[str] = None
+    ldap_bind_pw: Optional[str] = None
+    ldap_user_search: Optional[str] = None
+
+
+class GlobalSettingsRead(SQLModel, from_attributes=True):
+    id: int
+    llm_api_url: Optional[str]
+    llm_api_key: Optional[str]
+    llm_model: Optional[str]
+    grading_prompt: Optional[str]
+    use_ldap: bool
+    ldap_server: Optional[str]
+    ldap_base_dn: Optional[str]
+    ldap_bind_dn: Optional[str]
+    ldap_user_search: Optional[str]
 
 
 # ═══════════════════════════════════════════════════════════════════

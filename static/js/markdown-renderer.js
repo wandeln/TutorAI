@@ -1,5 +1,5 @@
 /**
- * Markdown + LaTeX Renderer für das Tutor-System.
+ * Markdown + LaTeX Renderer für TutorAI.
  *
  * Verwendet:
  * - marked.js (MIT) für Markdown-Parser

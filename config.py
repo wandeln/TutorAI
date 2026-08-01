@@ -1,5 +1,5 @@
 """
-Tutor-System: Zentrale Konfiguration / Settings
+TutorAI: Zentrale Konfiguration / Settings
 
 Alle Konfigurationswerte werden von Umgebungsvariablen oder .env-Datei gelesen.
 Ermöglicht flexibles Deployen ohne Code-Änderungen.

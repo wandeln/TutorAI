@@ -74,6 +74,7 @@ class LLMService:
         student_solution: str,
         max_points: int,
         custom_prompt: Optional[str] = None,
+        config: Optional[dict] = None,
     ):
         """Korrigiert eine Textaufgabe via LLM."""
 
@@ -85,7 +86,7 @@ class LLMService:
             max_points=max_points,
         )
 
-        return await self._call_with_json(prompt, response_format={"type": "json_object"})
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
     async def grade_code_task(
         self,
@@ -95,6 +96,7 @@ class LLMService:
         test_results: str,
         max_points: int,
         custom_prompt: Optional[str] = None,
+        config: Optional[dict] = None,
     ):
         """Korrigiert eine Codeaufgabe via LLM (inkl. Test-Ergebnissen)."""
 
@@ -107,7 +109,7 @@ class LLMService:
             max_points=max_points,
         )
 
-        return await self._call_with_json(prompt, response_format={"type": "json_object"})
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
     async def suggest_task(
         self,
@@ -116,6 +118,7 @@ class LLMService:
         task_type: str,
         title: str = "",
         context: str = "",
+        config: Optional[dict] = None,
     ):
         """Generiert knappen Aufgabenvorschlag (nur Titel + Aufgabenstellung)."""
 
@@ -127,7 +130,7 @@ class LLMService:
             context=context,
         )
 
-        return await self._call_with_json(prompt)
+        return await self._call_with_json(prompt, config=config)
 
     async def generate_model_solution(
         self,
@@ -136,6 +139,7 @@ class LLMService:
         max_points: int,
         code_template: str = "",
         title: str = "",
+        config: Optional[dict] = None,
     ):
         """Generiert Musterlösung als einfachen Text (kein JSON)."""
 
@@ -154,12 +158,13 @@ class LLMService:
             max_points=max_points,
         )
 
-        return await self._call_plain(prompt)
+        return await self._call_plain(prompt, config=config)
 
     async def generate_code_template_and_tests(
         self,
         description: str,
         model_solution: str,
+        config: Optional[dict] = None,
     ):
         """Generiert für eine Code-Aufgabe: Code-Vorlage, Public und Private Tests.
 
@@ -174,18 +179,24 @@ class LLMService:
             model_solution=model_solution,
         )
 
-        return await self._call_with_json(prompt, response_format={"type": "json_object"})
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
     async def convert_image_to_latex(
         self,
         image_base64: str,
         mime_type: str = "image/png",
+        config: Optional[dict] = None,
     ):
         """Konvertiert ein Foto einer handgeschriebenen Notiz mit Formeln in Markdown mit LaTeX.
 
         Nutzt die multimodalen Faehigkeiten des LLM, um das Bild zu analysieren
         und den enthaltenen Text und die enthaltene(n) Formel(n) als Markdown mit LaTeX-Code zurueckzugeben.
         """
+        client = self._get_client(config)
+        model = config.get("model", self.model) if config else self.model
+        timeout = config.get("timeout", self.timeout) if config else self.timeout
+        is_temp = config is not None
+
         max_retries = 2
         last_error = None
 
@@ -196,12 +207,12 @@ class LLMService:
             "Nutze $ ... $ fuer inline Math und $$ ... $$ fuer display Math. "
         )
 
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + timeout
 
         for attempt in range(max_retries):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"convert_image_to_latex total timeout")
                 break
 
@@ -209,8 +220,8 @@ class LLMService:
                 start = time.time()
 
                 response = await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=self.model,
+                    client.chat.completions.create(
+                        model=model,
                         messages=[
                             {
                                 "role": "system",
@@ -243,6 +254,9 @@ class LLMService:
                 elapsed = time.time() - start
                 content = response.choices[0].message.content or "(keine Antwort)"
 
+                if is_temp:
+                    await client.close()
+
                 return {
                     "success": True,
                     "data": {"latex": content.strip()},
@@ -251,7 +265,7 @@ class LLMService:
                 }
 
             except asyncio.TimeoutError:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"convert_image_to_latex timeout (attempt {attempt+1}/{max_retries})")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
@@ -261,6 +275,9 @@ class LLMService:
                 logger.error(f"convert_image_to_latex error: {e}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
+
+        if is_temp:
+            await client.close()
 
         return {
             "success": False,
@@ -272,17 +289,24 @@ class LLMService:
 
     # ── Private call methods ─────────────────────────────────────
 
-    async def _call_plain(self, prompt: str):
-        """Einfacher LLM-Aufruf ohne JSON-Parser — gibt rohen Text zurück."""
+    async def _call_plain(self, prompt: str, config: Optional[dict] = None):
+        """Einfacher LLM-Aufruf ohne JSON-Parser — gibt rohen Text zurück.
+
+        Falls config uebergeben wird, wird ein temporares Client mit dieser Config
+        verwendet (unterstuetzt global_settings / course_settings Resolver).
+        """
         max_retries = 2
         last_error = None
+        client = self._get_client(config)
+        model = config.get("model", self.model) if config else self.model
+        timeout = config.get("timeout", self.timeout) if config else self.timeout
 
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + timeout
 
         for attempt in range(max_retries):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"_call_plain total timeout")
                 break
 
@@ -290,8 +314,8 @@ class LLMService:
                 start = time.time()
 
                 response = await asyncio.wait_for(
-                    self.client.chat.completions.create(
-                        model=self.model,
+                    client.chat.completions.create(
+                        model=model,
                         messages=[
                             {"role": "system", "content": "Du bist ein hilfsbereiter Tutor."},
                             {"role": "user", "content": prompt},
@@ -304,6 +328,9 @@ class LLMService:
                 elapsed = time.time() - start
                 content = response.choices[0].message.content or "(keine Antwort)"
 
+                if config:
+                    await client.close()
+
                 return {
                     "success": True,
                     "data": {"model_solution": content.strip()},
@@ -312,7 +339,7 @@ class LLMService:
                 }
 
             except asyncio.TimeoutError:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"_call_plain timeout (attempt {attempt+1}/{max_retries})")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
@@ -323,6 +350,9 @@ class LLMService:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
 
+        if config:
+            await client.close()
+
         return {
             "success": False,
             "error": last_error,
@@ -331,19 +361,25 @@ class LLMService:
             "raw_response": "",
         }
 
-    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None):
+    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None, config: Optional[dict] = None):
         """
         Generischer LLM-Aufruf mit JSON-Response-Format.
+
+        Falls config uebergeben wird, wird ein temporares Client mit dieser Config
+        verwendet (unterstuetzt global_settings / course_settings Resolver).
 
         retry=2 bei Fehlern (Rate Limits, Timeouts).
         """
         max_retries = 2
         last_error = None
+        client = self._get_client(config)
+        model = config.get("model", self.model) if config else self.model
+        timeout = config.get("timeout", self.timeout) if config else self.timeout
 
         create_kwargs = {
-            "model": self.model,
+            "model": model,
             "messages": [
-                {"role": "system", "content": "Du bist ein hilfsbereiter Tutor. Antworte NUR mit gültigem JSON."},
+                {"role": "system", "content": "Du bist ein hilfsbereiter Tutor. Antworte NUR mit gueltigem JSON."},
                 {"role": "user", "content": prompt},
             ],
             "temperature": self.temperature,
@@ -351,12 +387,12 @@ class LLMService:
         if response_format is not None:
             create_kwargs["response_format"] = response_format
 
-        deadline = time.monotonic() + self.timeout
+        deadline = time.monotonic() + timeout
 
         for attempt in range(max_retries):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"_call_with_json total timeout")
                 break
 
@@ -364,7 +400,7 @@ class LLMService:
                 start = time.time()
 
                 response = await asyncio.wait_for(
-                    self.client.chat.completions.create(**create_kwargs),
+                    client.chat.completions.create(**create_kwargs),
                     timeout=remaining,
                 )
 
@@ -382,6 +418,9 @@ class LLMService:
                     # Fallback: JSON aus freiem Text extrahieren
                     result = self._extract_json(content)
 
+                if config:
+                    await client.close()
+
                 return {
                     "success": True,
                     "data": result,
@@ -390,7 +429,7 @@ class LLMService:
                 }
 
             except asyncio.TimeoutError:
-                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {self.timeout}s erhalten"
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
                 logger.warning(f"_call_with_json timeout (attempt {attempt+1}/{max_retries})")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
@@ -401,6 +440,9 @@ class LLMService:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(1 * (attempt + 1))
 
+        if config:
+            await client.close()
+
         return {
             "success": False,
             "error": last_error,
@@ -408,6 +450,20 @@ class LLMService:
             "latency_ms": 0,
             "raw_response": "",
         }
+
+    def _get_client(self, config: Optional[dict] = None) -> AsyncOpenAI:
+        """Gibt einen OpenAI-Client zurueck.
+
+        Falls config uebergeben wird, wird ein temporares Client mit dieser Config
+        erstellt. Sonst wird der persistente self.client verwendet.
+        """
+        if config:
+            return AsyncOpenAI(
+                base_url=config.get("api_url", self.api_url),
+                api_key=config.get("api_key", self.api_key),
+                timeout=config.get("timeout", self.timeout),
+            )
+        return self.client
 
     @staticmethod
     def _extract_json(text: str) -> dict:

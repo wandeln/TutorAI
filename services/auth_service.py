@@ -102,26 +102,64 @@ async def authenticate_user(
     """
     Authenticiert einen User via DB ODER LDAP.
     Gibt den User zurueck, oder None bei Fehler.
+
+    Bei aktiviertem LDAP: Falls User nicht in DB existiert, wird er automatisch
+    erstellt, wenn die LDAP-Auth erfolgreich ist (ohne password_hash, d.h. er
+    muss sich danach immer per LDAP anmelden).
     """
-    # 1. User aus DB laden (muss existieren, auch bei LDAP)
+    # 1. User aus DB laden
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
-    
+
     if not user:
-        logger.warning(f"[Auth] User '{username}' nicht in DB gefunden.")
-        return None
-    
+        if use_ldap:
+            # LDAP-Auth versuchen — falls erfolgreich, User in DB erstellen
+            user_dn = try_ldap_auth(
+                username, password,
+                ldap_server=ldap_server,
+                ldap_base_dn=ldap_base_dn,
+                ldap_bind_dn=ldap_bind_dn,
+                ldap_bind_pw=ldap_bind_pw,
+                ldap_user_search=ldap_user_search,
+            )
+            if user_dn:
+                logger.info(f"[Auth] Neuer LDAP-User '{username}' wird in DB angelegt.")
+                user = User(
+                    username=username,
+                    email=f"{username}@ldap",
+                    name=username,
+                    role=GlobalUserRole.USER,
+                    password_hash=None,
+                    ldap_dn=user_dn,
+                )
+                session.add(user)
+                session.commit()
+                session.refresh(user)
+                return user
+            else:
+                logger.warning(f"[Auth] LDAP-Auth fuer '{username}' fehlgeschlagen.")
+                return None
+        else:
+            logger.warning(f"[Auth] User '{username}' nicht in DB gefunden.")
+            return None
+
     # 2. Auth-Modus waehlen
     if use_ldap and not user.password_hash:
         # LDAP-User (kein DB-Password) -> nur LDAP
-        return authenticate_ldap(
-            user, password,
+        user_dn = try_ldap_auth(
+            user.username, password,
             ldap_server=ldap_server,
             ldap_base_dn=ldap_base_dn,
             ldap_bind_dn=ldap_bind_dn,
             ldap_bind_pw=ldap_bind_pw,
             ldap_user_search=ldap_user_search,
         )
+        if user_dn and user.ldap_dn != user_dn:
+            # DN hat sich geaendert (z.B. User im LDAP verschoben)
+            user.ldap_dn = user_dn
+            session.add(user)
+            session.commit()
+        return user if user_dn else None
     else:
         # DB-User (hat password_hash) -> DB-Auth
         return authenticate_db(user, password)
@@ -136,17 +174,20 @@ def authenticate_db(user: User, password: str) -> Optional[User]:
     return user
 
 
-def authenticate_ldap(
-    user: User,
+def try_ldap_auth(
+    username: str,
     password: str,
     ldap_server: Optional[str] = None,
     ldap_base_dn: Optional[str] = None,
     ldap_bind_dn: Optional[str] = None,
     ldap_bind_pw: Optional[str] = None,
     ldap_user_search: Optional[str] = None,
-) -> Optional[User]:
+) -> Optional[str]:
     """
     LDAP-Auth mit ldap3: Bind mit Service-Account, User suchen, dann User-DN+PW authentifizieren.
+
+    Gibt den user_dn zurueck, wenn Auth erfolgreich, sonst None.
+    (Kein DB-User erforderlich — eignet sich fuer automatische Registrierung.)
 
     Falls course-spezifische Parameter uebergeben wurden, nutzen diese.
     Sonst fallback zu globalen LDAP-Config aus .env.
@@ -181,14 +222,14 @@ def authenticate_ldap(
             return None
 
         # 2. User im LDAP suchen
-        user_filter = search_filter.format(username=user.username)
-        logger.info(f"[LDAP] Suche User '{user.username}' mit Filter '{user_filter}' in {base_dn}")
+        user_filter = search_filter.format(username=username)
+        logger.info(f"[LDAP] Suche User '{username}' mit Filter '{user_filter}' in {base_dn}")
 
         result = ldap_conn.search(base_dn, user_filter, search_scope=SUBTREE)
         entries = ldap_conn.entries
 
         if not result or not entries:
-            logger.error(f"[LDAP] User '{user.username}' nicht gefunden.")
+            logger.error(f"[LDAP] User '{username}' nicht gefunden.")
             ldap_conn.unbind()
             return None
 
@@ -203,23 +244,18 @@ def authenticate_ldap(
             ldap_server_obj2 = Server(server, get_info=ALL)
             user_conn = Connection(ldap_server_obj2, user=user_dn, password=password, auto_bind=True)
         except Exception as e:
-            logger.error(f"[LDAP] Ungueltige Credentials fuer '{user.username}': {e}")
+            logger.error(f"[LDAP] Ungueltige Credentials fuer '{username}': {e}")
             return None
 
-        logger.info(f"[LDAP] Login erfolgreich fuer '{user.username}'")
+        logger.info(f"[LDAP] Login erfolgreich fuer '{username}'")
         user_conn.unbind()
 
-        # 4. user.ldap_dn aktualisieren (falls noch nicht gesetzt)
-        if not user.ldap_dn:
-            # Diese Aenderung wird nicht in der DB gespeichert, aber hilft beim naechsten Login
-            pass
-
-        return user
+        return user_dn
     except ImportError:
         logger.error("[LDAP] Modul 'ldap3' nicht installiert.")
         return None
     except Exception as e:
-        logger.error(f"[LDAP] Fehler bei Auth fuer '{user.username}': {e}")
+        logger.error(f"[LDAP] Fehler bei Auth fuer '{username}': {e}")
         return None
 
 

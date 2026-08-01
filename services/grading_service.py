@@ -13,7 +13,7 @@ import re
 from typing import Optional
 from sqlmodel import Session, select
 
-from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL
+from services.settings_resolver import get_effective_llm_config
 from database.models import (
     Task, Submission, Feedback, FeedbackSource,
     SubmissionStatus,
@@ -36,18 +36,13 @@ class GradingService:
         self.sandbox = SandboxedRunner()
 
     def get_llm_config(self, task: Task, session: Session) -> dict:
-        """Liest LLM-Config aus Course-Settings (Override fuer globales)."""
-        from database.models import CourseSettings
-
-        settings = session.exec(
-            select(CourseSettings).where(CourseSettings.course_id == task.course_id)
-        ).first()
-
+        """Liest LLM-Config via Resolver (course > global > .env > default)."""
+        cfg = get_effective_llm_config(session, task.course_id)
         return {
-            "api_url": settings.llm_api_url if settings and settings.llm_api_url else LLM_API_URL,
-            "api_key": LLM_API_KEY,
-            "model": settings.llm_model if settings and settings.llm_model else LLM_MODEL,
-            "grading_prompt": settings.grading_prompt if settings and settings.grading_prompt else None,
+            "api_url": cfg["api_url"],
+            "api_key": cfg["api_key"],
+            "model": cfg["model"],
+            "grading_prompt": cfg["grading_prompt"],
         }
 
     async def grade_submission(
@@ -89,12 +84,14 @@ class GradingService:
         custom_prompt: Optional[str] = None,
     ) -> dict:
         """LLM korrigiert Textaufgabe."""
+        llm_cfg = self.get_llm_config(task, session)
         llm_result = await self.llm.grade_text_task(
             task_description=task.description,
             model_solution=task.model_solution or "(Keine Musterloesung hinterlegt — bitte eigenstaendig bewerten)",
             student_solution=submission.solution,
             max_points=task.max_points,
             custom_prompt=custom_prompt,
+            config=llm_cfg,
         )
 
         data = llm_result.get("data", {})
@@ -123,12 +120,14 @@ class GradingService:
         custom_prompt: Optional[str] = None,
     ) -> dict:
         """Code-Aufgabe ohne Tests -> LLM korrigiert Code als Textloesung."""
+        llm_cfg = self.get_llm_config(task, session)
         llm_result = await self.llm.grade_text_task(
             task_description=task.description,
             model_solution=task.model_solution or "(Keine Musterloesung hinterlegt — bitte eigenstaendig bewerten)",
             student_solution=submission.code_solution,  # <-- Code statt solution!
             max_points=task.max_points,
             custom_prompt=custom_prompt,
+            config=llm_cfg,
         )
 
         data = llm_result.get("data", {})
@@ -176,6 +175,7 @@ class GradingService:
         test_summary = self._format_test_results(sandbox_result)
 
         # 4. LLM korrigiert (mit Test-Ergebnissen)
+        llm_cfg = self.get_llm_config(task, session)
         llm_result = await self.llm.grade_code_task(
             task_description=task.description,
             model_solution=task.model_solution or "(Keine Musterloesung hinterlegt — Tests sind die Referenz)",
@@ -183,6 +183,7 @@ class GradingService:
             test_results=test_summary,
             max_points=task.max_points,
             custom_prompt=custom_prompt,
+            config=llm_cfg,
         )
 
         data = llm_result.get("data", {})

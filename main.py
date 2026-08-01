@@ -1,5 +1,5 @@
 """
-Tutor-System: FastAPI Application Entry Point
+TutorAI: FastAPI Application Entry Point
 
 Start mit:
     uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -72,6 +72,9 @@ async def lifespan(app: FastAPI):
 
     # 2f. Migration: display_order Spalte zu tasks hinzufuegen
     _migrate_task_display_order()
+
+    # 2g. Migration: global_settings Tabelle erstellen
+    _migrate_global_settings()
 
     # 3. Seed-Daten (wenn DB leer)
     with Session(engine) as session:
@@ -345,6 +348,37 @@ def _migrate_task_display_order():
                 session.rollback()
 
 
+def _migrate_global_settings():
+    """
+    Erstellt die global_settings-Tabelle und initialisiert die erste Zeile,
+    falls sie noch nicht existiert.
+    """
+    from sqlalchemy import text
+    from database.models import GlobalSettings
+
+    with Session(engine) as session:
+        try:
+            # Tabelle erstellen (wenn noch nicht vorhanden)
+            GlobalSettings.__table__.create(engine, checkfirst=True)
+
+            # Initialzeile einfuegen, wenn Tabelle leer ist
+            existing = session.exec(text("SELECT id FROM global_settings")).first()
+            if not existing:
+                gs = GlobalSettings(id=1)
+                session.add(gs)
+                session.commit()
+                logger.info("Migration: global_settings Tabelle erstellt und initialisiert.")
+            else:
+                logger.info("Migration global_settings: Bereits vorhanden.")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "already exists" in err_str:
+                logger.info("Migration global_settings: Bereits vorhanden.")
+            else:
+                logger.error(f"Migration global_settings fehlgeschlagen: {e}")
+                session.rollback()
+
+
 def _seed_demo_data(session: Session):
     """Erstellt Demo-User, Kurs, und Beispiel-Aufgabe."""
     
@@ -518,9 +552,10 @@ def _seed_demo_data(session: Session):
 # ═══════════════════════════════════════════════════════════════════
 # APP
 
+
 app = FastAPI(
-    title="Tutor-System",
-    description="AI-gestütztes Tutor-System für Übungsaufgaben an Universitäten",
+    title="TutorAI",
+    description="AI-gestütztes Tutoring-System für Übungsaufgaben an Universitäten",
     version="0.1.0",
     lifespan=lifespan,
 )

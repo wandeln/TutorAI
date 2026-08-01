@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 import logging
 
 from database.base import get_session
-from database.models import User, GlobalUserRole, UserCreate, CourseSettings
+from database.models import User, GlobalUserRole, UserCreate
 from services.auth_service import (
     authenticate_user, create_access_token, hash_password,
     get_current_user,
@@ -47,33 +47,18 @@ async def login(
     if not username or not password:
         raise HTTPException(400, "Username und Password erforderlich.")
     
-    # LDAP-Setting aus den CourseSettings lesen
-    first_settings = session.exec(
-        select(CourseSettings).where(CourseSettings.use_ldap == True)
-    ).first()
-    
-    use_ldap = False
-    ldap_server = None
-    ldap_base_dn = None
-    ldap_bind_dn = None
-    ldap_bind_pw = None
-    ldap_user_search = None
-    
-    if first_settings:
-        use_ldap = True
-        ldap_server = first_settings.ldap_server
-        ldap_base_dn = first_settings.ldap_base_dn
-        ldap_bind_dn = first_settings.ldap_bind_dn
-        ldap_bind_pw = first_settings.ldap_bind_pw
-        ldap_user_search = first_settings.ldap_user_search
-    
+    # LDAP-Setting via Resolver (global_settings > course_settings > .env)
+    from services.settings_resolver import get_effective_ldap_config
+    ldap_cfg = get_effective_ldap_config(session)
+
     user = await authenticate_user(
-        username, password, session, use_ldap,
-        ldap_server=ldap_server,
-        ldap_base_dn=ldap_base_dn,
-        ldap_bind_dn=ldap_bind_dn,
-        ldap_bind_pw=ldap_bind_pw,
-        ldap_user_search=ldap_user_search,
+        username, password, session,
+        use_ldap=ldap_cfg["use_ldap"],
+        ldap_server=ldap_cfg["ldap_server"],
+        ldap_base_dn=ldap_cfg["ldap_base_dn"],
+        ldap_bind_dn=ldap_cfg["ldap_bind_dn"],
+        ldap_bind_pw=ldap_cfg["ldap_bind_pw"],
+        ldap_user_search=ldap_cfg["ldap_user_search"],
     )
     
     if not user:

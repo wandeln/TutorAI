@@ -20,11 +20,14 @@ from database.models import (
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
+from services.llm_service import LLMService
 from services.sandbox_runner import SandboxedRunner
+from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api/student", tags=["Student"])
 grading_service = GradingService()
 sandbox_runner = SandboxedRunner()
+llm_service = LLMService()
 
 
 # Helper: Extrahiere PublicTest-Klasse aus test_code-String
@@ -357,12 +360,13 @@ async def get_submission_result(
     ).all()
     total_attempts = len(existing)
 
-    latest_points = 0.0
+    # Bestwert = Punktzahl der neuesten Einreichung
+    best_points = 0.0
     if existing:
         latest_sub = existing[0]  # newest
         for fb in latest_sub.feedback_list:
-            if fb.points_earned > latest_points:
-                latest_points = fb.points_earned
+            if fb.points_earned > best_points:
+                best_points = fb.points_earned
 
     points = 0.0
     comment = ""
@@ -372,9 +376,6 @@ async def get_submission_result(
         points = latest.points_earned
         comment = latest.comment
 
-    if points > best_points:
-        best_points = points
-
     response = {
         "status": submission.status.value,
         "submission_id": submission.id,
@@ -382,7 +383,7 @@ async def get_submission_result(
         "total_attempts": total_attempts,
         "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else "",
         "points": points,
-        "best_points": latest_points,
+        "best_points": best_points,
         "max_points": task.max_points,
         "max_attempts": task.max_attempts,
         "comment": comment,
@@ -630,4 +631,43 @@ async def get_my_points(
         "total_points": round(total_points, 1),
         "max_points": max_points,
         "percentage": round(total_points / max_points * 100, 1) if max_points else 0,
+    }
+
+
+# =================================================================
+# FOTO -> LATEX KONVERTIERUNG
+# =================================================================
+
+@router.post("/latex-from-image")
+async def latex_from_image(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """
+    Konvertiert ein Foto (Base64) einer handgeschriebenen Notiz mit Formeln
+    in Markdown mit LaTeX-Code via LLM.
+    """
+    body = await request.json()
+    image_base64 = body.get("image_base64", "")
+    mime_type = body.get("mime_type", "image/png")
+
+    if not image_base64:
+        raise HTTPException(400, "Kein Bild uebergeben.")
+
+    # Resolve effektive LLM-Config (wird vom LLM-Service genutzt)
+    llm_cfg = get_effective_llm_config(session)
+
+    result = await llm_service.convert_image_to_latex(
+        image_base64=image_base64,
+        mime_type=mime_type,
+        config=llm_cfg,
+    )
+
+    if not result.get("success"):
+        raise HTTPException(500, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
+
+    return {
+        "latex": result.get("data", {}).get("latex", ""),
+        "latency_ms": result.get("latency_ms", 0),
     }

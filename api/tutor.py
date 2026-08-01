@@ -31,6 +31,7 @@ from services.auth_service import get_current_user, require_course_access
 from services.export_service import ExportService
 from services.grading_service import GradingService
 from services.llm_service import LLMService
+from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Tutor"])
 grading_service = GradingService()
@@ -473,12 +474,14 @@ async def ai_suggest_task(
     """
     body = await request.json()
     
+    llm_cfg = get_effective_llm_config(session, user_and_course[1])
     result = await llm_service.suggest_task(
         topic=body.get("topic", ""),
         difficulty=body.get("difficulty", "mittel"),
         task_type=body.get("task_type", "text"),
         title=body.get("title", ""),
         context=body.get("context", ""),
+        config=llm_cfg,
     )
     
     if not result.get("success"):
@@ -535,6 +538,8 @@ async def generate_model_solution(
     task_type = body.get("task_type", "text")
     generate_fields = body.get("generate_fields", {})
 
+    llm_cfg = get_effective_llm_config(session, course_id)
+
     if task_type == "code":
         # Zwei-Schritt-Prozess für Code-Aufgaben:
         # 1. Zuerst Musterlösung generieren
@@ -547,6 +552,7 @@ async def generate_model_solution(
             max_points=body.get("max_points", 10),
             code_template=body.get("code_template", ""),
             title=body.get("title", ""),
+            config=llm_cfg,
         )
 
         if not solution_result.get("success"):
@@ -569,6 +575,7 @@ async def generate_model_solution(
             template_result = await llm_service.generate_code_template_and_tests(
                 description=body.get("description", ""),
                 model_solution=solution_text,
+                config=llm_cfg,
             )
 
             if template_result.get("success"):
@@ -593,6 +600,7 @@ async def generate_model_solution(
             max_points=body.get("max_points", 10),
             code_template=body.get("code_template", ""),
             title=body.get("title", ""),
+            config=llm_cfg,
         )
 
         if not result.get("success"):

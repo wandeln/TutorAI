@@ -47,11 +47,6 @@ class FeedbackSource(str, Enum):
     HUMAN = "human"
 
 
-class TestVisibility(str, Enum):
-    PUBLIC = "public"
-    PRIVATE = "private"
-
-
 # ═══════════════════════════════════════════════════════════════════
 # USER
 # ═══════════════════════════════════════════════════════════════════
@@ -170,6 +165,9 @@ class TaskBase(SQLModel):
     max_attempts: Optional[int] = Field(default=None)  # NULL = unlimitiert
     deadline: Optional[str] = Field(default=None)      # ISO-Format: "2025-02-15T23:59"
     code_template: Optional[str] = Field(default=None) # Für Code-Aufgaben
+    test_code: Optional[str] = Field(default=None)     # Unit-Tests (einziger String mit PublicTest + PrivateTest)
+    is_visible: bool = Field(default=True)             # Für Studenten sichtbar
+    display_order: int = Field(default=0)              # Anzeigereihenfolge im Kurs
 
 
 class Task(TaskBase, table=True):
@@ -183,7 +181,6 @@ class Task(TaskBase, table=True):
     # Relationships
     course: Course = Relationship(back_populates="tasks")
     creator: User = Relationship(back_populates="created_tasks")
-    test_cases: List["TestCase"] = Relationship(back_populates="task")
     submissions: List["Submission"] = Relationship(back_populates="task")
 
 
@@ -197,7 +194,9 @@ class TaskCreate(SQLModel):
     max_attempts: Optional[int] = Field(default=None)
     deadline: Optional[str] = Field(default=None)
     code_template: Optional[str] = Field(default=None)
-    test_cases: Optional[List["TestCaseCreate"]] = Field(default=[])
+    test_code: Optional[str] = Field(default=None)
+    is_visible: bool = Field(default=True)
+    display_order: int = Field(default=0)
 
 
 class TaskRead(TaskBase):
@@ -205,7 +204,6 @@ class TaskRead(TaskBase):
     created_by: int
     created_at: datetime
     updated_at: datetime
-    test_cases: List["TestCaseRead"] = []
 
 
 class TaskUpdate(SQLModel):
@@ -218,47 +216,9 @@ class TaskUpdate(SQLModel):
     max_attempts: Optional[int] = None
     deadline: Optional[str] = None
     code_template: Optional[str] = None
-
-
-# ═══════════════════════════════════════════════════════════════════
-# TEST CASE (Unit-Tests)
-# ═══════════════════════════════════════════════════════════════════
-
-class TestCaseBase(SQLModel):
-    task_id: int = Field(foreign_key="tasks.id")
-    name: str = Field(max_length=100)         # z.B. "test_fakultaet_5"
-    code: str                                  # Der Test-Code
-    expected_output: str = Field(default="")
-    visibility: TestVisibility = TestVisibility.PUBLIC
-    input_data: Optional[str] = Field(default=None)
-
-
-class TestCase(TestCaseBase, table=True):
-    __tablename__ = "test_cases"
-    
-    id: Optional[int] = Field(default=None, primary_key=True)
-    
-    task: Task = Relationship(back_populates="test_cases")
-
-
-class TestCaseCreate(SQLModel):
-    name: str
-    code: str
-    expected_output: str = Field(default="")
-    visibility: TestVisibility = TestVisibility.PUBLIC
-    input_data: Optional[str] = Field(default=None)
-
-
-class TestCaseRead(TestCaseBase):
-    id: int
-
-
-class TestCaseUpdate(SQLModel):
-    name: Optional[str] = None
-    code: Optional[str] = None
-    expected_output: Optional[str] = None
-    visibility: Optional[TestVisibility] = None
-    input_data: Optional[str] = None
+    test_code: Optional[str] = None
+    is_visible: Optional[bool] = None
+    display_order: Optional[int] = None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -387,3 +347,44 @@ class CourseSettingsUpdate(SQLModel):
     ldap_bind_dn: Optional[str] = None
     ldap_bind_pw: Optional[str] = None
     ldap_user_search: Optional[str] = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COURSE INVITE (Einladungslink)
+# ═══════════════════════════════════════════════════════════════════
+
+class CourseInviteBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id")
+    token: str = Field(unique=True, index=True, max_length=100)
+    expires_at: Optional[datetime] = None  # NULL = kein Ablauf
+    max_uses: Optional[int] = None  # NULL = unbegrenzt
+    used_count: int = Field(default=0)
+
+
+class CourseInvite(CourseInviteBase, table=True):
+    __tablename__ = "course_invites"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    course: "Course" = Relationship()
+
+
+class CourseInviteCreate(SQLModel):
+    expires_days: int = 7
+    max_uses: Optional[int] = None
+
+
+class CourseInviteRead(SQLModel):
+    id: int
+    course_id: int
+    token: str
+    expires_at: Optional[datetime]
+    max_uses: Optional[int]
+    used_count: int
+    created_by: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

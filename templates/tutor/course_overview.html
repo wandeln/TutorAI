@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 
+{% block extra_head %}
+<!-- SortableJS (MIT) — Drag-and-Drop -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+{% endblock %}
+
 {% block content %}
 <div class="max-w-6xl mx-auto">
 
@@ -8,7 +13,7 @@
     <div class="flex items-start justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
-        <p class="text-gray-500">{{ course.semester }} — {{ course.description }}</p>
+        <p class="text-gray-500">{{ course.semester }}{% if course.description %} — {{ course.description }}{% endif %}</p>
       </div>
       {% if is_prof or is_admin %}
       <button onclick="showEditCourseModal()"
@@ -21,9 +26,6 @@
 
   <!-- Action Bar -->
   <div class="flex justify-between items-center mb-6">
-    <div class="text-sm text-gray-500">
-      {{ tasks|length }} Aufgaben
-    </div>
     <div class="flex gap-2">
       {% if is_prof or is_admin %}
       <a href="/courses/{{ course.id }}/members"
@@ -42,37 +44,61 @@
     </div>
   </div>
 
+  <div class="text-sm text-gray-500 mb-3">
+    {{ tasks|length }} Aufgaben
+  </div>
+
   <!-- Task List -->
-  <div class="space-y-4">
+  <div id="task-list" class="space-y-4">
     {% for task in tasks %}
-    <div class="card flex items-center justify-between" id="task-row-{{ task.id }}">
-      <div class="flex-1">
-        <div class="flex items-center gap-3">
-          <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
-             class="text-lg font-semibold text-blue-600 hover:underline">
-            {{ task.title }}
-          </a>
+    <div class="card flex items-center justify-between" id="task-row-{{ task.id }}" data-task-id="{{ task.id }}">
+      <div class="flex items-center gap-3">
+        <!-- Drag Handle -->
+        <div class="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-2"
+             title="Ziehen zur Reihenfolge ändern">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="6" r="1.5"/>
+            <circle cx="15" cy="6" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/>
+            <circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="18" r="1.5"/>
+            <circle cx="15" cy="18" r="1.5"/>
+          </svg>
         </div>
-        <div class="text-sm text-gray-500 mt-1">
-          {{ task.max_points }} Punkte · {{ task.test_count }} Tests
-          <span class="px-2 py-0.5 rounded text-xs font-medium
-            {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
-            {% else %}bg-gray-100 text-gray-600
-            {% endif %}" style="align-content: center;">
-            {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
-          </span>
+        <div class="flex-1">
+          <div class="flex items-center gap-3">
+            <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+               class="text-lg font-semibold text-blue-600 hover:underline">
+              {{ task.title }}
+            </a>
+          </div>
+          <div class="text-sm text-gray-500 mt-1">
+            {{ task.max_points }} Punkte · {% if task.has_tests %}mit Tests{% else %}keine Tests{% endif %}
+            <span class="px-2 py-0.5 rounded text-xs font-medium
+              {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
+              {% else %}bg-gray-100 text-gray-600
+              {% endif %}" style="align-content: center;">
+              {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
+            </span>
+          </div>
         </div>
       </div>
       <div class="flex items-center gap-4">
+        <button type="button"
+                onclick="toggleVisibility({{ task.id }}, this)"
+                class="text-gray-400 hover:text-blue-600 transition text-lg p-1 rounded hover:bg-gray-100"
+                title="{% if task.is_visible %}Aufgabe verstecken{% else %}Aufgabe freischalten{% endif %}">
+          {% if task.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </button>
         {% if task.deadline %}
         <div class="text-sm text-gray-400">
           ⏰ {{ task.deadline[:10] }}
         </div>
         {% endif %}
-        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
-           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm">
-          Bearbeiten
-        </a>
         <button type="button"
                 onclick="confirmDeleteTask({{ task.id }}, '{{ task.title }}')"
                 class="text-red-500 hover:text-red-700 transition text-sm font-medium"
@@ -138,6 +164,50 @@
 {% block extra_scripts %}
 <script>
   const courseId = {{ course.id }};
+
+  // ─── Drag-and-Drop Reihenfolge ────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    const taskList = document.getElementById('task-list');
+    if (!taskList) return;
+
+    Sortable.create(taskList, {
+      handle: '.cursor-grab',
+      animation: 150,
+      ghostClass: 'bg-blue-50',
+      chosenClass: 'shadow-lg',
+      dragClass: 'shadow-xl',
+      onEnd: async function() {
+        const newOrder = [];
+        taskList.querySelectorAll('[data-task-id]').forEach((row, idx) => {
+          newOrder.push({
+            id: parseInt(row.getAttribute('data-task-id')),
+            order: idx,
+          });
+        });
+
+        try {
+          const res = await fetch('/api/courses/' + courseId + '/tasks/reorder', {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task_ids: newOrder.map(t => t.id) }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            showToast(data.detail || 'Fehler beim Verschieben.', 'error');
+            location.reload(); // Reihenfolge zuruecksetzen bei Fehler
+            return;
+          }
+
+          showToast('Reihenfolge aktualisiert.', 'success');
+        } catch (err) {
+          showToast('Fehler: ' + err.message, 'error');
+          location.reload();
+        }
+      }
+    });
+  });
 
   // ─── Kurs bearbeiten Modal ────────────────────────────────────
   function showEditCourseModal() {
@@ -228,6 +298,36 @@
         }
       }
 
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Visibility Toggle ──────────────────────────────────────
+  async function toggleVisibility(taskId, button) {
+    try {
+      const res = await fetch('/api/tasks/' + taskId + '/visibility', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_visible: button.title.includes('freischalten') }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Umschalten.', 'error');
+        return;
+      }
+
+      // Update the icon
+      const isNowVisible = data.is_visible;
+      const icon = isNowVisible
+        ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+        : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+      button.innerHTML = icon;
+      button.title = isNowVisible ? 'Aufgabe verstecken' : 'Aufgabe freischalten';
+
+      showToast(data.message || 'Sichtbarkeit aktualisiert.', 'success');
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }

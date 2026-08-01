@@ -6,7 +6,7 @@
   <!-- Header -->
   <div class="mb-6">
     <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
-    <p class="text-gray-500">{{ course.semester }} — {{ course.description }}</p>
+    <p class="text-gray-500">{{ course.semester }}{% if course.description %} — {{ course.description }}{% endif %}</p>
   </div>
 
   <!-- Points Summary -->
@@ -88,7 +88,7 @@
           <div class="flex items-center justify-between">
             <div>
               <span class="text-2xl font-bold text-blue-700">${data.total_points}</span>
-              <span class="text-gray-500"> / ${data.total_possible} Punkte</span>
+              <span class="text-gray-500"> / ${data.max_points} Punkte</span>
             </div>
             <div class="text-2xl font-bold text-blue-700">${pct}%</div>
           </div>

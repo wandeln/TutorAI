@@ -20,6 +20,9 @@
         Das Formular postet direkt an /login als normales HTML-Formular.
       -->
       <form id="login-form" method="post" action="/login" hx-disable>
+        {% if next_url is defined and next_url %}
+        <input type="hidden" name="next_url" value="{{ next_url }}">
+        {% endif %}
         <div class="mb-4">
           <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
           <input type="text" id="username" name="username"
@@ -51,10 +54,9 @@
       </div>
       {% endif %}
 
-      <!-- Demo-Credentials -->
+      <!-- Login-Info -->
       <div class="mt-6 pt-4 border-t border-gray-200 text-center text-sm text-gray-500">
-        <p>Demo: <code class="bg-gray-100 px-1.5 py-0.5 rounded">admin</code> / <code class="bg-gray-100 px-1.5 py-0.5 rounded">admin123</code>
-        oder <code class="bg-gray-100 px-1.5 py-0.5 rounded">student1</code> / <code class="bg-gray-100 px-1.5 py-0.5 rounded">student123</code></p>
+        <p>Login mit TS-Account oder LDAP</p>
       </div>
     </div>
   </div>

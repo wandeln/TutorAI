@@ -44,12 +44,17 @@
 
       <!-- Role badge + title -->
       <div class="flex items-start justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-800 leading-tight">{{ course.name }}</h2>
+          <div>
+            <h2 class="text-lg font-semibold text-gray-800 leading-tight">{{ course.name }}</h2>
+            {% if course.semester %}
+            <p class="text-xs text-gray-400 mt-0.5">{{ course.semester }}</p>
+            {% endif %}
+          </div>
         <span class="ml-2 flex-shrink-0 px-2 py-0.5 rounded text-xs font-medium
           {% if course.role_in_course == 'PROF' %}bg-purple-100 text-purple-700
           {% elif course.role_in_course == 'TUTOR' %}bg-blue-100 text-blue-700
           {% else %}bg-green-100 text-green-700
-          {% endif %}>">
+          {% endif %}">
           {{ course.role_in_course }}
         </span>
       </div>

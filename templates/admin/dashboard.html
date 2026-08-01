@@ -44,6 +44,14 @@
               <div class="text-sm text-gray-500">{{ course.semester }}</div>
             </div>
             <div class="flex items-center gap-3">
+              <button onclick="showDuplicateCourseModal(this)"
+                      data-course-id="{{ course.id }}"
+                      data-course-name="{{ course.name | e }}"
+                      data-course-description="{{ course.description | e }}"
+                      data-course-semester="{{ course.semester | e }}"
+                      class="text-blue-500 hover:text-blue-700 text-sm transition" title="Kurs duplizieren">
+                📋
+              </button>
               <button onclick="deleteCourse({{ course.id }}, '{{ course.name }}')"
                       class="text-red-500 hover:text-red-700 text-sm transition" title="Kurs löschen">
                 🗑️
@@ -263,6 +271,38 @@
   </div>
 </div>
 
+<!-- ─── Duplicate Course Modal ───────────────────────────────────── -->
+<div id="duplicate-course-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+  <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+    <h3 class="text-lg font-bold text-gray-900 mb-2">Kurs duplizieren</h3>
+    <p id="duplicate-source-name" class="text-sm text-gray-500 mb-4"></p>
+
+    <div class="space-y-4">
+      <input type="hidden" id="duplicate-source-id">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Kursname <span class="text-red-500">*</span></label>
+        <input type="text" id="duplicate-course-name" placeholder="Einführung in die Informatik (Kopie)"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+        <textarea id="duplicate-course-desc" rows="2" placeholder="Kurze Beschreibung..."
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Semester <span class="text-red-500">*</span></label>
+        <input type="text" id="duplicate-course-semester" placeholder="WS 2025/26"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeDuplicateCourseModal()" class="text-gray-600 hover:text-gray-800 px-4 py-2">Abbrechen</button>
+      <button onclick="duplicateCourse()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Duplizieren</button>
+    </div>
+  </div>
+</div>
+
 <!-- ─── Create User Modal ────────────────────────────────────── -->
 <div id="create-user-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
   <div class="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
@@ -336,6 +376,67 @@
     document.getElementById('new-course-name').value = '';
     document.getElementById('new-course-desc').value = '';
     document.getElementById('new-course-semester').value = '';
+  }
+
+  // ─── Duplicate Course ────────────────────────────────────────
+  function showDuplicateCourseModal(btn) {
+    const id = parseInt(btn.getAttribute('data-course-id'));
+    const name = decodeHtml(btn.getAttribute('data-course-name') || '');
+    const description = decodeHtml(btn.getAttribute('data-course-description') || '');
+    const semester = decodeHtml(btn.getAttribute('data-course-semester') || '');
+    document.getElementById('duplicate-source-id').value = id;
+    document.getElementById('duplicate-source-name').textContent = 'Original: ' + name;
+    document.getElementById('duplicate-course-name').value = name + ' (Kopie)';
+    document.getElementById('duplicate-course-desc').value = description;
+    document.getElementById('duplicate-course-semester').value = semester;
+    document.getElementById('duplicate-course-modal').classList.remove('hidden');
+  }
+
+  function decodeHtml(text) {
+    return text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  }
+
+  function closeDuplicateCourseModal() {
+    document.getElementById('duplicate-course-modal').classList.add('hidden');
+    document.getElementById('duplicate-course-name').value = '';
+    document.getElementById('duplicate-course-desc').value = '';
+    document.getElementById('duplicate-course-semester').value = '';
+  }
+
+  async function duplicateCourse() {
+    const sourceId = document.getElementById('duplicate-source-id').value;
+    const name = document.getElementById('duplicate-course-name').value.trim();
+    const desc = document.getElementById('duplicate-course-desc').value.trim();
+    const semester = document.getElementById('duplicate-course-semester').value.trim();
+
+    if (!name || !semester) {
+      showToast('Name und Semester sind erforderlich.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/courses/' + sourceId + '/duplicate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: desc, semester }),
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Duplizieren.', 'error');
+        return;
+      }
+
+      showToast(`Kurs "${name}" dupliziert! (${data.course.task_count} Aufgaben kopiert)`, 'success');
+      closeDuplicateCourseModal();
+
+      window.location.reload();
+
+    } catch (err) {
+      showToast(`Fehler: ${err.message}`, 'error');
+    }
   }
 
   async function createCourse() {

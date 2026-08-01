@@ -173,7 +173,9 @@ function createMarkdownEditor(containerId, options = {}) {
     return null;
   }
 
-  const textarea = container.querySelector('textarea');
+  const textarea = (options.textareaId
+    ? (document.getElementById(options.textareaId) || null)
+    : container.querySelector('textarea'));
   if (!textarea) {
     console.warn(`createMarkdownEditor: No textarea found in #${containerId}`);
     return null;

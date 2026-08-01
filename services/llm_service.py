@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
-from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE
+from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE, CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,26 @@ class LLMService:
         )
 
         return await self._call_plain(prompt)
+
+    async def generate_code_template_and_tests(
+        self,
+        description: str,
+        model_solution: str,
+    ):
+        """Generiert für eine Code-Aufgabe: Code-Vorlage, Public und Private Tests.
+
+        Benötigt die bereits generierte Musterlösung als Refernz.
+
+        Returns JSON mit:
+            code_template, public_tests, private_tests
+        """
+        prompt = self._render_prompt(
+            CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE,
+            description=description,
+            model_solution=model_solution,
+        )
+
+        return await self._call_with_json(prompt, response_format={"type": "json_object"})
 
     async def convert_image_to_latex(
         self,

@@ -9,6 +9,7 @@ oder:
 """
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 import logging
 
@@ -29,13 +30,12 @@ from config import BASE_DIR, LLM_TIMEOUT
 from database.base import create_db_and_tables, engine, get_session
 from database.models import (
     Course,
+    CourseInvite,
     CourseRole,
     FeedbackSource,
     GlobalUserRole,
     Task,
     TaskType,
-    TestCase,
-    TestVisibility,
     User,
     UserCourse,
     Submission,
@@ -64,6 +64,15 @@ async def lifespan(app: FastAPI):
     # 2c. Migration: ldap_user_search Spalte zu course_settings hinzufuegen
     _migrate_course_settings_search_filter()
     
+    # 2d. Migration: test_cases Tabelle -> tasks.test_code Spalte
+    _migrate_test_code()
+    
+    # 2e. Migration: is_visible Spalte zu tasks hinzufuegen
+    _migrate_task_is_visible()
+
+    # 2f. Migration: display_order Spalte zu tasks hinzufuegen
+    _migrate_task_display_order()
+
     # 3. Seed-Daten (wenn DB leer)
     with Session(engine) as session:
         # Einfacher Check: Admin existieren?
@@ -151,6 +160,188 @@ def _migrate_course_settings_search_filter():
                 print("Migration ldap_user_search: Bereits vorhanden.")
             else:
                 print(f"Migration ldap_user_search fehlgeschlagen: {e}")
+                session.rollback()
+
+
+def _migrate_test_code():
+    """
+    Migriert vom alten test_cases-Tabellen-System zum neuen tasks.test_code-Feld.
+    
+    - Fuegt test_code Spalte zur tasks-Tabelle hinzu (falls nicht vorhanden)
+    - Faltete alte Test-Cases pro Aufgabe zu PublicTest/PrivateTest Klassen
+    - Loescht die alte test_cases-Tabelle
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        try:
+            # 1. Spalte hinzufuegen (fails wenn schon vorhanden — das ist OK)
+            session.execute(text(
+                "ALTER TABLE tasks ADD COLUMN test_code TEXT DEFAULT ''"
+            ))
+            session.commit()
+            logger.info("Migration: test_code Spalte zu tasks hinzugefuegt.")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "already exists" in err_str or "no such table" in err_str:
+                logger.info("Migration test_code: Spalte bereits vorhanden.")
+            else:
+                logger.error(f"Migration test_code fehlgeschlagen: {e}")
+                session.rollback()
+                return
+
+        # 2. test_cases Tabelle prüfen
+        try:
+            cursor = session.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='test_cases'"))
+            if not cursor.fetchone():
+                logger.info("Migration test_cases: Tabelle existiert nicht, nix zu migrieren.")
+                return
+        except Exception:
+            logger.info("Migration test_cases: Tabelle nicht findbar, nix zu migrieren.")
+            return
+
+        # 3. Alte Test-Cases lesen und pro Aufgabe aggregieren
+        cursor = session.execute(text(
+            "SELECT task_id, name, code, visibility FROM test_cases ORDER BY task_id, id"
+        ))
+        rows = cursor.fetchall()
+        if not rows:
+            logger.info("Migration test_cases: Keine Daten, Tabelle loesche.")
+            session.execute(text("DROP TABLE IF EXISTS test_cases"))
+            session.commit()
+            return
+
+        # Gruppiere pro task_id
+        from collections import defaultdict
+        task_tests = defaultdict(lambda: {"public": [], "private": []})
+        for row in rows:
+            task_id, name, code, visibility = row[0], row[1], row[2], row[3]
+            vis_key = "public" if visibility == "PUBLIC" else "private"
+            task_tests[task_id][vis_key].append((name, code))
+
+        logger.info(f"Migration test_cases: {len(task_tests)} Aufgaben mit Tests gefunden.")
+
+        # 4. Pro Aufgabe den test_code zusammenbauen
+        for task_id, tests in task_tests.items():
+            public_parts = []
+            private_parts = []
+
+            def extract_methods(code_list):
+                """Extrahiere alle test_* Methoden aus einer Liste von Code-Snippets."""
+                methods = []
+                for _name, code in code_list:
+                    current_method = None
+                    for line in code.split("\n"):
+                        stripped = line.rstrip()
+                        if stripped.startswith("def test_"):
+                            current_method = stripped
+                            methods.append(current_method)
+                        elif current_method is not None and stripped:
+                            # Continue collecting method body lines
+                            current_method += "\n" + line
+                        elif current_method is not None and not stripped:
+                            # Blank line ends the method
+                            current_method = None
+                    # Reset after each snippet
+                return [m for m in methods if "def test_" in m]
+
+            public_methods = extract_methods(tests["public"])
+            if public_methods:
+                public_parts.append("import unittest")
+                public_parts.append("")
+                public_parts.append("class PublicTest(unittest.TestCase):")
+                for m in public_methods:
+                    for ml in m.split("\n"):
+                        public_parts.append("    " + ml)
+                public_parts.append("")
+
+            private_methods = extract_methods(tests["private"])
+            if private_methods:
+                private_parts.append("import unittest")
+                private_parts.append("")
+                private_parts.append("class PrivateTest(unittest.TestCase):")
+                for m in private_methods:
+                    for ml in m.split("\n"):
+                        private_parts.append("    " + ml)
+                private_parts.append("")
+
+            if public_parts and private_parts:
+                merged = "\n".join(public_parts) + "\n" + "\n".join(private_parts)
+            elif public_parts:
+                merged = "\n".join(public_parts)
+            elif private_parts:
+                merged = "\n".join(private_parts)
+            else:
+                merged = ""
+
+            session.execute(text(
+                "UPDATE tasks SET test_code = :tc WHERE id = :id"
+            ), {"tc": merged, "id": task_id})
+
+        session.commit()
+        logger.info("Migration test_cases: Test-Cases nach test_code migriert.")
+
+        # 5. Alte Tabelle loeschen
+        session.execute(text("DROP TABLE IF EXISTS test_cases"))
+        session.commit()
+        logger.info("Migration: test_cases-Tabelle geloescht.")
+
+
+def _migrate_task_is_visible():
+    """
+    Fügt die is_visible-Spalte zur tasks-Tabelle hinzu,
+    falls sie noch nicht existiert (SQLite-Erweiterung).
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        try:
+            session.execute(text(
+                "ALTER TABLE tasks ADD COLUMN is_visible BOOLEAN DEFAULT 1"
+            ))
+            session.commit()
+            logger.info("Migration: is_visible zu tasks hinzugefuegt.")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "already exists" in err_str or "no such table" in err_str:
+                logger.info("Migration is_visible: Bereits vorhanden.")
+            else:
+                logger.error(f"Migration is_visible fehlgeschlagen: {e}")
+                session.rollback()
+
+
+def _migrate_task_display_order():
+    """
+    Fügt die display_order-Spalte zur tasks-Tabelle hinzu und setzt
+    eine initiale Reihenfolge basierend auf created_at.
+    """
+    from sqlalchemy import text
+
+    with Session(engine) as session:
+        try:
+            session.execute(text(
+                "ALTER TABLE tasks ADD COLUMN display_order INTEGER DEFAULT 0"
+            ))
+            session.commit()
+            logger.info("Migration: display_order zu tasks hinzugefuegt.")
+
+            # Bestehende Aufgaben mit Reihenfolge versehen (nach created_at)
+            result = session.execute(
+                text("SELECT id, created_at FROM tasks ORDER BY created_at ASC")
+            ).all()
+            tasks = list(result)
+            for idx, (task_id, _created_at) in enumerate(tasks):
+                session.execute(
+                    text(f"UPDATE tasks SET display_order = {idx} WHERE id = {task_id}")
+                )
+            session.commit()
+            logger.info(f"Migration: {len(tasks)} Aufgaben mit display_order-Wert versehen.")
+        except Exception as e:
+            err_str = str(e).lower()
+            if "duplicate" in err_str or "already exists" in err_str or "no such table" in err_str:
+                logger.info("Migration task_display_order: Bereits vorhanden.")
+            else:
+                logger.error(f"Migration task_display_order fehlgeschlagen: {e}")
                 session.rollback()
 
 
@@ -293,78 +484,27 @@ def _seed_demo_data(session: Session):
             "    # TODO: Implementieren Sie hier die rekursive Fakultät\n"
             "    pass\n"
         ),
+        test_code=(
+            "import unittest\n"
+            "\n"
+            "class PublicTest(unittest.TestCase):\n"
+            "    def test_fak_0(self):\n"
+            "        self.assertEqual(fakultaet(0), 1)\n"
+            "    def test_fak_1(self):\n"
+            "        self.assertEqual(fakultaet(1), 1)\n"
+            "    def test_fak_5(self):\n"
+            "        self.assertEqual(fakultaet(5), 120)\n"
+            "\n"
+            "class PrivateTest(unittest.TestCase):\n"
+            "    def test_fak_10(self):\n"
+            "        self.assertEqual(fakultaet(10), 3628800)\n"
+            "    def test_negative_input(self):\n"
+            "        self.assertRaises((ValueError, TypeError), fakultaet, -1)"
+        ),
     )
     session.add(code_task)
     session.commit()
     session.refresh(code_task)
-    
-    code_task_id: int = code_task.id  # type: ignore[assignment]
-    
-    # Test-Cases für die Code-Aufgabe
-    test_cases = [
-        TestCase(
-            task_id=code_task_id,
-            name="test_0",
-            code=(
-                "import unittest\n"
-                "class TestFakultaet(unittest.TestCase):\n"
-                "    def test_fak_0(self):\n"
-                "        self.assertEqual(fakultaet(0), 1)"
-            ),
-            expected_output="OK",
-            visibility=TestVisibility.PUBLIC,
-        ),
-        TestCase(
-            task_id=code_task_id,
-            name="test_1",
-            code=(
-                "import unittest\n"
-                "class TestFakultaet(unittest.TestCase):\n"
-                "    def test_fak_1(self):\n"
-                "        self.assertEqual(fakultaet(1), 1)"
-            ),
-            expected_output="OK",
-            visibility=TestVisibility.PUBLIC,
-        ),
-        TestCase(
-            task_id=code_task_id,
-            name="test_5",
-            code=(
-                "import unittest\n"
-                "class TestFakultaet(unittest.TestCase):\n"
-                "    def test_fak_5(self):\n"
-                "        self.assertEqual(fakultaet(5), 120)"
-            ),
-            expected_output="OK",
-            visibility=TestVisibility.PUBLIC,
-        ),
-        TestCase(
-            task_id=code_task_id,
-            name="test_10",
-            code=(
-                "import unittest\n"
-                "class TestFakultaet(unittest.TestCase):\n"
-                "    def test_fak_10(self):\n"
-                "        self.assertEqual(fakultaet(10), 3628800)"
-            ),
-            expected_output="OK",
-            visibility=TestVisibility.PRIVATE,
-        ),
-        TestCase(
-            task_id=code_task_id,
-            name="test_negative",
-            code=(
-                "import unittest\n"
-                "class TestFakultaet(unittest.TestCase):\n"
-                "    def test_negative_input(self):\n"
-                "        self.assertRaises((ValueError, TypeError), fakultaet, -1)"
-            ),
-            expected_output="OK",
-            visibility=TestVisibility.PRIVATE,
-        ),
-    ]
-    for tc in test_cases:
-        session.add(tc)
     session.commit()
     
     print("Demo-Daten erstellt:")
@@ -427,6 +567,7 @@ def _get_user_courses(user: User, session: Session) -> list[dict[str, Any]]:
     memberships = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
+        .order_by(UserCourse.id.desc())
     ).all()
     
     courses = []
@@ -436,6 +577,7 @@ def _get_user_courses(user: User, session: Session) -> list[dict[str, Any]]:
             courses.append({
                 "id": course.id,
                 "name": course.name,
+                "semester": course.semester,
                 "role_in_course": m.role_in_course.value,
             })
     return courses
@@ -538,7 +680,8 @@ async def index(
 @app.get("/login")
 async def login_page(request: Request):
     """Login-Seite anzeigen."""
-    return templates.TemplateResponse("login.html", {"request": request})
+    next_url = request.query_params.get("next", "")
+    return templates.TemplateResponse("login.html", {"request": request, "next_url": next_url})
 
 
 async def _do_login(
@@ -609,12 +752,14 @@ async def login_submit(
     - application/json (HTMX, Fetch-API, etc.)
     """
     content_type = request.headers.get("content-type", "")
+    next_url = ""
     
     if "application/json" in content_type:
         # JSON-Body (HTMX / Fetch)
         body: dict = await request.json()
         username = str(body.get("username", ""))
         password = str(body.get("password", ""))
+        next_url = str(body.get("next_url", ""))
     else:
         # Form-encoded (normales HTML-Formular)
         form = await request.form()
@@ -628,6 +773,7 @@ async def login_submit(
             password = ""
         else:
             password = str(password_val)
+        next_url = str(form.get("next_url", ""))
     
     user, token, status = await _do_login(username, password, session, request)
     
@@ -635,9 +781,16 @@ async def login_submit(
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": token,  # Fehlermeldung
+            "next_url": next_url,
         }, status_code=status)
     
-    response = RedirectResponse(url="/", status_code=303)
+    # Redirect zu next_url oder Default
+    redirect_to = next_url if next_url else "/"
+    # Sicherheitscheck: nur relative URLs erlauben (keine externen Redirects)
+    if not redirect_to.startswith("/"):
+        redirect_to = "/"
+    
+    response = RedirectResponse(url=redirect_to, status_code=303)
     response.set_cookie(
         key="access_token", value=token,
         httponly=False, secure=False, samesite="lax",
@@ -672,7 +825,7 @@ async def course_page(
     tasks = session.exec(
         select(Task)
         .where(Task.course_id == course_id)
-        .order_by(Task.created_at.desc())  # type: ignore[attr-defined]
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all()
     
     courses = _get_user_courses(user, session)
@@ -681,10 +834,12 @@ async def course_page(
     is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
     template = "tutor/course_overview.html" if is_tutor else "student/course_overview.html"
     
-    # Für Studenten: my_points und has_feedback pro Aufgabe berechnen
+    # Für Studenten: nur sichtbare Aufgaben, my_points und has_feedback pro Aufgabe berechnen
     if not is_tutor:
         task_list = []
         for t in tasks:
+            if not t.is_visible:
+                continue
             subs = session.exec(
                 select(Submission)
                 .where(Submission.task_id == t.id)
@@ -710,9 +865,10 @@ async def course_page(
                 "title": t.title,
                 "task_type": t.task_type.value,
                 "max_points": t.max_points,
-                "test_count": len(t.test_cases),
+                "has_tests": bool(t.test_code),
                 "my_points": my_points,
                 "has_feedback": has_feedback,
+                "display_order": t.display_order,
             })
     else:
         task_list = [
@@ -721,9 +877,11 @@ async def course_page(
                 "title": t.title,
                 "task_type": t.task_type.value,
                 "max_points": t.max_points,
-                "test_count": len(t.test_cases),
+                "has_tests": bool(t.test_code),
                 "my_points": 0,
                 "has_feedback": False,
+                "is_visible": t.is_visible,
+                "display_order": t.display_order,
             }
             for t in tasks
         ]
@@ -826,6 +984,121 @@ async def members_page(
     )
 
 
+@app.get("/join/{token}")
+async def join_page(
+    token: str,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """
+    Einladungsseite — Student tritt dem Kurs bei.
+
+    Bei Klick auf den Einladungslink landet der Student hier.
+    - Ist er bereits angemeldet → direkt beitreten.
+    - Ist er nicht angemeldet → Redirect zum Login mit Next-URL.
+    """
+    invite = session.exec(
+        select(CourseInvite).where(CourseInvite.token == token)
+    ).first()
+
+    if not invite:
+        raise HTTPException(404, "Einladungslink ungültig oder nicht mehr vorhanden.")
+
+    # Ablauf prüfen
+    if invite.expires_at and invite.expires_at < datetime.now():
+        raise HTTPException(410, "Dieser Einladungslink ist abgelaufen.")
+
+    # Max-Nutzungen prüfen
+    if invite.max_uses is not None and invite.used_count >= invite.max_uses:
+        raise HTTPException(410, "Dieser Einladungslink wurde bereits maximal genutzt.")
+
+    course = session.get(Course, invite.course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    user = None
+    try:
+        user = await get_current_user(request, session)
+    except HTTPException:
+        pass
+
+    if not user:
+        # Nicht eingeloggt → Redirect zum Login mit Next-URL
+        next_url = f"/join/{token}"
+        redirect = RedirectResponse(url=f"/login?next={next_url}", status_code=302)
+        # Wir speichern eine kleine Message im Session-Flash (hier via Query-Param)
+        return redirect
+
+    assert user.id is not None, "User-ID ist None"
+    user_id = user.id
+
+    # Bereits im Kurs?
+    existing = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user_id)
+        .where(UserCourse.course_id == invite.course_id)
+    ).first()
+
+    if existing:
+        return templates.TemplateResponse(
+            "join.html",
+            {
+                "request": request,
+                "page_title": f"Kurs beitreten — {course.name}",
+                "current_user": {
+                    "id": user_id,
+                    "username": user.username,
+                    "name": user.name,
+                    "role": existing.role_in_course.value,
+                },
+                "courses": _get_user_courses(user, session),
+                "selected_course_id": invite.course_id,
+                "course": {
+                    "id": course.id,
+                    "name": course.name,
+                    "description": course.description,
+                    "semester": course.semester,
+                },
+                "already_member": True,
+            },
+        )
+
+    # Student dem Kurs hinzufügen
+    membership = UserCourse(
+        user_id=user_id,
+        course_id=invite.course_id,
+        role_in_course=CourseRole.STUDENT,
+    )
+    session.add(membership)
+
+    invite.used_count += 1
+    session.add(invite)
+    session.commit()
+
+    return templates.TemplateResponse(
+        "join.html",
+        {
+            "request": request,
+            "page_title": f"Kurs beitreten — {course.name}",
+            "current_user": {
+                "id": user_id,
+                "username": user.username,
+                "name": user.name,
+                "role": "STUDENT",
+            },
+            "courses": _get_user_courses(user, session),
+            "selected_course_id": invite.course_id,
+            "course": {
+                "id": course.id,
+                "name": course.name,
+                "description": course.description,
+                "semester": course.semester,
+            },
+            "already_member": False,
+        },
+    )
+
+
 @app.get("/courses/{course_id}/tasks/new")
 async def new_task_page(
     course_id: int,
@@ -910,6 +1183,11 @@ async def task_page(
         raise HTTPException(403, "Kein Zugriff.")
     
     is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
+    
+    # Studenten duerfen versteckte Aufgaben nicht sehen
+    if not is_tutor and not task.is_visible:
+        raise HTTPException(404, "Aufgabe nicht gefunden oder noch nicht freigeschaltet.")
+    
     is_code = task.task_type.value == "code"
     
     template = (
@@ -919,21 +1197,27 @@ async def task_page(
     
     courses = _get_user_courses(user, session)
     
-    # Student: eigene Submissions laden
     # Find previous and next task in the same course
-    prev_task = session.exec(
+    # Studenten: nur sichtbar e Aufgaben, TUTs/PROFs: alle Aufgaben
+    prev_query = (
         select(Task)
         .where(Task.course_id == course_id)
-        .where(Task.id < task_id)  # type: ignore[operator]
-        .order_by(Task.id.desc())  # type: ignore[attr-defined]
-    ).first()
+        .where(Task.display_order < task.display_order)  # type: ignore[operator]
+        .order_by(Task.display_order.desc())  # type: ignore[attr-defined]
+    )
+    if not is_tutor:
+        prev_query = prev_query.where(Task.is_visible == True)  # type: ignore[operator]
+    prev_task = session.exec(prev_query).first()
 
-    next_task = session.exec(
+    next_query = (
         select(Task)
         .where(Task.course_id == course_id)
-        .where(Task.id > task_id)  # type: ignore[operator]
-        .order_by(Task.id.asc())  # type: ignore[attr-defined]
-    ).first()
+        .where(Task.display_order > task.display_order)  # type: ignore[operator]
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+    )
+    if not is_tutor:
+        next_query = next_query.where(Task.is_visible == True)  # type: ignore[operator]
+    next_task = session.exec(next_query).first()
 
     my_submissions = []
     best_points = 0
@@ -997,15 +1281,8 @@ async def task_page(
                 "deadline": task.deadline,
                 "code_template": task.code_template,
                 "model_solution": task.model_solution if is_tutor else None,
-                "test_cases": [
-                    {
-                        "id": tc.id,
-                        "name": tc.name,
-                        "code": tc.code,
-                        "visibility": str(tc.visibility),
-                    }
-                    for tc in task.test_cases
-                ] if is_tutor else [],
+                "test_code": task.test_code if is_tutor else None,
+                "is_visible": task.is_visible if is_tutor else None,
             },
             "is_tutor": is_tutor,
             "is_code": is_code,
@@ -1013,16 +1290,7 @@ async def task_page(
             "my_submissions": my_submissions,
             "best_points": best_points,
             "total_attempts": len(my_submissions),
-            "public_tests": [
-                {
-                    "id": tc.id,
-                    "name": tc.name,
-                    "code": tc.code,
-                    "visibility": str(tc.visibility),
-                }
-                for tc in task.test_cases
-                if str(tc.visibility) == "public"
-            ],
+
             "LLM_TIMEOUT": LLM_TIMEOUT,
             "prev_task": {"id": prev_task.id, "title": prev_task.title} if prev_task else None,
             "next_task": {"id": next_task.id, "title": next_task.title} if next_task else None,
@@ -1196,6 +1464,7 @@ async def admin_page(
         {
             "id": c.id,
             "name": c.name,
+            "description": c.description,
             "semester": c.semester,
             "role_in_course": membership_roles.get(c.id, "NONE"),
             "is_member": c.id in member_course_ids,

@@ -50,11 +50,12 @@ LDAP_USER_SEARCH = os.getenv("LDAP_USER_SEARCH", "(uid={username})")
 
 # ─── Sandbox / Code-Ausführung ──────────────────────────────────
 SANDBOX_TIMEOUT = int(os.getenv("SANDBOX_TIMEOUT", "15"))
-SANDBOX_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "256"))
+SANDBOX_MEMORY_MB = int(os.getenv("SANDBOX_MEMORY_MB", "512"))
 SANDBOX_CPU_SECONDS = int(os.getenv("SANDBOX_CPU_SECONDS", "30"))
 
 # Erlaubte Python-Module in der Sandbox (Standardbibliothek)
 SANDBOX_ALLOWED_MODULES = [
+    "matplotlib", 
     "math", "collections", "itertools", "typing", "dataclasses",
     "array", "heapq", "bisect", "random", "string", "re",
     "datetime", "unittest", "io", "sys", "json", "functools",

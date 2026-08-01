@@ -9,12 +9,13 @@ Orchestriert den kompletten Korrektur-Workflow:
 """
 
 import json
+import re
 from typing import Optional
 from sqlmodel import Session, select
 
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL
 from database.models import (
-    Task, Submission, Feedback, TestCase, FeedbackSource,
+    Task, Submission, Feedback, FeedbackSource,
     SubmissionStatus,
 )
 from services.llm_service import LLMService
@@ -158,28 +159,23 @@ class GradingService:
         """
         Code-Aufgabe: 1) Sandbox-Tests ausfuehren, 2) LLM korrigiert.
         """
-        # 1. Tests laden
-        test_cases = session.exec(
-            select(TestCase).where(TestCase.task_id == task.id)
-        ).all()
+        # 1. Tests laden (einziger test_code String)
+        test_code = task.test_code or ""
 
-        if not test_cases:
+        if not test_code.strip():
             # Keine Tests -> Code als Textloesung graded
             return await self._grade_text_with_code(task, submission, session, custom_prompt)
 
-        # 2. Tests als Code zusammenfuegen
-        tests_code = "\n\n".join(tc.code for tc in test_cases)
-
-        # 3. Sandbox ausfuehren
+        # 2. Sandbox ausfuehren (ganzer test_code, public + private)
         sandbox_result = await self.sandbox.run(
             code=submission.code_solution,
-            tests_code=tests_code,
+            tests_code=test_code,
         )
 
-        # 4. Test-Ergebnis formatieren fuer LLM
-        test_summary = self._format_test_results(sandbox_result, test_cases)
+        # 3. Test-Ergebnis formatieren fuer LLM
+        test_summary = self._format_test_results(sandbox_result)
 
-        # 5. LLM korrigiert (mit Test-Ergebnissen)
+        # 4. LLM korrigiert (mit Test-Ergebnissen)
         llm_result = await self.llm.grade_code_task(
             task_description=task.description,
             model_solution=task.model_solution or "(Keine Musterloesung hinterlegt — Tests sind die Referenz)",
@@ -203,26 +199,26 @@ class GradingService:
         session.commit()
         session.refresh(feedback)
 
+        test_results = sandbox_result.get("test_results", [])
         return {
             "points": points,
             "max_points": task.max_points,
             "feedback": feedback,
             "comment": comment,
-            "test_results": sandbox_result.get("test_results", []),
-            "tests_passed": sum(1 for t in sandbox_result.get("test_results", []) if t.get("passed")),
-            "tests_total": len(test_cases),
+            "test_results": test_results,
+            "tests_passed": sum(1 for t in test_results if t.get("passed")),
+            "tests_total": len(test_results),
         }
 
-
-
-    def _format_test_results(self, sandbox_result: dict, test_cases: list) -> str:
+    def _format_test_results(self, sandbox_result: dict) -> str:
         """Formatiert Sandbox-Output als lesbaren Text fuer den LLM."""
+        test_results = sandbox_result.get("test_results", [])
         lines = []
-        for i, tc in enumerate(test_cases):
-            result = sandbox_result.get("test_results", [{}])[i] if i < len(sandbox_result.get("test_results", [])) else {}
+        for i, result in enumerate(test_results):
             passed = result.get("passed", False)
             status = "✅ PASSED" if passed else "❌ FAILED"
-            lines.append(f"Test {i+1} ({tc.name}): {status}")
+            name = result.get("name", f"Test {i+1}")
+            lines.append(f"Test {i+1} ({name}): {status}")
             if not passed and result.get("output"):
                 lines.append(f"  Fehler: {result['output'][:200]}")
 
@@ -231,8 +227,8 @@ class GradingService:
         elif sandbox_result.get("stderr"):
             lines.append(f"⚠️ Runtime Error: {sandbox_result['stderr'][:200]}")
 
-        total = len(test_cases)
-        passed = sum(1 for t in sandbox_result.get("test_results", []) if t.get("passed"))
+        total = len(test_results)
+        passed = sum(1 for t in test_results if t.get("passed"))
         lines.insert(0, f"Ergebnis: {passed}/{total} Tests bestanden")
 
         return "\n".join(lines)

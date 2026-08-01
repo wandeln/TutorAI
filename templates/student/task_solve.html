@@ -163,7 +163,13 @@
                     spellcheck="false">{{ task.code_template or '# Dein Code hier:' }}</textarea>
 
           <!-- Buttons -->
-          <div class="flex gap-3 mt-4">
+          <div class="flex gap-3 mt-4" style="overflow-x:scroll;scrollbar-width:none">
+            <button id="run-code-btn"
+                    class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition flex items-center gap-2">
+              <span>▶</span> Run
+              <span class="htmx-indicator text-sm">⏳</span>
+            </button>
+
             <button id="run-tests-btn"
                     class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
               <span>▶</span> Public Tests ausführen
@@ -175,6 +181,26 @@
               <span>📤</span> Lösung einreichen
               <span class="htmx-indicator text-sm">⏳</span>
             </button>
+          </div>
+
+          <!-- ─── Console Output ──────────────────────────────────── -->
+          <div id="console-output" class="hidden mt-3">
+            <div class="bg-gray-900 text-green-400 rounded-lg p-3 font-mono text-sm">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-gray-400 text-xs">Konsolen-Ausgabe</span>
+                <button id="clear-console-btn" type="button" class="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+              </div>
+              <pre id="console-text" class="whitespace-pre-wrap text-xs text-green-300 overflow-y-auto max-h-64"></pre>
+            </div>
+            <!-- ─── Plot Images ─────────────────────────────────── -->
+            <div id="plot-images" class="hidden mt-3">
+              <div class="bg-white border border-gray-200 rounded-lg p-3">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-gray-600 text-xs font-semibold">Gefertigte Plots</span>
+                </div>
+                <div id="plot-gallery" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+              </div>
+            </div>
           </div>
 
           <!-- ─── Grading Progress ──────────────────────────────── -->
@@ -405,6 +431,103 @@
   window._codeEditor = editor;
   {% endif %}
 
+  // ─── Run Code (Console Output + Plots) ─────────────────────
+  document.getElementById("run-code-btn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("run-code-btn");
+    const consoleDiv = document.getElementById("console-output");
+    const consoleText = document.getElementById("console-text");
+    const plotDiv = document.getElementById("plot-images");
+    const plotGallery = document.getElementById("plot-gallery");
+
+    const code = window._codeEditor ? window._codeEditor.getValue() : "";
+    if (!code.trim()) {
+      showToast("Bitte schreibe zuerst Code.", "warning");
+      return;
+    }
+
+    btn.disabled = true;
+    consoleDiv.classList.remove("hidden");
+    plotDiv.classList.add("hidden");
+    plotGallery.innerHTML = "";
+    consoleText.textContent = "Code wird ausgefuhrt...";
+    consoleText.style.color = "#9ca3af";
+
+    try {
+      const res = await fetch("/api/student/tasks/{{ task.id }}/run-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code_solution: code }),
+        credentials: "same-origin",
+      });
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        data = { detail: "Server-Fehler — bitte versuche es erneut." };
+      }
+
+      if (!res.ok) {
+        consoleText.textContent = data.detail || "Fehler";
+        consoleText.style.color = "#f87171";
+        return;
+      }
+
+      // Zeige stdout
+      let output = data.stdout || "";
+      if (data.timeout) {
+        output += "\n[TIMEOUT: Code hat die Zeituberschreitung erreicht.]";
+      }
+      if (data.stderr && data.stderr.trim()) {
+        output += "\n[STDERR: " + data.stderr.trim().substring(0, 200) + "]";
+      }
+      if (data.error) {
+        output = data.error;
+      }
+      if (!output.trim()) {
+        output = "(Keine Ausgabe)";
+      }
+
+      consoleText.textContent = output;
+      consoleText.style.color = data.error || data.stderr ? "#f87171" : "#86efac";
+
+      // Zeige Matplotlib-Bilder falls vorhanden
+      if (data.images && data.images.length > 0) {
+        plotDiv.classList.remove("hidden");
+        data.images.forEach((img, idx) => {
+          const imgEl = document.createElement("img");
+          imgEl.src = "data:image/png;base64," + img.base64;
+          imgEl.className = "max-w-full rounded-lg border border-gray-200 shadow-sm";
+          imgEl.alt = "Plot " + (idx + 1);
+          imgEl.title = "Plot " + (idx + 1) + " (Klick zum Groeanzeigen)";
+          imgEl.style.cursor = "pointer";
+          imgEl.onclick = () => {
+            const overlay = document.createElement("div");
+            overlay.className = "fixed inset-0 z-50 bg-black bg-opacity-75 flex items-center justify-center p-4";
+            overlay.onclick = () => overlay.remove();
+            const bigImg = document.createElement("img");
+            bigImg.src = imgEl.src;
+            bigImg.className = "max-w-full max-h-full rounded-lg shadow-xl";
+            overlay.appendChild(bigImg);
+            document.body.appendChild(overlay);
+          };
+          plotGallery.appendChild(imgEl);
+        });
+      }
+
+    } catch (err) {
+      consoleText.textContent = "Fehler: " + err.message;
+      consoleText.style.color = "#f87171";
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // Clear Console Button
+  document.getElementById("clear-console-btn")?.addEventListener("click", () => {
+    document.getElementById("console-output").classList.add("hidden");
+  });
+
   // ─── Run Public Tests (Code Tasks) ─────────────────────────
   document.getElementById("run-tests-btn")?.addEventListener("click", async () => {
     const btn = document.getElementById("run-tests-btn");
@@ -473,11 +596,20 @@
       data.test_results.forEach(t => {
         const icon = t.passed ? '✅' : '❌';
         const color = t.passed ? 'text-green-600' : 'text-red-600';
+        // Zeige formatierte Fehlermeldung oder rohen Output
+        const errorMsg = t.error || t.output;
+        let detailHtml = '';
+        if (!t.passed && errorMsg) {
+          const shortMsg = errorMsg.length > 200 ? errorMsg.substring(0, 200) + '...' : errorMsg;
+          detailHtml = `<div class="ml-4 mt-1 text-xs text-red-500 bg-red-50 p-2 rounded whitespace-pre-wrap">Fehler: ${shortMsg}</div>`;
+        }
         html += `
-          <div class="flex items-start gap-2 text-sm mb-1 ${color}">
+          <div class="flex items-start gap-2 text-sm mb-2 ${color}">
             <span>${icon}</span>
-            <span class="font-mono">${t.name}</span>
-            ${!t.passed && t.output ? `<br><span class="ml-4 text-red-500 text-xs">${t.output.substring(0, 150)}</span>` : ''}
+            <div>
+              <span class="font-mono font-medium">${t.name}</span>
+              ${detailHtml}
+            </div>
           </div>
         `;
       });
@@ -775,6 +907,7 @@
     }, 1000);
 
     try {
+      // ── Step 1: Submit (returns immediately) ──
       const res = await fetch("/api/student/tasks/{{ task.id }}/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -782,19 +915,60 @@
         credentials: "same-origin",
       });
 
-      clearInterval(gradingTimerInterval);
-      progressBar.style.width = "100%";
-
-      let data;
+      let submitData;
       try {
-        data = await res.json();
+        submitData = await res.json();
       } catch {
-        data = { detail: "Server-Fehler — bitte versuche es erneut." };
+        submitData = { detail: "Server-Fehler — bitte versuche es erneut." };
       }
 
       if (!res.ok) {
+        clearInterval(gradingTimerInterval);
         progressDiv.classList.add("hidden");
-        showToast(data.detail || "Fehler", "error");
+        showToast(submitData.detail || "Fehler", "error");
+        btn.disabled = false;
+        return;
+      }
+
+      const submissionId = submitData.submission_id;
+      const attemptNumber = submitData.attempt_number;
+
+      // ── Step 2: Poll for results ──
+      let data = null;
+      const maxPollTime = 120; // Sekunden (Timeout)
+      const pollInterval = 2;  // Sekunden
+
+      while (elapsed < maxPollTime) {
+        await new Promise(r => setTimeout(r, pollInterval * 1000));
+
+        try {
+          const pollRes = await fetch(`/api/student/submissions/${submissionId}/result`, {
+            credentials: "same-origin",
+          });
+          if (pollRes.ok) {
+            data = await pollRes.json();
+            if (data.status === "graded" || data.status === "error" || data.status === "overridden") {
+              break; // Fertig (auch Fehler sind ein Endergebnis)!
+            }
+          }
+        } catch {
+          // Poll-Fehler ignorieren, einfach weiter pollen
+        }
+      }
+
+      clearInterval(gradingTimerInterval);
+      progressBar.style.width = "100%";
+
+      if (!data || (data.status !== "graded" && data.status !== "error" && data.status !== "overridden")) {
+        progressDiv.classList.add("hidden");
+        showToast("Grading Timeout — bitte versuche es spaeter erneut.", "error");
+        btn.disabled = false;
+        return;
+      }
+
+      if (data.status === "error") {
+        progressDiv.classList.add("hidden");
+        showToast(data.comment || data.message || "Grading-Fehler — bitte versuche es erneut.", "error");
         btn.disabled = false;
         return;
       }
@@ -803,14 +977,12 @@
       progressDiv.classList.add("hidden");
 
       // Build feedback box — matching the template style
-      const pointsClass = data.points >= {{ task.max_points }} * 0.5 ? 'text-green-600' : 'text-red-600';
       const badgeClass = data.points >= {{ task.max_points }} * 0.5 ? 'badge-pass' : 'badge-fail';
-      const borderColor = data.points >= {{ task.max_points }} * 0.5 ? 'border-l-green-500' : 'border-l-red-500';
 
       const now = new Date();
       const timeStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
 
-      let feedbackJson = encodeURIComponent(JSON.stringify(data.feedback));
+      let feedbackJson = encodeURIComponent(JSON.stringify(data.comment));
       let solutionJson = encodeURIComponent(JSON.stringify(submittedText));
 
       let html = `
@@ -819,7 +991,7 @@
             <div class="flex items-center gap-2">
               <span class="text-sm font-semibold">🤖 LLM</span>
               <span class="badge ${badgeClass}">${data.points} / {{ task.max_points }} Punkte</span>
-              <span class="text-xs text-gray-400">Versuch ${data.attempt_number}</span>
+              <span class="text-xs text-gray-400">Versuch ${attemptNumber}</span>
             </div>
             <span class="text-xs text-gray-400">${timeStr}</span>
           </div>
@@ -829,18 +1001,6 @@
           </details>
           <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
       `;
-
-      // Test results for code tasks
-      {% if task.task_type == 'code' %}
-      if (data.test_results) {
-        html += '<div class="border-t pt-2 mt-2">';
-        html += `<div class="text-sm font-semibold mb-1">Tests: ${data.tests_passed || 0}/${data.tests_total || 0}</div>`;
-        data.test_results.forEach(t => {
-          html += `<div class="text-xs ${t.passed ? 'text-green-600' : 'text-red-600'}">${t.passed ? '✅' : '❌'} ${t.name}</div>`;
-        });
-        html += '</div>';
-      }
-      {% endif %}
 
       if (data.remaining_attempts !== undefined && data.remaining_attempts < 999) {
         html += `<div class="border-t pt-2 mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) moeglich.</div>`;

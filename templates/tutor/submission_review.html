@@ -100,10 +100,10 @@
 
   // ─── Render ───────────────────────────────────────────────────
   function render(data) {
-    // Aufgabenstellung — renderMarkdown setzt innerHTML mit markdown-preview wrapper
+    // Aufgabenstellung
     renderMarkdown(data.task.description, document.getElementById('task-description'));
 
-    // Musterlösung — gleiches Rendering
+    // Musterlösung
     if (data.task.model_solution) {
       renderMarkdown(data.task.model_solution, document.getElementById('model-solution'));
       document.getElementById('model-solution-container').classList.remove('hidden');
@@ -144,7 +144,7 @@
         '</div>' +
       '</div>';
 
-      // Solution
+      // Student solution
       var solSection = document.createElement('div');
       solSection.className = 'mb-4';
       solSection.innerHTML = '<h4 class="text-sm font-semibold text-gray-600 mb-2">Lösung des Students</h4>';
@@ -159,109 +159,147 @@
       solSection.appendChild(solContainer);
       card.appendChild(solSection);
 
-      // Feedback List
+      // ── Separate LLM and human feedback ────────────────────────
+      var llmFeedbacks = [];
+      var humanFeedback = null;
+      sub.feedback.forEach(function(fb) {
+        if (fb.source === 'llm') {
+          llmFeedbacks.push(fb);
+        } else {
+          humanFeedback = fb;
+        }
+      });
+
       var fbSection = document.createElement('div');
       fbSection.className = 'space-y-3';
 
-      if (sub.feedback.length === 0) {
-        fbSection.innerHTML = '<p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>';
+      if (llmFeedbacks.length === 0 && !humanFeedback) {
+        fbSection.innerHTML = '<p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>' +
+          '<div class="flex justify-end mt-2">' +
+            '<button onclick="openEditPanel(' + sub.id + ', 0, \'\')"' +
+            '        class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">' +
+            '  ✏️ Korrektur bearbeiten' +
+            '</button>' +
+          '</div>';
       } else {
-        sub.feedback.forEach(function(fb) {
-          var isLlm = fb.source === 'llm';
-          var sourceIcon = isLlm ? '\uD83E\uDD16' : '\uD83D\uDC64';
-          var sourceClass = isLlm ? 'border-l-purple-500' : 'border-l-blue-500';
-          var sourceLabel = isLlm ? 'LLM-Bewertung' : 'Tutor-Bewertung';
-          var sourceHeaderClass = isLlm ? 'text-purple-700' : 'text-blue-700';
-
+        // LLM feedback entries (read-only)
+        llmFeedbacks.forEach(function(fb) {
           var fbBox = document.createElement('div');
-          fbBox.className = 'feedback-box ' + sourceClass + ' rounded-lg';
+          fbBox.className = 'feedback-box border-l-purple-500 rounded-lg';
 
           fbBox.innerHTML =
             '<div class="flex items-center justify-between mb-2">' +
-              '<h5 class="text-sm font-semibold ' + sourceHeaderClass + '">' + sourceIcon + ' ' + sourceLabel + '</h5>' +
+              '<h5 class="text-sm font-semibold text-purple-700">🤖 LLM-Bewertung</h5>' +
               '<div class="flex items-center gap-2">' +
                 '<span class="text-sm font-mono font-bold">' + fb.points_earned + ' / ' + data.task.max_points + ' P</span>' +
-                '<span class="text-xs text-gray-400">' + fb.giver + ' \u00B7 ' + formatDate(fb.created_at) + '</span>' +
+                '<span class="text-xs text-gray-400">' + fb.giver + ' · ' + formatDate(fb.created_at) + '</span>' +
               '</div>' +
             '</div>';
 
-          // Render feedback comment with shared renderMarkdown
           var fbCommentDiv = document.createElement('div');
           fbCommentDiv.className = 'fb-comment-container';
           renderMarkdown(fb.comment, fbCommentDiv);
           fbBox.appendChild(fbCommentDiv);
 
-          // Action Buttons
           var actionsDiv = document.createElement('div');
           actionsDiv.className = 'flex items-center gap-2 mt-3';
-
-          if (isLlm) {
-            actionsDiv.innerHTML =
-              '<button onclick="approveLlm(' + sub.id + ', ' + fb.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
-              '        class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition">' +
-              '  \u2713 LLM-Bewertung übernehmen' +
-              '</button>';
-          } else {
-            actionsDiv.innerHTML =
-              '<span class="text-sm text-gray-500">\u2705 Diese Bewertung ist aktiv (Tutor-Überschreibung)</span>';
-          }
-
-          actionsDiv.innerHTML +=
-            '<button onclick="openOverridePanel(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
-            '        class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">' +
-            '  \u270F\uFE0F Korrekturen bearbeiten' +
+          actionsDiv.innerHTML =
+            '<button onclick="approveLlm(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
+            '      class="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition">' +
+            '  ✓ LLM-Bewertung übernehmen' +
+            '</button>' +
+            '<button onclick="openEditPanel(' + sub.id + ', ' + fb.points_earned + ', \'' + escapeForAttr(fb.comment) + '\')"' +
+            '      class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">' +
+            '  ✏️ Korrektur bearbeiten' +
             '</button>';
           fbBox.appendChild(actionsDiv);
 
-          // Override Panel (hidden by default)
-          var overridePanel = document.createElement('div');
-          overridePanel.id = 'override-panel-' + sub.id;
-          overridePanel.className = 'hidden mt-4 pt-4 border-t border-gray-200';
-          overridePanel.innerHTML =
-            '<h5 class="text-sm font-semibold text-gray-700 mb-2">Feedback bearbeiten</h5>' +
-            '<div class="space-y-3">' +
-              '<div>' +
-                '<label class="block text-xs font-medium text-gray-600 mb-1">Punkte (0 — ' + data.task.max_points + ')</label>' +
-                '<input type="number" id="override-points-' + sub.id + '" min="0" max="' + data.task.max_points + '" step="0.5"' +
-                       ' value="' + fb.points_earned + '" class="w-32 border border-gray-300 rounded px-3 py-2 text-sm">' +
-              '</div>' +
-              '<div>' +
-                '<label class="block text-xs font-medium text-gray-600 mb-1">Feedback-Text (Markdown + LaTeX)</label>' +
-                '<textarea id="override-comment-' + sub.id + '" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">' + escapeHtml(fb.comment) + '</textarea>' +
-              '</div>' +
-              '<div class="flex items-center gap-2">' +
-                '<button onclick="submitOverride(' + sub.id + ', ' + data.task.max_points + ')" class="text-sm bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">' +
-                  '\uD83D\uDCBE Überschreiben & speichern' +
-                '</button>' +
-                '<button onclick="closeOverridePanel(' + sub.id + ')" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-2">Abbrechen</button>' +
-              '</div>' +
-            '</div>';
-          fbBox.appendChild(overridePanel);
-
           fbSection.appendChild(fbBox);
         });
+
+        // Existing human feedback (if any)
+        if (humanFeedback) {
+          var hBox = document.createElement('div');
+          hBox.className = 'feedback-box border-l-blue-500 rounded-lg';
+
+          hBox.innerHTML =
+            '<div class="flex items-center justify-between mb-2">' +
+              '<h5 class="text-sm font-semibold text-blue-700">👤 Tutor-Bewertung (aktiv)</h5>' +
+              '<div class="flex items-center gap-2">' +
+                '<span class="text-sm font-mono font-bold">' + humanFeedback.points_earned + ' / ' + data.task.max_points + ' P</span>' +
+                '<span class="text-xs text-gray-400">' + humanFeedback.giver + ' · ' + formatDate(humanFeedback.created_at) + '</span>' +
+              '</div>' +
+            '</div>';
+
+          var hCommentDiv = document.createElement('div');
+          hCommentDiv.className = 'fb-comment-container';
+          renderMarkdown(humanFeedback.comment, hCommentDiv);
+          hBox.appendChild(hCommentDiv);
+
+          var hActions = document.createElement('div');
+          hActions.className = 'flex items-center gap-2 mt-3';
+          hActions.innerHTML =
+            '<button onclick="openEditPanel(' + sub.id + ', ' + humanFeedback.points_earned + ', \'' + escapeForAttr(humanFeedback.comment) + '\')"' +
+            '      class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 transition">' +
+            '  ✏️ Korrektur bearbeiten' +
+            '</button>';
+          hBox.appendChild(hActions);
+          fbSection.appendChild(hBox);
+        }
       }
 
       card.appendChild(fbSection);
+
+      // ── Edit panel (once per submission) ───────────────────────
+      var editPanel = document.createElement('div');
+      editPanel.id = 'edit-panel-' + sub.id;
+      editPanel.className = 'hidden mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl shadow-sm';
+      var defaultPoints = humanFeedback ? humanFeedback.points_earned : (llmFeedbacks.length ? llmFeedbacks[llmFeedbacks.length - 1].points_earned : 0);
+      var defaultComment = humanFeedback ? escapeHtml(humanFeedback.comment) : '';
+      var editLabel = humanFeedback ? 'Korrektur bearbeiten' : 'Korrektur anlegen';
+      var editBtnLabel = humanFeedback ? '💾 Aktualisieren & speichern' : '💾 Speichern';
+
+      editPanel.innerHTML =
+        '<h5 class="text-sm font-bold text-blue-800 mb-3">' + editLabel + '</h5>' +
+        '<div class="space-y-3">' +
+          '<div>' +
+            '<label class="block text-xs font-medium text-gray-600 mb-1">Punkte (0 — ' + data.task.max_points + ')</label>' +
+            '<input type="number" id="edit-points-' + sub.id + '" min="0" max="' + data.task.max_points + '" step="0.5"' +
+                   ' value="' + defaultPoints + '" class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm">' +
+          '</div>' +
+          '<div>' +
+            '<label class="block text-xs font-medium text-gray-600 mb-1">Feedback-Text (Markdown + LaTeX)</label>' +
+            '<textarea id="edit-comment-' + sub.id + '" rows="4" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-y">' + defaultComment + '</textarea>' +
+          '</div>' +
+          '<div class="flex items-center gap-2 pt-1">' +
+            '<button onclick="submitCorrection(' + sub.id + ', ' + data.task.max_points + ')"' +
+            '      class="text-sm bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition shadow-sm">' +
+              editBtnLabel +
+            '</button>' +
+            '<button onclick="closeEditPanel(' + sub.id + ')" class="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 font-medium transition">Abbrechen</button>' +
+          '</div>' +
+        '</div>';
+      card.appendChild(editPanel);
+
       container.appendChild(card);
     });
   }
 
   // ─── Actions ──────────────────────────────────────────────────
 
-  function openOverridePanel(subId, points, comment) {
-    document.getElementById('override-points-' + subId).value = points;
-    document.getElementById('override-comment-' + subId).value = comment;
-    var panel = document.getElementById('override-panel-' + subId);
+  function openEditPanel(subId, points, comment) {
+    document.getElementById('edit-points-' + subId).value = points;
+    document.getElementById('edit-comment-' + subId).value = comment;
+    var panel = document.getElementById('edit-panel-' + subId);
     panel.classList.remove('hidden');
   }
 
-  function closeOverridePanel(subId) {
-    var panel = document.getElementById('override-panel-' + subId);
+  function closeEditPanel(subId) {
+    var panel = document.getElementById('edit-panel-' + subId);
     panel.classList.add('hidden');
   }
 
-  async function approveLlm(subId, fbId, points, comment) {
+  async function approveLlm(subId, points, comment) {
     if (!confirm('LLM-Bewertung (' + points + ' Punkte) als Tutor-Bewertung übernehmen?')) return;
 
     try {
@@ -279,16 +317,16 @@
         return;
       }
 
-      showToast('LLM-Bewertung wurde vom Tutor übernommen.', 'success');
+      showToast('LLM-Bewertung wurde übernommen.', 'success');
       loadData();
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }
   }
 
-  async function submitOverride(subId, maxPoints) {
-    var pointsInput = document.getElementById('override-points-' + subId);
-    var commentInput = document.getElementById('override-comment-' + subId);
+  async function submitCorrection(subId, maxPoints) {
+    var pointsInput = document.getElementById('edit-points-' + subId);
+    var commentInput = document.getElementById('edit-comment-' + subId);
 
     var points = parseFloat(pointsInput.value);
     if (isNaN(points) || points < 0 || points > maxPoints) {
@@ -317,7 +355,7 @@
         return;
       }
 
-      showToast('Bewertung wurde überschrieben.', 'success');
+      showToast('Tutor-Bewertung gespeichert.', 'success');
       loadData();
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
@@ -327,7 +365,7 @@
   // ─── Helpers ──────────────────────────────────────────────────
 
   function formatDate(isoStr) {
-    if (!isoStr) return '\u2014';
+    if (!isoStr) return '—';
     var d = new Date(isoStr);
     return d.toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', year: 'numeric',

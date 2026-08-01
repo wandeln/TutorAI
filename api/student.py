@@ -1,100 +1,98 @@
 """
-Student-Endpoints: Aufgaben ansehen, loesen, Feedback einsehen.
+Student-Endpoints: Aufgaben ansehen, Lösungen einreichen, Tests ausführen.
 
 Rolle: Student (im Kurs)
 """
 
-import json
-from datetime import datetime
+import asyncio
+import re
+from datetime import datetime, timezone
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from database.base import get_session
 from database.models import (
-    User, Task, TestCase, Submission, Feedback,
-    TaskType, SubmissionStatus, FeedbackSource, TestVisibility,
+    User, Task, Submission, Feedback,
+    TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
-from services.llm_service import LLMService
 from services.sandbox_runner import SandboxedRunner
 
 router = APIRouter(prefix="/api/student", tags=["Student"])
 grading_service = GradingService()
 sandbox_runner = SandboxedRunner()
-llm = LLMService()
+
+
+# Helper: Extrahiere PublicTest-Klasse aus test_code-String
+def extract_public_tests(test_code: str) -> str:
+    """
+    Parse PublicTest class from test_code string.
+    Returns just the PublicTest class code.
+    """
+    if not test_code:
+        return ""
+    # Find class PublicTest ... up to next class definition or end
+    match = re.search(r'class PublicTest\(unittest\.TestCase\):([\s\S]*?)(?=class PrivateTest|$)', test_code)
+    if match:
+        return 'class PublicTest(unittest.TestCase):' + match.group(1).rstrip()
+    return ""
+
+
+# Helper: Filtere nur Public-Test-Resultate
+def filter_public_test_results(test_results: list) -> list:
+    """
+    Filtert Test-Ergebnisse auf PublicTest-Klasse.
+    Ein Test ist public wenn der Name 'PublicTest' enthaelt.
+    """
+    return [t for t in test_results if 'PublicTest' in t.get('name', '')]
+
+
+# Helper: Formatiere Test-Ausgabe fuer Studierende
+def format_test_error(output: str) -> str:
+    """
+    Wandelt den rohen Traceback in eine hilfreichere Meldung um.
+    Extrahiert nur die relevanten Zeilen (Fehlermeldung + Zeilennummer).
+    """
+    if not output:
+        return "Test fehlgeschlagen. Details unbekannt."
+    
+    # Extrahiere die eigentliche Fehlermeldung (AssertionError, etc.)
+    lines = output.strip().split('\n')
+    
+    # Suche nach der eigentlichen Exception
+    error_msg = ""
+    expected_line = ""
+    actual_line = ""
+    
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if 'AssertionError' in stripped:
+            error_msg = stripped
+            # Hole die vorherige Zeile als Kontext
+            if i > 0:
+                expected_line = lines[i-1].strip()
+        if 'assertEqual' in stripped and 'expected' in stripped.lower():
+            expected_line = stripped
+    
+    # Wenn wir eine gute Fehlermeldung haben
+    if error_msg and expected_line:
+        return f"Test fehlgeschlagen: {error_msg} (Kontext: {expected_line[:80]}...)"
+    
+    # Fallback: Zeige nur die letzten 3 Zeilen des Tracebacks
+    if len(lines) > 3:
+        relevant = lines[-3:]
+        return " | ".join(r.strip() for r in relevant if r.strip())
+    
+    return output.strip()[:200]
 
 
 # =================================================================
-# KURS-AUFGABEN
+# AUFGABEN
 # =================================================================
-
-@router.get("/courses/{course_id}/tasks")
-async def list_course_tasks(
-    course_id: int,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Aktuelle Aufgaben eines Kurses (Student-View)."""
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
-
-    if not membership or membership.role_in_course != CourseRole.STUDENT:
-        raise HTTPException(403, "Kein Zugriff auf diesen Kurs.")
-
-    tasks = session.exec(
-        select(Task)
-        .where(Task.course_id == course_id)
-        .order_by(Task.created_at.desc())
-    ).all()
-
-    result = []
-    for task in tasks:
-        my_submissions = session.exec(
-            select(Submission)
-            .where(Submission.task_id == task.id)
-            .where(Submission.student_id == user.id)
-        ).all()
-
-        best_points = 0
-        best_feedback = None
-        for sub in my_submissions:
-            for fb in sub.feedback_list:
-                if fb.points_earned > best_points:
-                    best_points = fb.points_earned
-                    best_feedback = fb
-
-        deadline_passed = False
-        if task.deadline:
-            deadline_dt = datetime.fromisoformat(task.deadline)
-            deadline_passed = datetime.now() > deadline_dt
-
-        attempts_used = len(my_submissions)
-        max_reached = task.max_attempts and attempts_used >= task.max_attempts
-
-        can_submit = not deadline_passed and not max_reached
-
-        result.append({
-            "id": task.id,
-            "title": task.title,
-            "task_type": task.task_type.value,
-            "max_points": task.max_points,
-            "my_points": best_points,
-            "attempts_used": attempts_used,
-            "max_attempts": task.max_attempts,
-            "deadline": task.deadline,
-            "deadline_passed": deadline_passed,
-            "can_submit": can_submit,
-            "has_feedback": best_feedback is not None,
-        })
-
-    return result
-
 
 @router.get("/tasks/{task_id}")
 async def get_task_detail(
@@ -116,10 +114,7 @@ async def get_task_detail(
     if not membership:
         raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
 
-    public_tests = [
-        tc for tc in task.test_cases
-        if tc.visibility == TestVisibility.PUBLIC
-    ]
+    public_test_code = extract_public_tests(task.test_code or "")
 
     return {
         "id": task.id,
@@ -130,19 +125,12 @@ async def get_task_detail(
         "max_attempts": task.max_attempts,
         "deadline": task.deadline,
         "code_template": task.code_template if task.task_type.value == "code" else None,
-        "public_tests": [
-            {
-                "id": tc.id,
-                "name": tc.name,
-                "code": tc.code,
-            }
-            for tc in public_tests
-        ],
+        "public_test_code": public_test_code,
     }
 
 
 # =================================================================
-# EINSendungen
+# EINREICHUNGEN
 # =================================================================
 
 @router.post("/tasks/{task_id}/submit")
@@ -153,117 +141,258 @@ async def submit_solution(
     user: User = Depends(get_current_user),
 ):
     """
-    Loesung einreichen -> LLM korrigiert + Feedback.
+    Loesung einreichen -> sofort speichern, Grading im Hintergrund.
 
     Request (je nach Typ):
         Text: { "solution": "..." }
         Code: { "code_solution": "..." }
+
+    Gibt sofort "pending" zurueck. Frontend muss per
+    GET /submissions/{id}/result das Ergebnis polling-abfragen.
     """
     task = session.get(Task, task_id)
     if not task:
         raise HTTPException(404, "Aufgabe nicht gefunden.")
 
+    # Check course access
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
         .where(UserCourse.course_id == task.course_id)
     ).first()
 
-    if not membership:
+    if not membership or membership.role_in_course != CourseRole.STUDENT:
+        raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
+
+    body = await request.json()
+
+    # Deadline check
+    if task.deadline:
+        dl_str = task.deadline.replace("Z", "+00:00")
+        deadline = datetime.fromisoformat(dl_str)
+        # Ensure both datetimes are timezone-aware
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) > deadline:
+            raise HTTPException(400, "Deadline ist verstrichen.")
+
+    # Max attempts check
+    existing_subs = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task.id)
+        .where(Submission.student_id == user.id)
+    ).all()
+    if task.max_attempts and len(existing_subs) >= task.max_attempts:
+        raise HTTPException(400, f"Maximal {task.max_attempts} Versuche erlaubt.")
+
+    # Type narrowing: session.get() gibt immer ein Objekt mit ID zurueck
+    assert task.id is not None
+    assert user.id is not None
+
+    # Create submission (status bleibt PENDING)
+    submission = Submission(
+        task_id=task.id,
+        student_id=user.id,
+        solution=body.get("solution", ""),
+        code_solution=body.get("code_solution", ""),
+        attempt_number=len(existing_subs) + 1,
+        status=SubmissionStatus.PENDING,
+    )
+
+    session.add(submission)
+    session.commit()
+    session.refresh(submission)
+
+    # Type narrowing: Nach refresh() ist die ID gesetzt
+    assert submission.id is not None
+
+    # Grading im Hintergrund starten (asyncio.create_task = waehrend Antwort-Generierung)
+    # Der Task laeuft parallel im Event-Loop — blockiert andere Requests NICHT
+    # (Sandbox selbst ist async und gibt den Event-Loop frei waehrend subprocess)
+    _ = asyncio.create_task(
+        _run_grading_background(
+            task_id=task.id,
+            submission_id=submission.id,
+            attempt_number=submission.attempt_number,
+        )
+    )
+
+    # Sofort zurueckgeben — Frontend pollt das Ergebnis
+    return {
+        "submission_id": submission.id,
+        "attempt_number": submission.attempt_number,
+        "status": "pending",
+        "message": "Loesung wird korrigiert... bitte warten.",
+        "max_points": task.max_points,
+        "max_attempts": task.max_attempts,
+    }
+
+
+# ──────────────────────────────────────────────────────────────
+# BACKGROUND: Asynchrones Grading (Laeuft im Hintergrund)
+# ──────────────────────────────────────────────────────────────
+
+async def _run_grading_background(
+    task_id: int,
+    submission_id: int,
+    attempt_number: int,
+):
+    """
+    Fuehrt das Grading in einem eigenen asyncio-Task aus.
+    Verwendet eine eigene DB-Session, um Konflikte mit anderen
+    Requests zu vermeiden.
+    """
+    from database.base import engine
+    try:
+        with Session(engine) as bg_session:
+            task = bg_session.get(Task, task_id)
+            submission = bg_session.get(Submission, submission_id)
+            if not task or not submission:
+                return
+
+            await grading_service.grade_submission(
+                task, submission, bg_session,
+            )
+    except Exception as e:
+        # Fehler: Status auf PENDING lassen + Fehler-Feedback speichern
+        try:
+            with Session(engine) as err_session:
+                sub = err_session.get(Submission, submission_id)
+                if sub and sub.id is not None:
+                    sub.status = SubmissionStatus.PENDING
+                    err_session.add(Feedback(
+                        submission_id=sub.id,
+                        source=FeedbackSource.LLM,
+                        points_earned=0,
+                        comment=f"Grading-Fehler: {str(e)}",
+                    ))
+                    err_session.commit()
+        except Exception:
+            pass  # Logging hier waere ideal, aber nicht kritisch
+
+
+# ──────────────────────────────────────────────────────────────
+# POLLING: Ergebnis abfragen
+# ──────────────────────────────────────────────────────────────
+
+@router.get("/submissions/{submission_id}/result")
+async def get_submission_result(
+    submission_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """
+    Polling-Endpoint: Prueft Status und gibt Ergebnis zurueck,
+    sobald das Grading abgeschlossen ist.
+
+    Rueckgabe:
+        pending:  { "status": "pending", "message": "..." }
+        graded:   Vollstaendiges Ergebnis mit Punkten, Feedback, etc.
+    """
+    submission = session.get(Submission, submission_id)
+    if not submission:
+        raise HTTPException(404, "Einreichung nicht gefunden.")
+
+    # Zugriffskontrolle
+    if submission.student_id != user.id:
         raise HTTPException(403, "Kein Zugriff.")
 
-    deadline_passed = False
-    if task.deadline:
-        deadline_dt = datetime.fromisoformat(task.deadline)
-        deadline_passed = datetime.now() > deadline_dt
+    task = session.get(Task, submission.task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
 
-    if deadline_passed:
-        raise HTTPException(400, f"Deadline ({task.deadline}) ueberschritten.")
+    if submission.status.value == "pending":
+        # Prüfe ob es ein Fehler-Feedback gibt
+        has_error_feedback = False
+        for fb in submission.feedback_list:
+            if fb.comment.startswith("Grading-Fehler:"):
+                has_error_feedback = True
+                break
 
+        if has_error_feedback:
+            # Liefere den Fehler
+            for fb in submission.feedback_list:
+                if fb.comment.startswith("Grading-Fehler:"):
+                    return {
+                        "status": "error",
+                        "submission_id": submission.id,
+                        "attempt_number": submission.attempt_number,
+                        "message": fb.comment,
+                        "points": 0,
+                        "comment": fb.comment,
+                        "max_points": task.max_points,
+                    }
+
+        return {
+            "status": "pending",
+            "submission_id": submission.id,
+            "attempt_number": submission.attempt_number,
+            "message": "Loesung wird korrigiert... bitte warten.",
+        }
+
+    # Graded (oder overridden) — Ergebnis zusammenbauen
+    all_feedback = submission.feedback_list
+
+    # Find best points
     existing = session.exec(
         select(Submission)
         .where(Submission.task_id == task.id)
         .where(Submission.student_id == user.id)
     ).all()
+    total_attempts = len(existing)
 
-    attempts_used = len(existing)
-    if task.max_attempts and attempts_used >= task.max_attempts:
-        raise HTTPException(
-            400,
-            f"Maximale Anzahl Versuche ({task.max_attempts}) erreicht.",
-        )
-
-    body = await request.json()
-    solution = body.get("solution", "")
-    code_solution = body.get("code_solution", "")
-
-    submission = Submission(
-        task_id=task.id,
-        student_id=user.id,
-        solution=solution,
-        code_solution=code_solution,
-        attempt_number=attempts_used + 1,
-    )
-    session.add(submission)
-    session.commit()
-    session.refresh(submission)
-
-    custom_prompt = None
-
-    grading_result = await grading_service.grade_submission(
-        task=task,
-        submission=submission,
-        session=session,
-        custom_prompt=custom_prompt,
-    )
-
-    # Bisher beste Punktzahl (inkl. dieser Submission)
-    best_points = 0
+    best_points = 0.0
     for sub in existing:
         for fb in sub.feedback_list:
             if fb.points_earned > best_points:
                 best_points = fb.points_earned
-    for fb in submission.feedback_list:
-        if fb.points_earned > best_points:
-            best_points = fb.points_earned
 
-    total_attempts = attempts_used + 1
+    points = 0.0
+    comment = ""
+    if all_feedback:
+        # Take the most recent LLM feedback
+        latest = max(all_feedback, key=lambda f: f.created_at)
+        points = latest.points_earned
+        comment = latest.comment
 
-    # Feedback-Text als String (nicht das Feedback-Objekt!)
-    feedback_text = grading_result.get("comment", "")
+    if points > best_points:
+        best_points = points
 
     response = {
-        "message": "Loesung eingereicht und korrigiert.",
+        "status": submission.status.value,
         "submission_id": submission.id,
         "attempt_number": submission.attempt_number,
-        "points": grading_result.get("points", 0),
-        "max_points": task.max_points,
-        "feedback": feedback_text,
-        "best_points": best_points,
         "total_attempts": total_attempts,
+        "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else "",
+        "points": points,
+        "best_points": best_points,
+        "max_points": task.max_points,
         "max_attempts": task.max_attempts,
-        "remaining_attempts": max(0, (task.max_attempts or 999) - total_attempts),
+        "comment": comment,
     }
 
-    if task.task_type.value == "code" and "test_results" in grading_result:
-        response["tests_passed"] = grading_result.get("tests_passed", 0)
-        response["tests_total"] = grading_result.get("tests_total", 0)
-        response["test_results"] = grading_result.get("test_results", [])
+    # Remaining attempts
+    if task.max_attempts:
+        response["remaining_attempts"] = task.max_attempts - total_attempts
 
     return response
 
 
-@router.post("/tasks/{task_id}/run-tests")
-async def run_public_tests(
+# =================================================================
+# CODE-AUSFUEHRUNG (ohne Tests, nur stdout)
+# =================================================================
+
+@router.post("/tasks/{task_id}/run-code")
+async def run_code(
     task_id: int,
     request: Request,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
     """
-    Public Tests ausfuehren (server-seitig, sandbox).
-
-    Kein LLM-Grading — nur Test-Ergebnisse fuer schnelles Feedback.
+    Code ausfuehren ohne Unit-Tests — zeigt nur die Konsolen-Ausgabe.
+    Laeuft mit Timeout (sandbox config) — blockiert den Server NICHT
+    fueher als SANDBOX_TIMEOUT Sekunden.
     """
     task = session.get(Task, task_id)
     if not task:
@@ -281,13 +410,72 @@ async def run_public_tests(
     if not membership:
         raise HTTPException(403, "Kein Zugriff.")
 
-    public_tests = session.exec(
-        select(TestCase)
-        .where(TestCase.task_id == task.id)
-        .where(TestCase.visibility == TestVisibility.PUBLIC)
-    ).all()
+    body = await request.json()
+    code = body.get("code_solution", "")
 
-    if not public_tests:
+    if not code.strip():
+        raise HTTPException(400, "Kein Code eingereicht.")
+
+    # Fuehre Code in Sandbox aus (async, mit Timeout)
+    result = await sandbox_runner.run_code_only(code=code)
+
+    stdout = result.get("stdout", "").strip()
+    stderr = result.get("stderr", "").strip()
+
+    if stderr:
+        # Uebersetze haeufige Fehler fuer Studierende
+        if "IndentationError" in stderr:
+            # Extrahiere die Zeilennummer
+            match = re.search(r'line\s+(\d+)', stderr)
+            line = match.group(1) if match else "unbekannt"
+            stderr = f"Eindeckungsfehler (Indentation) in Zeile {line}. Ueberpruefe deine Einrueckung (Tab vs. Leerzeichen)."
+
+    images = result.get("images", [])
+
+    return {
+        "stdout": stdout,
+        "stderr": stderr,
+        "error": stderr or None,
+        "timeout": bool(stderr and "Zeitlimit" in stderr),
+        "images": images,
+    }
+
+
+# =================================================================
+# PUBLIC TESTS (schnelles Feedback, kein Grading)
+# =================================================================
+
+@router.post("/tasks/{task_id}/run-tests")
+async def run_public_tests(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """
+    Public Tests ausfuehren (server-seitig, sandbox).
+
+    Kein LLM-Grading — nur Test-Ergebnisse fuer schnelles Feedback.
+    Laeuft mit Timeout — blockiert den Server NICHT fueher als SANDBOX_TIMEOUT.
+    """
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    if task.task_type.value != "code":
+        raise HTTPException(400, "Nur bei Code-Aufgaben verfuegbar.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == task.course_id)
+    ).first()
+
+    if not membership:
+        raise HTTPException(403, "Kein Zugriff.")
+
+    public_test_code = extract_public_tests(task.test_code or "")
+    if not public_test_code:
         return {"message": "Keine Public Tests fuer diese Aufgabe.", "test_results": []}
 
     body = await request.json()
@@ -296,17 +484,32 @@ async def run_public_tests(
     if not code.strip():
         raise HTTPException(400, "Kein Code eingereicht.")
 
-    tests_code = "\n\n".join(tc.code for tc in public_tests)
+    result = await sandbox_runner.run(code=code, tests_code=public_test_code)
 
-    result = await sandbox_runner.run(code=code, tests_code=tests_code)
+    # Formatte Fehlermeldungen fuer bessere Lesbarkeit
+    formatted_results = []
+    for t in result.get("test_results", []):
+        formatted = {
+            "name": t.get("name", "Unbekannt"),
+            "passed": t.get("passed", False),
+        }
+        if not formatted["passed"]:
+            raw_output = t.get("output", "")
+            formatted["error"] = format_test_error(raw_output)
+        formatted_results.append(formatted)
+
+    has_timeout = result.get("timeout", False)
+    stderr_val = result.get("stderr", "")
+    if "Zeitlimit" in stderr_val:
+        has_timeout = True
 
     return {
         "passed": result.get("passed", False),
-        "test_results": result.get("test_results", []),
-        "tests_passed": sum(1 for t in result.get("test_results", []) if t.get("passed")),
-        "tests_total": len(public_tests),
-        "stderr": result.get("stderr", ""),
-        "timeout": result.get("timeout", False),
+        "test_results": formatted_results,
+        "tests_passed": sum(1 for t in formatted_results if t.get("passed")),
+        "tests_total": len(formatted_results),
+        "stderr": stderr_val,
+        "timeout": has_timeout,
     }
 
 
@@ -320,9 +523,7 @@ async def get_my_submissions(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """
-    Alle eigenen Einreichungen eines Kurses mit Feedback.
-    """
+    """Alle eigenen Einreichungen im Kurs."""
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
@@ -330,42 +531,44 @@ async def get_my_submissions(
     ).first()
 
     if not membership:
-        raise HTTPException(403, "Kein Zugriff auf diesen Kurs.")
+        raise HTTPException(403, "Kein Kurs-Mitglied.")
 
     tasks = session.exec(
         select(Task).where(Task.course_id == course_id)
     ).all()
 
-    submissions = []
+    my_submissions = []
     for task in tasks:
-        my_subs = session.exec(
+        subs = session.exec(
             select(Submission)
             .where(Submission.task_id == task.id)
             .where(Submission.student_id == user.id)
+            .order_by(Submission.submitted_at.desc())
         ).all()
 
-        for sub in my_subs:
-            submissions.append({
-                "task_id": task.id,
-                "task_title": task.title,
-                "submission_id": sub.id,
-                "attempt_number": sub.attempt_number,
-                "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else None,
-                "status": sub.status.value,
-                "feedback": [
-                    {
-                        "id": f.id,
-                        "source": f.source.value,
-                        "points_earned": f.points_earned,
-                        "comment": f.comment,
-                        "giver": f.giver.name if f.giver else "LLM",
-                        "created_at": f.created_at.isoformat() if f.created_at else None,
-                    }
-                    for f in sub.feedback_list
-                ],
-            })
+        if not subs:
+            continue
 
-    return submissions
+        best_points = 0.0
+        best_sub = None
+        for sub in subs:
+            for fb in sub.feedback_list:
+                if fb.points_earned > best_points:
+                    best_points = fb.points_earned
+                    best_sub = sub
+
+        my_submissions.append({
+            "task_id": task.id,
+            "task_title": task.title,
+            "max_points": task.max_points,
+            "best_points": best_points,
+            "attempt_count": len(subs),
+        })
+
+    return {
+        "course_id": course_id,
+        "submissions": my_submissions,
+    }
 
 
 @router.get("/courses/{course_id}/my-points")
@@ -374,9 +577,7 @@ async def get_my_points(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """
-    Gesamt-Punktzahl des Students im Kurs.
-    """
+    """Punkteübersicht für alle Aufgaben im Kurs."""
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
@@ -390,87 +591,25 @@ async def get_my_points(
         select(Task).where(Task.course_id == course_id)
     ).all()
 
-    total_points = 0
-    total_possible = 0
-    task_points = []
-
+    total_points = 0.0
+    max_points = 0
     for task in tasks:
-        my_subs = session.exec(
+        max_points += task.max_points
+        subs = session.exec(
             select(Submission)
             .where(Submission.task_id == task.id)
             .where(Submission.student_id == user.id)
         ).all()
 
-        best_points = 0
-        for sub in my_subs:
+        best_points = 0.0
+        for sub in subs:
             for fb in sub.feedback_list:
                 if fb.points_earned > best_points:
                     best_points = fb.points_earned
-
         total_points += best_points
-        total_possible += task.max_points
-
-        task_points.append({
-            "task_title": task.title,
-            "earned": best_points,
-            "max": task.max_points,
-        })
-
-    percentage = (total_points / total_possible * 100) if total_possible > 0 else 0
 
     return {
-        "total_points": total_points,
-        "total_possible": total_possible,
-        "percentage": round(percentage, 1),
-        "task_points": task_points,
-    }
-
-
-# =================================================================
-# BILD -> LATEX KONVERTIERUNG
-# =================================================================
-
-@router.post("/latex-from-image")
-async def latex_from_image(
-    request: Request,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """
-    Konvertiert ein hochgeladenes Foto einer handgeschriebenen Formel
-    in LaTeX-Code via multimodalem LLM.
-
-    Request: { "image_base64": "...", "mime_type": "image/png" }
-    """
-    body = await request.json()
-    image_base64 = body.get("image_base64", "")
-    mime_type = body.get("mime_type", "image/png")
-
-    if not image_base64:
-        raise HTTPException(400, "Kein Bild uebergeben.")
-
-    # Validate mime_type
-    allowed_mimes = ["image/png", "image/jpeg", "image/webp", "image/gif"]
-    if mime_type not in allowed_mimes:
-        raise HTTPException(400, f"Nicht unterstuetztes Bildformat. Erlaubt: {', '.join(allowed_mimes)}")
-
-    # Basic size check (base64 of 10MB image ~ 13MB text)
-    max_base64_length = 13_312_000
-    if len(image_base64) > max_base64_length:
-        raise HTTPException(400, "Bild zu gross. Maximum sind ca. 10 MB.")
-
-    result = await llm.convert_image_to_latex(
-        image_base64=image_base64,
-        mime_type=mime_type,
-    )
-
-    if not result["success"]:
-        raise HTTPException(
-            503,
-            f"LLM-Konvertierung fehlgeschlagen: {result.get('error', 'Unbekannter Fehler')}",
-        )
-
-    return {
-        "latex": result["data"]["latex"],
-        "latency_ms": result["latency_ms"],
+        "total_points": round(total_points, 1),
+        "max_points": max_points,
+        "percentage": round(total_points / max_points * 100, 1) if max_points else 0,
     }

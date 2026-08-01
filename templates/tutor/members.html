@@ -161,6 +161,98 @@
       <div class="mt-4 text-xs text-gray-400">
         <p>💡 Nur registrierte User können hinzugefügt werden. Neue User müssen erst in der Admin-Konsole erstellt werden.</p>
       </div>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- Einladungslinks                                         -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <div class="card mt-6">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold text-gray-800">🔗 Einladungslinks</h2>
+          <button
+            onclick="showInviteForm()"
+            class="text-sm bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition font-medium"
+          >
+            + Erstellen
+          </button>
+        </div>
+
+        <!-- Erstellen-Formular (initial versteckt) -->
+        <div id="invite-form" class="hidden mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+          <h3 class="text-sm font-bold text-gray-700 mb-3">Neuer Einladungslink</h3>
+
+          <div class="mb-3">
+            <label class="text-xs font-semibold text-gray-500 block mb-1">Gültigkeitsdauer (Tage)</label>
+            <input
+              type="number"
+              id="invite-expires-days"
+              value="7"
+              min="1"
+              max="365"
+              class="w-full border rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div class="mb-3">
+            <label class="text-xs font-semibold text-gray-500 block mb-1">Max. Nutzungen (optional)</label>
+            <input
+              type="number"
+              id="invite-max-uses"
+              placeholder="Leer = unbegrenzt"
+              min="1"
+              class="w-full border rounded-lg px-3 py-2 text-sm"
+            />
+          </div>
+
+          <div class="flex gap-2">
+            <button
+              onclick="createInvite({{ course.id }})"
+              class="flex-1 bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium"
+            >
+              Erstellen
+            </button>
+            <button
+              onclick="hideInviteForm()"
+              class="px-3 py-2 border rounded-lg hover:bg-gray-50 transition text-sm"
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+
+        <!-- Erstellt: neuer Link -->
+        <div id="new-invite-result" class="hidden mb-4 p-3 bg-green-50 rounded-lg border border-green-200">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-xs font-semibold text-green-700">✅ Link erstellt</span>
+            <button onclick="document.getElementById('new-invite-result').classList.add('hidden')" class="text-green-500 hover:text-green-700 text-sm">✕</button>
+          </div>
+          <div class="flex items-center gap-2">
+            <input
+              type="text"
+              id="new-invite-url"
+              readonly
+              class="flex-1 bg-white border border-green-200 rounded px-2 py-1.5 text-xs text-gray-600 font-mono"
+            />
+            <button
+              onclick="copyInviteUrl()"
+              class="bg-green-600 text-white px-3 py-1.5 rounded text-xs hover:bg-green-700 transition font-medium whitespace-nowrap"
+            >
+              📋 Kopieren
+            </button>
+          </div>
+        </div>
+
+        <!-- Einladungslinks-Liste -->
+        <div id="invite-list" class="space-y-2">
+          <div class="text-gray-400 text-sm text-center py-4" id="invite-placeholder">
+            Laden...
+          </div>
+        </div>
+
+        <!-- Hinweis -->
+        <div class="mt-4 text-xs text-gray-400">
+          <p>🔗 Studenten können über diesen Link direkt dem Kurs beitreten. Der Link muss vorher geteilt werden.</p>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -378,5 +470,184 @@
       showToast('Fehler: ' + err.message, 'error');
     }
   }
+
+  // ─── Einladungslinks ────────────────────────────────────────
+  let invites = [];
+
+  // Formular anzeigen/verstecken
+  function showInviteForm() {
+    document.getElementById('invite-form').classList.remove('hidden');
+    document.getElementById('new-invite-result').classList.add('hidden');
+  }
+
+  function hideInviteForm() {
+    document.getElementById('invite-form').classList.add('hidden');
+  }
+
+  // Link erstellen
+  async function createInvite(courseId) {
+    const expiresDays = parseInt(document.getElementById('invite-expires-days').value) || 7;
+    const maxUsesEl = document.getElementById('invite-max-uses');
+    const maxUses = maxUsesEl.value ? parseInt(maxUsesEl.value) : null;
+
+    try {
+      const res = await fetch('/api/courses/' + courseId + '/invites', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expires_days: expiresDays, max_uses: maxUses }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Erstellen.', 'error');
+        return;
+      }
+
+      // Erfolgs-Panel anzeigen
+      const baseUrl = window.location.origin;
+      const url = baseUrl + '/join/' + data.invite.token;
+      document.getElementById('new-invite-url').value = url;
+      document.getElementById('new-invite-result').classList.remove('hidden');
+      document.getElementById('invite-form').classList.add('hidden');
+
+      showToast(data.message || 'Einladungslink erstellt.', 'success');
+
+      // Liste aktualisieren
+      loadInvites(courseId);
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // URL in Zwischenablage kopieren
+  function copyInviteUrl() {
+    const input = document.getElementById('new-invite-url');
+    input.select();
+    navigator.clipboard.writeText(input.value).then(() => {
+      showToast('Link in Zwischenablage kopiert!', 'success');
+    }).catch(() => {
+      // Fallback für ältere Browser
+      document.execCommand('copy');
+      showToast('Link kopiert!', 'success');
+    });
+  }
+
+  // Link kopieren (aus der Liste)
+  function copyInviteLink(token) {
+    const baseUrl = window.location.origin;
+    const url = baseUrl + '/join/' + token;
+    navigator.clipboard.writeText(url).then(() => {
+      showToast('Link in Zwischenablage kopiert!', 'success');
+    }).catch(() => {
+      document.execCommand('copy');
+      showToast('Link kopiert!', 'success');
+    });
+  }
+
+  // Link löschen
+  async function deleteInvite(courseId, inviteId, element) {
+    if (!confirm('Möchtest du diesen Einladungslink wirklich löschen?')) return;
+
+    try {
+      const res = await fetch('/api/courses/' + courseId + '/invites/' + inviteId, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Löschen.', 'error');
+        return;
+      }
+
+      // Element ausblenden mit Animation
+      element.style.opacity = '0';
+      element.style.transition = 'opacity 0.3s, transform 0.3s';
+      element.style.transform = 'translateX(20px)';
+      setTimeout(() => element.remove(), 300);
+
+      showToast(data.message || 'Einladungslink gelöscht.', 'success');
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // Einladungslinks laden
+  async function loadInvites(courseId) {
+    try {
+      const res = await fetch('/api/courses/' + courseId + '/invites', {
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Laden.', 'error');
+        return;
+      }
+
+      invites = data;
+      renderInviteList(invites);
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // Liste rendern
+  function renderInviteList(invites) {
+    const container = document.getElementById('invite-list');
+    const placeholder = document.getElementById('invite-placeholder');
+
+    if (!invites.length) {
+      container.innerHTML = '<div class="text-gray-400 text-sm text-center py-4">Keine Einladungslinks vorhanden.</div>';
+      return;
+    }
+
+    const now = new Date();
+    container.innerHTML = invites.map(inv => {
+      const isExpired = inv.is_expired;
+      const isUsedUp = inv.is_used_up;
+      const isDisabled = isExpired || isUsedUp;
+
+      let statusBadge = '';
+      if (isExpired) {
+        statusBadge = '<span class="text-red-500 text-xs">⏰ Abgelaufen</span>';
+      } else if (isUsedUp) {
+        statusBadge = '<span class="text-orange-500 text-xs">🚫 Aufgebraucht</span>';
+      } else {
+        const daysLeft = inv.expires_at
+          ? Math.ceil((new Date(inv.expires_at) - now) / (1000 * 60 * 60 * 24))
+          : '∞';
+        statusBadge = '<span class="text-green-600 text-xs">✓ Aktiv (' + daysLeft + 'd)</span>';
+      }
+
+      const usesText = inv.max_uses
+        ? inv.used_count + '/' + inv.max_uses + ' Nutzungen'
+        : inv.used_count + ' Nutzungen';
+
+      const createdText = new Date(inv.created_at).toLocaleDateString('de-DE', {
+        day: '2-digit', month: '2-digit', year: 'numeric'
+      });
+
+      const disabledClass = isDisabled ? 'opacity-50' : '';
+
+      return '<div class="p-3 bg-gray-50 rounded-lg border border-gray-200 ' + disabledClass + '" id="invite-' + inv.id + '">' +
+        '<div class="flex items-center justify-between mb-1">' +
+        '<div class="flex items-center gap-2">' +
+        '<span class="font-mono text-xs text-gray-600 truncate max-w-[150px]">' + escapeHtml(inv.token) + '</span>' +
+        '</div>' +
+        statusBadge +
+        '</div>' +
+        '<div class="text-xs text-gray-400 mb-2">Erstellt: ' + createdText + ' • ' + usesText + '</div>' +
+        '<div class="flex gap-1">' +
+        '<button onclick="copyInviteLink(\'' + escapeHtml(inv.token) + '\')" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-medium">📋 Kopieren</button>' +
+        '<button onclick="deleteInvite(' + courseId + ', ' + inv.id + ', document.getElementById(\'invite-' + inv.id + '\'))" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 transition font-medium">🗑 Löschen</button>' +
+        '</div>' +
+        '</div>';
+    }).join('');
+  }
+
+  // Einladungslinks beim Seitenstart laden
+  loadInvites(courseId);
 </script>
 {% endblock %}

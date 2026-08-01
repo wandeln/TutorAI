@@ -8,12 +8,14 @@ und darf zusätzlich PROFs ernennen.
 Diese Endpunkte sind unter /api/courses/{course_id}/members erreichbar.
 """
 
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from database.base import get_session
 from database.models import (
     Course,
+    CourseInvite,
     CourseRole,
     GlobalUserRole,
     User,
@@ -340,3 +342,114 @@ async def search_users_for_course(
     ]
 
     return {"users": results}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EINLADUNGSLINKS (CourseInvite)
+# ═══════════════════════════════════════════════════════════════════
+
+import secrets
+from datetime import timedelta
+
+
+@router.post("/courses/{course_id}/invites")
+async def create_invite(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    auth_result: tuple = Depends(require_prof_or_admin()),
+):
+    """
+    Einladungslink für einen Kurs erstellen.
+
+    Request:
+        {
+            "expires_days": 7,        // Gültigkeitsdauer in Tagen (default: 7)
+            "max_uses": 10           // Max. Nutzungen (optional, null = unbegrenzt)
+        }
+    """
+    user, _, _ = auth_result
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    body = await request.json()
+    expires_days = body.get("expires_days", 7)
+    max_uses = body.get("max_uses", None)
+
+    token = secrets.token_urlsafe(20)
+    expires_at = (
+        datetime.now() + timedelta(days=expires_days)
+        if expires_days > 0
+        else None
+    )
+
+    invite = CourseInvite(
+        course_id=course_id,
+        token=token,
+        expires_at=expires_at,
+        max_uses=max_uses,
+        created_by=user.id,
+    )
+    session.add(invite)
+    session.commit()
+    session.refresh(invite)
+
+    return {
+        "message": "Einladungslink erstellt.",
+        "invite": {
+            "id": invite.id,
+            "token": invite.token,
+            "expires_at": invite.expires_at.isoformat() if invite.expires_at else None,
+            "max_uses": invite.max_uses,
+            "used_count": invite.used_count,
+            "created_at": invite.created_at.isoformat(),
+        },
+    }
+
+
+@router.get("/courses/{course_id}/invites")
+async def list_invites(
+    course_id: int,
+    session: Session = Depends(get_session),
+    auth_result: tuple = Depends(require_prof_or_admin()),
+):
+    """Alle aktiven Einladungslinks eines Kurses auflisten."""
+    invites = session.exec(
+        select(CourseInvite)
+        .where(CourseInvite.course_id == course_id)
+    ).all()
+    invites = list(reversed(invites))
+
+    return [
+        {
+            "id": inv.id,
+            "token": inv.token,
+            "expires_at": inv.expires_at.isoformat() if inv.expires_at else None,
+            "max_uses": inv.max_uses,
+            "used_count": inv.used_count,
+            "created_at": inv.created_at.isoformat(),
+            "is_expired": inv.expires_at is not None and inv.expires_at < datetime.now(),
+            "is_used_up": inv.max_uses is not None and inv.used_count >= inv.max_uses,
+        }
+        for inv in invites
+    ]
+
+
+@router.delete("/courses/{course_id}/invites/{invite_id}")
+async def delete_invite(
+    course_id: int,
+    invite_id: int,
+    session: Session = Depends(get_session),
+    auth_result: tuple = Depends(require_prof_or_admin()),
+):
+    """Einladungslink löschen."""
+    invite = session.get(CourseInvite, invite_id)
+    if not invite:
+        raise HTTPException(404, "Einladungslink nicht gefunden.")
+    if invite.course_id != course_id:
+        raise HTTPException(400, "Link gehört nicht zu diesem Kurs.")
+
+    session.delete(invite)
+    session.commit()
+    return {"message": "Einladungslink gelöscht."}

@@ -19,7 +19,6 @@ from database.models import (
     GlobalUserRole,
     Submission,
     Task,
-    TestCase,
     User,
     UserCourse,
 )
@@ -88,6 +87,95 @@ async def create_course(
     }
 
 
+class CourseDuplicateRequest(BaseModel):
+    name: str
+    description: str
+    semester: str
+
+
+@router.post("/courses/{course_id}/duplicate")
+async def duplicate_course(
+    course_id: int,
+    data: CourseDuplicateRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_global_admin()),
+):
+    """Kurs duplizieren (Kurs + Tasks + Settings, ohne Mitglieder/Submissions)."""
+    source_course = session.get(Course, course_id)
+    if not source_course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    # 1. Neuen Kurs erstellen
+    new_course = Course(
+        name=data.name,
+        description=data.description,
+        semester=data.semester,
+        created_by=user.id,  # type: ignore[arg-type]
+    )
+    session.add(new_course)
+    session.commit()
+    session.refresh(new_course)
+
+    # 2. Admin als PROF-Mitglied hinzufügen
+    membership = UserCourse(
+        user_id=user.id,  # type: ignore[arg-type]
+        course_id=new_course.id,  # type: ignore[arg-type]
+        role_in_course=CourseRole.PROF,
+    )
+    session.add(membership)
+    session.commit()
+
+    # 3. Alle Tasks kopieren (ohne Submissions/Feedback)
+    source_tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
+    for src_task in source_tasks:
+        new_task = Task(
+            course_id=new_course.id,  # type: ignore[arg-type]
+            title=src_task.title,
+            task_type=src_task.task_type,
+            description=src_task.description,
+            model_solution=src_task.model_solution,
+            max_points=src_task.max_points,
+            max_attempts=src_task.max_attempts,
+            deadline=src_task.deadline,
+            code_template=src_task.code_template,
+            test_code=src_task.test_code,
+            is_visible=src_task.is_visible,
+            created_by=user.id,  # type: ignore[arg-type]
+        )
+        session.add(new_task)
+    session.commit()
+
+    # 4. CourseSettings kopieren
+    source_settings = session.exec(
+        select(CourseSettings).where(CourseSettings.course_id == course_id)
+    ).first()
+    if source_settings:
+        new_settings = CourseSettings(
+            course_id=new_course.id,  # type: ignore[arg-type]
+            llm_api_url=source_settings.llm_api_url,
+            llm_model=source_settings.llm_model,
+            grading_prompt=source_settings.grading_prompt,
+            use_ldap=source_settings.use_ldap,
+            ldap_server=source_settings.ldap_server,
+            ldap_base_dn=source_settings.ldap_base_dn,
+            ldap_bind_dn=source_settings.ldap_bind_dn,
+            ldap_bind_pw=source_settings.ldap_bind_pw,
+            ldap_user_search=source_settings.ldap_user_search,
+        )
+        session.add(new_settings)
+        session.commit()
+
+    return {
+        "message": f"Kurs '{data.name}' aus '{source_course.name}' dupliziert.",
+        "course": {
+            "id": new_course.id,
+            "name": new_course.name,
+            "semester": new_course.semester,
+            "task_count": len(source_tasks),
+        },
+    }
+
+
 @router.delete("/courses/{course_id}")
 async def delete_course(
     course_id: int,
@@ -114,10 +202,6 @@ async def delete_course(
             for fb in feedbacks:
                 session.delete(fb)
             session.delete(sub)
-        # 4. Alle TestCases der Tasks
-        test_cases = session.exec(select(TestCase).where(TestCase.task_id == task_id)).all()
-        for tc in test_cases:
-            session.delete(tc)
         session.delete(task)
 
     # 5. Alle CourseSettings

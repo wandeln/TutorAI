@@ -304,7 +304,7 @@
       <div id="feedback-area" class="space-y-3">
         {% if my_submissions %}
           {% for sub in my_submissions %}
-            {% for fb in sub.feedback_list %}
+            {% for fb in sub.feedback_list[::-1] %}
             <div class="feedback-box {% if fb.source == 'llm' %}feedback-llm{% else %}feedback-human{% endif %}">
               <div class="flex items-center justify-between mb-2">
                 <div class="flex items-center gap-2">
@@ -668,9 +668,9 @@
 
     // Update points
     pointsText.textContent = `${latestPoints} / ${maxPoints}`;
-    pointsText.className = `font-semibold ${latestPoints >= maxPoints ? 'text-green-600' : latestPoints >= maxPoints * 0.5 ? 'text-yellow-600' : 'text-red-600'}`;
+    pointsText.className = `font-semibold ${latestPoints >= (maxPoints * 0.8) ? 'text-green-600' : latestPoints >= maxPoints * 0.5 ? 'text-yellow-600' : 'text-red-600'}`;
     pointsBar.style.width = `${pctPoints}%`;
-    pointsBar.className = `${latestPoints >= maxPoints ? 'bg-green-500' : latestPoints >= maxPoints * 0.5 ? 'bg-yellow-500' : 'bg-red-500'} h-2.5 rounded-full transition-all`;
+    pointsBar.className = `${latestPoints >= (maxPoints * 0.8) ? 'bg-green-500' : latestPoints >= maxPoints * 0.5 ? 'bg-yellow-500' : 'bg-red-500'} h-2.5 rounded-full transition-all`;
 
     // Update attempts
     const maxAttempts = data.max_attempts;

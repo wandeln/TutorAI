@@ -194,11 +194,20 @@ async def index(
                     .where(Submission.student_id == user.id)
                     .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
                 ).all()
+
                 latest = 0.0
                 if subs:
+                    human_points = 0.0
+                    llm_points = 0.0
+                    override_exists = False
                     for fb in subs[0].feedback_list:
-                        if fb.points_earned > latest:
-                            latest = fb.points_earned
+                        if fb.source == FeedbackSource.HUMAN:
+                            human_points = max(human_points, fb.points_earned)
+                            override_exists = True
+                        else:
+                            llm_points = max(llm_points, fb.points_earned)
+                    latest = human_points if override_exists else llm_points
+
                 if latest > 0:
                     completed_count += 1
                 course_earned += latest

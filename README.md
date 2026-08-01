@@ -119,18 +119,17 @@ Der Server ist dann unter `http://localhost:8000` erreichbar.
 > tail -n 50 server-output.log
 > ```
 
-### 4. Demo-Accounts
+### 4. Erster Start
 
-Beim ersten Start werden automatisch Demo-Daten erstellt:
+Beim ersten Start wird automatisch ein Admin-Account angelegt:
 
-| Global-Rolle | Kurs-Rolle | Username | Password |
-|---|---|---|---|
-| Admin | Prof | `admin` | `admin123` |
-| User | Tutor | `tutor1` | `tutor123` |
-| User | Student | `student1` | `student123` |
-| ... | ... | `student2-5` | `student123` |
+| Username | Password | Rolle |
+|---|---|---|
+| `admin` | `admin` | Admin |
 
-Alle Accounts sind dem Demo-Kurs **„Einführung in die Informatik"** zugeordnet.
+> **Wichtig:** Ändere das Admin-Passwort nach dem ersten Login in den Einstellungen!
+
+Melde dich mit diesen Credentials an und erstelle über die **Admin-Konsole** deine ersten Kurse, User und Aufgaben.
 
 ## 📁 Projektstruktur
 

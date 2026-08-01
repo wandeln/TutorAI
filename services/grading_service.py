@@ -182,6 +182,7 @@ class GradingService:
             student_code=submission.code_solution,
             test_results=test_summary,
             max_points=task.max_points,
+            code_template=task.code_template,
             custom_prompt=custom_prompt,
             config=llm_cfg,
         )

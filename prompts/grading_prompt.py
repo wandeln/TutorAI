@@ -34,6 +34,7 @@ Beispiel-Antwortformat:
   "feedback": "**Gute Lösung overall.** Du hast den Algorithmus korrekt erkannt. Die Formel $f(n) = f(n-1) + f(n-2)$ ist richtig. Allerdings fehlen die **Basisfälle** — fuege $f(0) = 0$ und $f(1) = 1$ hinzu. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher.",
   "points": 7
 }
+Achte dabei auf korrektes Escaping von special Characters und Backslash.
 
 Bewertungskriterien:
 - Vollstaendigkeit: Wurde alle Aspekte der Aufgabe adressiert?
@@ -41,7 +42,7 @@ Bewertungskriterien:
 - Qualitaet: Ist die Loesung elegant und gut strukturiert?
 - Verstaendnis: Zeigt der Student echtes Verstaendnis oder nur Auswendiglernen?
 
-Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist. Sei nicht zu knauserig bei der Punktevergabe - lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge eventuell noch verbessert werden könnten, wenn man ganz penibel wäre. (Sei aber auch kein Klugscheisser)
 """
 
 
@@ -53,6 +54,9 @@ __TASK_DESCRIPTION__
 
 MUSTERLOESUNG:
 __MODEL_SOLUTION__
+
+CODE-TEMPLATE:
+__CODE_TEMPLATE__
 
 STUDENTEN-CODE:
 __STUDENT_SOLUTION__
@@ -75,6 +79,7 @@ Beispiel-Antwortformat:
   "feedback": "**3 von 4 Tests bestanden.** Der Algorithmus ist im Kern korrekt. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine **Praefuerung** `if not lst: return 0` am Anfang hinzu. Die Zeitkomplexitaet $O(n)$ ist optimal.",
   "points": 10
 }
+Achte dabei auf korrektes Escaping von special Characters und Backslash.
 
 Beruecksichtige bei der Bewertung:
 - Anzahl bestander Tests (public + private)
@@ -83,7 +88,7 @@ Beruecksichtige bei der Bewertung:
 - Edge-Cases (Umgang mit Sonderfaellen)
 - Verstaendlichkeit (Kommentare, Variablennamen)
 
-Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist. Sei nicht zu knauserig bei der Punktevergabe - lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge eventuell noch verbessert werden könnten, wenn man ganz penibel wäre. (Sei aber auch kein Klugscheisser)
 """
 
 

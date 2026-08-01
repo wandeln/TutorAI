@@ -95,6 +95,7 @@ class LLMService:
         student_code: str,
         test_results: str,
         max_points: int,
+        code_template: Optional[str] = None,
         custom_prompt: Optional[str] = None,
         config: Optional[dict] = None,
     ):
@@ -104,6 +105,7 @@ class LLMService:
             custom_prompt or GRADING_CODE_PROMPT_TEMPLATE,
             task_description=task_description,
             model_solution=model_solution,
+            code_template=code_template or "(Kein Template hintergelegt)",
             student_solution=student_code,
             test_results=test_results,
             max_points=max_points,

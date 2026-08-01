@@ -44,7 +44,7 @@ bereits die korrekte Musterlösung. Jetzt sollst du daraus zwei Dinge ableiten:
 1. **Code-Vorlage** (code_template): Ein Gerüst/Scaffold für den Studenten. Funktionen/Classen
    sind deklariert, aber die Bodies sind leer (z.B. nur `pass` oder `...`). Der Student ergänzt den Code. Zudem sollte die Vorlage, wenn es sich anbietet, auch schöne Visualisierungen mit matplotlib enthalten, welche die Lösung des Studenten veranschaulichen. Diese visualisierungen sollten mit plt.show() bei Aufruf des Template Scripts angezeigt werden.
 2. **Public Tests** (public_tests): Einheitstests als Python unittest-Code, die der Student sieht.
-   Nutze eine Klasse `PublicTest(unittest.TestCase)`. Teste grundlegende, normale Fälle (ca. 3-5 Tests).
+   Nutze eine Klasse `PublicTest(unittest.TestCase)`. Teste grundlegende, normale Fälle (ca. 3-5 Tests). Liefere hilfreiche assertion Hinweise für die Studenten in den assert calls.
 3. **Private Tests** (private_tests): Zusätzliche verborgene Unit-Tests als Python unittest-Code.
    Nutze eine Klasse `PrivateTest(unittest.TestCase)`. Teste Edge-Cases, Grenzwerte, Fehlerfälle (ca. 3-5 Tests).
 
@@ -55,12 +55,12 @@ MUSTERLÖSUNG:
 __MODEL_SOLUTION__
 
 Gib deine Antwort als gültiges JSON-Objekt mit folgenden Schlüsseln:
-
 {
   "code_template": "...",      // Scaffold für den Studenten (aus Musterlösung abgeleitet) - evtl mit zusätzlichen matplotlib visualisierungen, welche bei Aufruf des code template scripts aufgerufen werden
-  "public_tests": "...",       // Public unittest-Code (inkl. `import unittest`)
+  "public_tests": "...",       // Public unittest-Code (inkl. `import unittest`). Liefere hilfreiche assertion messages für die Studenten in den assert calls (z.B. self.assertEqual(traverse_inorder(None), [], "Hast du den Fall root=None korrekt berücksichtigt?"))
   "private_tests": "..."       // Private unittest-Code (inkl. `import unittest`)
 }
+Achte dabei auf korrektes Escaping von special Characters und Backslash.
 
 Regeln:
 - Die `code_template` MUSS zur `model_solution` passen — gleiche Signaturen, gleiche Struktur, nur ohne Implementierung.

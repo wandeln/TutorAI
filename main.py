@@ -951,6 +951,44 @@ async def submission_review_page(
 
     courses = _get_user_courses(user, session)
 
+    # Previous and next visible tasks (like student view)
+    prev_task_obj = session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.display_order < task.display_order)  # type: ignore[operator]
+        .where(Task.is_visible == True)
+        .order_by(Task.display_order.desc())  # type: ignore[attr-defined]
+    ).first()
+
+    next_task_obj = session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.display_order > task.display_order)  # type: ignore[operator]
+        .where(Task.is_visible == True)
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+    ).first()
+
+    # Calculate student's best points for this task
+    student_subs = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task_id)
+        .where(Submission.student_id == student_id)
+        .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+    ).all()
+    best_points = 0.0
+    for sub in student_subs:
+        human_points = 0.0
+        llm_points = 0.0
+        override_exists = False
+        for fb in sub.feedback_list:
+            if fb.source == FeedbackSource.HUMAN:
+                human_points = max(human_points, fb.points_earned)
+                override_exists = True
+            elif fb.source == FeedbackSource.LLM:
+                llm_points = max(llm_points, fb.points_earned)
+        sub_best = human_points if override_exists else llm_points
+        best_points = max(best_points, sub_best)
+
     task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(
         task.task_type.value, task.task_type.value
     )
@@ -978,6 +1016,14 @@ async def submission_review_page(
             "max_points": task.max_points,
             "student_name": student.name,
             "student_username": student.username,
+            "course": {
+                "id": course.id,
+                "name": course.name,
+            },
+            "best_points": best_points,
+            "total_attempts": len(student_subs),
+            "prev_task": {"id": prev_task_obj.id, "title": prev_task_obj.title} if prev_task_obj else None,
+            "next_task": {"id": next_task_obj.id, "title": next_task_obj.title} if next_task_obj else None,
         },
     )
 

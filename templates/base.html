@@ -89,7 +89,7 @@
       <a href="/" class="text-xl font-bold flex items-center gap-2 hover:opacity-90 transition mr-2">
         <span>📚</span>
         <span class="hidden sm:inline">TutorAI</span>
-        <span class="sm:hidden">TA</span>
+        <span class="sm:hidden">TutorAI</span>
       </a>
 
       <!-- Desktop Navigation -->
@@ -134,7 +134,7 @@
           hx-on::after-request="window.location.href = '/login'"
           class="text-blue-200 hover:text-white transition ml-2"
         >
-          Abmelden
+          🔑 Abmelden
         </button>
       </div>
 
@@ -185,7 +185,7 @@
           hx-on::after-request="window.location.href = '/login'"
           class="text-blue-200 hover:text-white transition text-sm"
         >
-          Abmelden
+          🔑 Abmelden
         </button>
       </div>
     </div>
@@ -193,7 +193,7 @@
   </nav>
 
   <!-- ─── Main Content ────────────────────────────────────────── -->
-  <main class="container mx-auto px-4 py-6 pt-10 flex-1" style="overflow-x:scroll;scrollbar-width: none;">
+  <main class="container mx-auto px-4 py-6 pt-10 flex-1">
     {% block content %}{% endblock %}
   </main>
 

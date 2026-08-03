@@ -3,7 +3,7 @@
 {% set code_editor = true %}
 
 {% block content %}
-<div class="max-w-5xl mx-auto">
+<div class="max-w-7xl mx-auto">
 
   <!-- Task Header -->
   <div class="mb-6">
@@ -74,10 +74,10 @@
     {% endif %}
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+  <div class="flex flex-col lg:flex-row gap-6">
 
     <!-- ─── LEFT: Task Description ──────────────────────────────── -->
-    <div class="lg:col-span-1 space-y-4">
+    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
 
       <!-- Aufgabenstellung (Markdown + LaTeX) -->
       <div class="card">
@@ -150,7 +150,7 @@
     </div>
 
     <!-- ─── RIGHT: Solution Area ───────────────────────────────── -->
-    <div class="lg:col-span-2 space-y-4">
+    <div class="flex-1 space-y-4">
 
       {% if task.task_type == 'code' %}
         <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->
@@ -241,10 +241,14 @@
             <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
               <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
                 <div class="text-2xl mb-1">📸</div>
-                <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto hinein</p>
+                <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto herein</p>
                 <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
               </div>
               <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
+              <input type="file" id="latex-camera-input" accept="image/*" capture="environment" class="hidden" />
+              <button id="latex-camera-btn" type="button" class="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
+                <span>📷</span><span>Foto mit Kamera machen</span>
+              </button>
             </div>
             <div id="latex-preview-container" class="hidden mt-2">
               <div class="flex items-center gap-3">
@@ -333,6 +337,24 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block extra_head %}
+<style>
+  @media (min-width: 1024px) {
+    #left-col {
+      scrollbar-width: thin;
+      padding-right: 0.75rem;
+    }
+    #left-col::-webkit-scrollbar {
+      width: 6px;
+    }
+    #left-col::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 3px;
+    }
+  }
+</style>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -712,9 +734,22 @@
     const latexTimer = document.getElementById("latex-timer");
     const latexProgressBar = document.getElementById("latex-progress-bar");
 
+    const cameraInput = document.getElementById("latex-camera-input");
+    const cameraBtn = document.getElementById("latex-camera-btn");
+
     if (!uploadBtn || !uploadArea) return;
 
     let currentLatex = "";
+
+    // Camera button
+    cameraBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cameraInput.click();
+    });
+
+    cameraInput.addEventListener("change", () => {
+      if (cameraInput.files.length > 0) handleFile(cameraInput.files[0]);
+    });
 
     // Toggle upload area visibility
     uploadBtn.addEventListener("click", () => {

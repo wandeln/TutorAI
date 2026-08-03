@@ -366,10 +366,11 @@ async def get_course_overview(
     """Übersichtstabelle: Alle Studenten x Aufgaben mit Punkten."""
     user, _ = user_and_course
 
-    # Alle Aufgaben des Kurses
+    # Alle sichtbaren Aufgaben des Kurses
     tasks = session.exec(
         select(Task)
         .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)
         .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all()
 
@@ -786,10 +787,11 @@ async def export_excel(
     # Query-Parameter
     filter_text = request.query_params.get("filter_text", "").strip()
 
-    # Alle Aufgaben des Kurses
+    # Alle sichtbaren Aufgaben des Kurses
     tasks = list(session.exec(
         select(Task)
         .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)
         .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all())
 

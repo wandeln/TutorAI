@@ -1,29 +1,70 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="max-w-5xl mx-auto">
+<div class="max-w-7xl mx-auto">
 
   <!-- Header -->
-  <div class="flex items-center justify-between mb-6">
-    <div>
-      <div class="flex items-center gap-3 mb-2">
-        <a href="/courses/{{ course_id }}" class="text-blue-600 hover:underline text-sm">
-          ← Kursübersicht
-        </a>
-        <span class="text-gray-400">/</span>
-        <a href="/courses/{{ course_id }}/overview" class="text-blue-600 hover:underline text-sm">
-          Punktübersicht
-        </a>
-        <span class="text-gray-400">/</span>
-        <span class="text-sm text-gray-500">Bewertung</span>
-      </div>
-      <h1 class="text-2xl font-bold text-gray-900">Einreichung bewerten</h1>
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-2">
+      <a href="/courses/{{ course_id }}" class="text-blue-600 hover:underline text-sm">
+        ← {{ course.name }}
+      </a>
+      <span class="text-gray-400">/</span>
+      <a href="/courses/{{ course_id }}/overview" class="text-blue-600 hover:underline text-sm">
+        Punktübersicht
+      </a>
+      <span class="text-gray-400">/</span>
+      <span class="text-sm text-gray-500">Bewertung</span>
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900">{{ task_title }}</h1>
+
+    <div class="flex gap-2 mt-3">
+      <span class="badge text-gray-600">
+        Max. {{ max_points }} Punkte
+      </span>
+      <span class="px-2 py-0.5 rounded text-xs font-medium
+        {% if task_type == 'code' %}bg-orange-100 text-orange-700
+        {% else %}bg-gray-100 text-gray-600
+        {% endif %}" style="align-content: center;">
+        {{ '💻 Code' if task_type == 'code' else '📄 Text' }}
+      </span>
     </div>
   </div>
 
-  <!-- Student & Task Info -->
+  <!-- Task Navigation -->
+  <div class="flex items-center justify-between mb-6">
+    {% if prev_task %}
+      <a href="/courses/{{ course_id }}/tasks/{{ prev_task.id }}/students/{{ student_id }}/review"
+         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2">
+        <span class="text-lg">←</span>
+        <div class="flex flex-col items-start">
+          <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
+          <span class="text-sm font-medium">{{ prev_task.title }}</span>
+        </div>
+      </a>
+    {% else %}
+      <div></div>
+    {% endif %}
+
+    {% if next_task %}
+      <a href="/courses/{{ course_id }}/tasks/{{ next_task.id }}/students/{{ student_id }}/review"
+         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto">
+        <div class="flex flex-col items-end text-right">
+          <span class="text-xs text-gray-500">Nächste Aufgabe</span>
+          <span class="text-sm font-medium">{{ next_task.title }}</span>
+        </div>
+        <span class="text-lg">→</span>
+      </a>
+    {% else %}
+      <div></div>
+    {% endif %}
+  </div>
+
+  <!-- Student Info Row -->
   <div class="card mb-6">
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
       <div>
         <span class="text-gray-500">Student</span>
         <p class="font-medium text-gray-900">{{ student_name }} ({{ student_username }})</p>
@@ -36,26 +77,71 @@
         <span class="text-gray-500">Aufgabentyp</span>
         <p class="font-medium text-gray-900">{{ task_type_display }}</p>
       </div>
-      <div>
-        <span class="text-gray-500">Max. Punkte</span>
-        <p class="font-medium text-gray-900">{{ max_points }}</p>
+    </div>
+  </div>
+
+  <!-- Two-Column Layout with Sticky Left Sidebar -->
+  <div class="flex flex-col lg:flex-row gap-6" id="two-col-layout">
+
+    <!-- ─── LEFT: Task Description + Model Solution ─────────── -->
+    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
+
+      <!-- Aufgabenstellung -->
+      <div class="card">
+        <h2 class="text-lg font-semibold text-gray-800 mb-3">Aufgabenstellung</h2>
+        <div id="task-description" class="markdown-preview-area"></div>
       </div>
-    </div>
-  </div>
 
-  <!-- Task Description -->
-  <div class="card mb-6">
-    <h2 class="text-lg font-semibold text-gray-800 mb-3">Aufgabenstellung</h2>
-    <div id="task-description" class="markdown-preview-area"></div>
-    <div id="model-solution-container" class="hidden mt-4 pt-4 border-t border-gray-200">
-      <h3 class="text-sm font-semibold text-gray-600 mb-2">Musterlösung (versteckt für Studenten)</h3>
-      <div id="model-solution" class="markdown-preview-area"></div>
-    </div>
-  </div>
+      <!-- Musterlösung -->
+      <div id="model-solution-card" class="card hidden">
+        <h3 class="text-sm font-semibold text-purple-700 mb-2">🔑 Musterlösung (versteckt für Studenten)</h3>
+        <div id="model-solution" class="markdown-preview-area"></div>
+      </div>
 
-  <!-- Submissions -->
-  <div class="space-y-6" id="submissions-container">
-    <!-- Filled by JS -->
+    </div>
+
+    <!-- ─── RIGHT: Student Submissions + Evaluations ───────── -->
+    <div class="flex-1 space-y-4" id="right-col">
+
+      <div class="card">
+        <h2 class="text-lg font-semibold text-gray-800 mb-3">Einreichungen des Students</h2>
+      </div>
+
+      <!-- Score Display -->
+      <div class="card">
+        <h2 class="text-sm font-semibold text-gray-800 mb-3">Punktestand</h2>
+        <div class="space-y-4 text-sm">
+
+          <!-- Punkte -->
+          <div id="points-progress">
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-600">Punkte</span>
+              <span id="points-text" class="font-semibold">
+                0 / {{ max_points }}
+              </span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+              <div id="points-bar" class="h-2.5 rounded-full transition-all" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- Versuche -->
+          <div id="attempts-progress">
+            <div class="flex justify-between mb-1">
+              <span class="text-gray-600">Versuche</span>
+              <span id="attempts-text">{{ total_attempts }}</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="space-y-4" id="submissions-container">
+        <!-- Filled by JS -->
+      </div>
+
+    </div>
+
   </div>
 
 </div>
@@ -72,6 +158,36 @@
     border-radius: 0.75rem;
   }
   {% endif %}
+
+  @media (min-width: 1024px) {
+    #left-col {
+      scrollbar-width: thin;
+      padding-right: 0.75rem;
+    }
+    #left-col::-webkit-scrollbar {
+      width: 6px;
+    }
+    #left-col::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 3px;
+    }
+  }
+
+  /* Horizontal scroll for submissions on large screens */
+  @media (min-width: 1024px) {
+    #right-col {
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+    #right-col::-webkit-scrollbar {
+      height: 6px;
+    }
+    #right-col::-webkit-scrollbar-thumb {
+      background-color: #cbd5e1;
+      border-radius: 3px;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -106,8 +222,11 @@
     // Musterlösung
     if (data.task.model_solution) {
       renderMarkdown(data.task.model_solution, document.getElementById('model-solution'));
-      document.getElementById('model-solution-container').classList.remove('hidden');
+      document.getElementById('model-solution-card').classList.remove('hidden');
     }
+
+    // Punktestand aktualisieren
+    updateScoreDisplay(data);
 
     var container = document.getElementById('submissions-container');
     if (data.submissions.length === 0) {
@@ -283,6 +402,56 @@
 
       container.appendChild(card);
     });
+  }
+
+  // ─── Score Display ────────────────────────────────────────────
+  function updateScoreDisplay(data) {
+    var maxPoints = data.task.max_points;
+    var bestPoints = 0;
+
+    // Find the best points across all submissions
+    data.submissions.forEach(function(sub) {
+      var humanPoints = 0;
+      var llmPoints = 0;
+      var overrideExists = false;
+
+      sub.feedback.forEach(function(fb) {
+        if (fb.source === 'human') {
+          humanPoints = Math.max(humanPoints, fb.points_earned);
+          overrideExists = true;
+        } else if (fb.source === 'llm') {
+          llmPoints = Math.max(llmPoints, fb.points_earned);
+        }
+      });
+
+      var subBest = overrideExists ? humanPoints : llmPoints;
+      bestPoints = Math.max(bestPoints, subBest);
+    });
+
+    var pct = maxPoints > 0 ? (bestPoints / maxPoints * 100) : 0;
+
+    // Determine color based on percentage
+    var colorClass, barClass;
+    if (pct >= 80) {
+      colorClass = 'text-green-600';
+      barClass = 'bg-green-500';
+    } else if (pct >= 50) {
+      colorClass = 'text-yellow-600';
+      barClass = 'bg-yellow-500';
+    } else {
+      colorClass = 'text-red-600';
+      barClass = 'bg-red-500';
+    }
+
+    // Update points text
+    var pointsText = document.getElementById('points-text');
+    pointsText.textContent = bestPoints + ' / ' + maxPoints;
+    pointsText.className = 'font-semibold ' + colorClass;
+
+    // Update points bar
+    var pointsBar = document.getElementById('points-bar');
+    pointsBar.style.width = pct + '%';
+    pointsBar.className = barClass + ' h-2.5 rounded-full transition-all';
   }
 
   // ─── Actions ──────────────────────────────────────────────────

@@ -242,7 +242,8 @@ class LLMService:
                                         "type": "text",
                                         "text": (
                                             "Konvertiere die Formel(n) in diesem Foto in LaTeX-Code. "
-                                            "Gib NUR den LaTeX-Code zurueck."
+                                            "Gib NUR den Markdown bzw LaTeX-Code zurueck. "
+                                            "Enthält das Bild keinen Text oder Formeln, gib einen leeren String zurück."
                                         ),
                                     },
                                 ],

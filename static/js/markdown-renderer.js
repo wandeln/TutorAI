@@ -22,12 +22,24 @@ function renderMarkdown(text, targetElement, options = {}) {
 
   const { preview = false } = options;
 
-  // 1. Extract $$...$$ blocks and replace with placeholders
+  // 1a. Extract $$...$$ blocks and replace with placeholders
   const latexBlocks = [];
   let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
     const idx = latexBlocks.length;
     latexBlocks.push(latex.trim());
     return `%%LATEX_BLOCK_${idx}%%`;
+  });
+
+  // 1b. Extract $...$ inline math and replace with placeholders.
+  //     This is critical: if $...$ content contains characters that look like
+  //     HTML tags (e.g. <img ...>), marked will pass them through as raw HTML
+  //     and they get executed via innerHTML before KaTeX ever sees them.
+  //     By extracting here, marked never touches the LaTeX content.
+  const latexInlines = [];
+  processed = processed.replace(/\$([^$]+?)\$/g, (match, latex) => {
+    const idx = latexInlines.length;
+    latexInlines.push(latex.trim());
+    return `%%LATEX_INLINE_${idx}%%`;
   });
 
   // 2. Render Markdown (marked)
@@ -44,8 +56,10 @@ function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%LATEX_BLOCK_${idx}%%`, renderLatexBlock(latex));
   });
 
-  // 4. Process inline $...$ LaTeX in the final HTML
-  html = processInlineLatex(html);
+  // 4. Restore inline LaTeX (already extracted before marked)
+  latexInlines.forEach((latex, idx) => {
+    html = html.replace(`%%LATEX_INLINE_${idx}%%`, renderLatexInline(latex));
+  });
 
   // 5. Apply syntax highlighting to code blocks
   html = highlightCodeBlocks(html);
@@ -54,6 +68,15 @@ function renderMarkdown(text, targetElement, options = {}) {
   //    which is correct for security but unwanted for Python REPL prompts (>>>) and
   //    comparison operators in regular prose. Code blocks are already handled above.
   html = decodeTextEntities(html);
+
+  // 7. Sanitize final HTML with DOMPurify — this is the critical XSS defense.
+  //    marked.js allows raw HTML passthrough, so user input like
+  //    <img src=x onerror=alert(1)> gets injected directly.
+  //    DOMPurify strips dangerous attributes (onerror, onload, onclick, etc.)
+  //    while preserving safe HTML and our KaTeX/syntax-highlighted output.
+  if (typeof DOMPurify !== 'undefined') {
+    html = DOMPurify.sanitize(html);
+  }
 
   // Always wrap in .markdown-preview so CSS rules apply consistently.
   // In preview mode, add an extra wrapper for the editor scroll area.
@@ -64,48 +87,64 @@ function renderMarkdown(text, targetElement, options = {}) {
   }
 }
 
+// Escape HTML special characters to prevent XSS in error messages
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Sanitize LaTeX input to prevent HTML/JS injection.
+// KaTeX 0.16.x has known issues where HTML tags in the input can end up in
+// the rendered output, executing when inserted via innerHTML.
+// Two attack vectors:
+//   1. [HTML]...[TeX] macro blocks (trustedCommandConstructor bypass)
+//   2. Raw HTML tags created by entity decoding (e.g. &lt; → <, &gt; → >)
+function sanitizeLatex(latex) {
+  // 1. Remove [HTML]...[TeX] macro blocks (loop for nested occurrences)
+  let prev = '';
+  while (prev !== latex) {
+    prev = latex;
+    latex = latex.replace(/\[HTML\][\s\S]*?\[TeX\]/gi, '');
+  }
+  latex = latex.replace(/\[HTML\]/gi, '').replace(/\[TeX\]/gi, '');
+
+  // 2. Strip <script> and </script> tags (always dangerous in math context)
+  latex = latex.replace(/<\/?script[\s>][^>]*>/gi, '');
+
+  // 3. Strip HTML tags with attributes (most injection payloads require attributes
+  //    like onerror=, src=, onload=, etc.). The regex requires an = sign,
+  //    so it will NOT affect comparison operators like "x < y" or "a < b > c".
+  latex = latex.replace(/<\s*[a-zA-Z][^>=]*=[^>]*>/gi, '');
+
+  return latex;
+}
+
 function renderLatexBlock(latex) {
   try {
-    return katex.renderToString(latex, {
+    return katex.renderToString(sanitizeLatex(latex), {
       displayMode: true,
       throwOnError: false,
-      trust: true,
+      trust: false,
     });
   } catch (e) {
-    return `<pre class="text-red-500 bg-red-50 p-2 rounded">KaTeX Error: ${e.message}</pre>`;
+    return `<pre class="text-red-500 bg-red-50 p-2 rounded">KaTeX Error: ${escapeHtml(e.message)}</pre>`;
   }
 }
 
 function renderLatexInline(latex) {
   try {
-    return katex.renderToString(latex, {
+    return katex.renderToString(sanitizeLatex(latex), {
       displayMode: false,
       throwOnError: false,
-      trust: true,
+      trust: false,
     });
   } catch (e) {
-    return `<span class="text-red-500">\\(${latex}\\)</span>`;
+    return `<span class="text-red-500">\(${escapeHtml(latex)}\)</span>`;
   }
-}
-
-function processInlineLatex(html) {
-  // Process $...$ that appear outside of HTML tags and code blocks.
-  // marked has already escaped < and > to &lt;/&gt; in the text, so we
-  // decode them _before_ handing the LaTeX to KaTeX.
-  const parts = html.split(/(<[^>]*>)/g);
-  return parts.map((part, i) => {
-    if (i % 2 === 0 && part.includes('$')) {
-      return part.replace(/\$([^\$]+?)\$/g, (match, latex) => {
-        // Decode entities that marked escaped inside the LaTeX expression
-        const decoded = latex.trim()
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&amp;/g, '&');
-        return renderLatexInline(decoded);
-      });
-    }
-    return part;
-  }).join('');
 }
 
 function highlightCodeBlocks(html) {

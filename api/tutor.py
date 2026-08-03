@@ -618,6 +618,70 @@ async def generate_model_solution(
 # SUBMISSION REVIEW
 # ═══════════════════════════════════════════════════════════════════
 
+@router.get("/courses/{course_id}/tasks/{task_id}/students")
+async def get_task_students(
+    course_id: int,
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Gibt alle Studenten eines Kurses zurück, die für eine Aufgabe Einreichungen haben."""
+    # Zugriff prüfen
+    _check_course_role(user, course_id, session)
+
+    task = session.get(Task, task_id)
+    if not task or task.course_id != course_id:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    # Alle Studenten des Kurses
+    memberships = session.exec(
+        select(UserCourse)
+        .where(UserCourse.course_id == course_id)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
+    ).all()
+    students = [m.user for m in memberships]
+
+    # Für jeden Student prüfen, ob Einreichungen existieren
+    result = []
+    for student in students:
+        subs = session.exec(
+            select(Submission)
+            .where(Submission.task_id == task_id)
+            .where(Submission.student_id == student.id)
+            .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+        ).all()
+
+        has_submissions = len(subs) > 0
+        has_override = False
+        latest_points = 0.0
+
+        if subs:
+            latest_sub = subs[0]
+            human_points = 0.0
+            llm_points = 0.0
+            for fb in latest_sub.feedback_list:
+                if fb.source == FeedbackSource.HUMAN:
+                    human_points = max(human_points, fb.points_earned)
+                    has_override = True
+                elif fb.source == FeedbackSource.LLM:
+                    llm_points = max(llm_points, fb.points_earned)
+            latest_points = human_points if has_override else llm_points
+
+        result.append({
+            "id": student.id,
+            "name": student.name,
+            "username": student.username,
+            "has_submissions": has_submissions,
+            "latest_points": latest_points,
+            "has_override": has_override,
+        })
+
+    # Sort by name
+    result.sort(key=lambda s: s["name"].lower())
+
+    return {"students": result}
+
+
 @router.get("/courses/{course_id}/tasks/{task_id}/students/{student_id}/submissions")
 async def get_student_submissions(
     course_id: int,

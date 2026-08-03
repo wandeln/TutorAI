@@ -360,8 +360,8 @@ async def get_submission_result(
     ).all()
     total_attempts = len(existing)
 
-    # Bestwert = Punktzahl der neuesten Einreichung
-    best_points = 0.0
+    # Latest points = Punktzahl der neuesten Einreichung
+    latest_points = 0.0
     if existing:
         latest_sub = existing[0]  # newest
         human_points = 0.0
@@ -373,7 +373,7 @@ async def get_submission_result(
                 override_exists = True
             else:
                 llm_points = max(llm_points, fb.points_earned)
-        best_points = human_points if override_exists else llm_points
+        latest_points = human_points if override_exists else llm_points
 
     points = 0.0
     comment = ""
@@ -390,7 +390,7 @@ async def get_submission_result(
         "total_attempts": total_attempts,
         "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else "",
         "points": points,
-        "best_points": best_points,
+        "latest_points": latest_points,
         "max_points": task.max_points,
         "max_attempts": task.max_attempts,
         "comment": comment,
@@ -592,7 +592,7 @@ async def get_my_submissions(
             "task_id": task.id,
             "task_title": task.title,
             "max_points": task.max_points,
-            "best_points": latest_points,
+            "latest_points": latest_points,
             "attempt_count": len(subs),
         })
 

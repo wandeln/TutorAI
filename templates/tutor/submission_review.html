@@ -62,20 +62,24 @@
     {% endif %}
   </div>
 
-  <!-- Student Info Row -->
+  <!-- Student Navigation -->
   <div class="card mb-6">
-    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-      <div>
-        <span class="text-gray-500">Student</span>
-        <p class="font-medium text-gray-900">{{ student_name }} ({{ student_username }})</p>
+    <div class="flex items-end justify-between gap-3 flex-wrap">
+      <div class="min-w-[180px]" style="max-width: calc(100% - 105px)">
+        <label class="block text-xs font-medium text-gray-500 mb-1">Student</label>
+        <select id="student-select" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" style="background:transparent">
+          <option value="">— Lade Studenten... —</option>
+        </select>
       </div>
-      <div>
-        <span class="text-gray-500">Aufgabe</span>
-        <p class="font-medium text-gray-900">{{ task_title }}</p>
-      </div>
-      <div>
-        <span class="text-gray-500">Aufgabentyp</span>
-        <p class="font-medium text-gray-900">{{ task_type_display }}</p>
+      <div class="flex gap-2 flex-shrink-0">
+        <button id="prev-student-btn" disabled
+                class="px-3 py-2 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+          ←
+        </button>
+        <button id="next-student-btn" disabled
+                class="px-3 py-2 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition text-sm disabled:opacity-40 disabled:cursor-not-allowed">
+          →
+        </button>
       </div>
     </div>
   </div>
@@ -104,7 +108,7 @@
     <div class="flex-1 space-y-4" id="right-col">
 
       <div class="card">
-        <h2 class="text-lg font-semibold text-gray-800 mb-3">Einreichungen des Students</h2>
+        <h2 class="text-lg font-semibold text-gray-800 mb-1">Einreichungen</h2>
       </div>
 
       <!-- Score Display -->
@@ -136,6 +140,7 @@
 
         </div>
       </div>
+
 
       <div class="space-y-4" id="submissions-container">
         <!-- Filled by JS -->
@@ -197,6 +202,79 @@
   var courseId = {{ course_id }};
   var taskId = {{ task_id }};
   var studentId = {{ student_id }};
+  var studentsList = [];
+  var currentStudentIndex = -1;
+
+  // ─── Load Students ────────────────────────────────────────────
+  async function loadStudents() {
+    try {
+      var url = '/api/courses/' + courseId + '/tasks/' + taskId + '/students';
+      var res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) {
+        var data = await res.json();
+        showToast(data.detail || 'Fehler beim Laden der Studenten.', 'error');
+        return;
+      }
+      var data = await res.json();
+      studentsList = data.students;
+
+      var select = document.getElementById('student-select');
+      select.innerHTML = '';
+
+      studentsList.forEach(function(s, i) {
+        var opt = document.createElement('option');
+        opt.value = s.id;
+        var overrideBadge = s.has_override ? ' 🖊️' : '';
+        var displayText = s.name + ' (' + s.username + ')';
+        if (s.has_submissions) {
+          displayText += ' · ' + s.latest_points + 'P' + overrideBadge;
+        } else {
+          displayText += ' · keine Einreichung';
+        }
+        opt.textContent = displayText;
+        if (s.id == studentId) {
+          opt.selected = true;
+          currentStudentIndex = i;
+        }
+        select.appendChild(opt);
+      });
+
+      // Enable/disable nav buttons
+      updateNavButtons();
+
+      // Select current student in dropdown
+      select.value = studentId;
+
+      // Handle dropdown change
+      select.addEventListener('change', function() {
+        var newStudentId = parseInt(this.value);
+        if (!newStudentId) return;
+        navigateToStudent(newStudentId);
+      });
+
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  function updateNavButtons() {
+    var prevBtn = document.getElementById('prev-student-btn');
+    var nextBtn = document.getElementById('next-student-btn');
+    if (prevBtn) prevBtn.disabled = currentStudentIndex <= 0;
+    if (nextBtn) nextBtn.disabled = currentStudentIndex >= studentsList.length - 1;
+  }
+
+  function navigateToStudent(newStudentId) {
+    var idx = studentsList.findIndex(function(s) { return s.id === newStudentId; });
+    if (idx >= 0) {
+      currentStudentIndex = idx;
+      studentId = newStudentId;
+      updateNavButtons();
+      document.getElementById('student-select').value = newStudentId;
+      // Navigate to the new student's review page
+      window.location.href = '/courses/' + courseId + '/tasks/' + taskId + '/students/' + newStudentId + '/review';
+    }
+  }
 
   // ─── Load Data ────────────────────────────────────────────────
   async function loadData() {
@@ -590,7 +668,21 @@
     return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n');
   }
 
+  // ─── Navigation Buttons ───────────────────────────────────────
+  document.getElementById('prev-student-btn').addEventListener('click', function() {
+    if (currentStudentIndex > 0) {
+      navigateToStudent(studentsList[currentStudentIndex - 1].id);
+    }
+  });
+
+  document.getElementById('next-student-btn').addEventListener('click', function() {
+    if (currentStudentIndex < studentsList.length - 1) {
+      navigateToStudent(studentsList[currentStudentIndex + 1].id);
+    }
+  });
+
   // ─── Initial Load ─────────────────────────────────────────────
+  loadStudents();
   loadData();
 </script>
 {% endblock %}

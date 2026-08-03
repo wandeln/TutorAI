@@ -863,7 +863,7 @@ async def task_page(
             "is_code": is_code,
             "code_editor": is_code,
             "my_submissions": my_submissions,
-            "best_points": latest_points,
+            "latest_points": latest_points,
             "total_attempts": len(my_submissions),
 
             "LLM_TIMEOUT": LLM_TIMEOUT,

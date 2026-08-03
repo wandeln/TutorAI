@@ -49,8 +49,10 @@ Bewertungskriterien:
 - Korrektheit: Sind die Ergebnisse/Argumente richtig?
 - Qualitaet: Ist die Loesung elegant und gut strukturiert?
 - Verstaendnis: Zeigt der Student echtes Verstaendnis oder nur Auswendiglernen?
+- Die Bewertungskriterien aus der Musterlösung
 
-Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist. Sei nicht zu knauserig bei der Punktevergabe - lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge eventuell noch verbessert werden könnten, wenn man ganz penibel wäre. (Sei aber auch kein Klugscheisser)
+Sei nicht zu knauserig bei der Punktevergabe, halte dich aber dennoch an die Bewertungskriterien um fair zu bleiben.
+Sei lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge noch verbessert werden könnten, wenn man ganz penibel wäre.
 """
 
 
@@ -103,8 +105,11 @@ Beruecksichtige bei der Bewertung:
 - Effizienz (Laufzeitkomplexitaet)
 - Edge-Cases (Umgang mit Sonderfaellen)
 - Verstaendlichkeit (Kommentare, Variablennamen)
+- Die Bewertungskriterien aus der Musterlösung
 
-Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist. Sei nicht zu knauserig bei der Punktevergabe - lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge eventuell noch verbessert werden könnten, wenn man ganz penibel wäre. (Sei aber auch kein Klugscheisser)
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
+Sei nicht zu knauserig bei der Punktevergabe, halte dich aber dennoch an die Bewertungskriterien um fair zu bleiben.
+Sei lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge noch verbessert werden könnten, wenn man ganz penibel wäre.
 """
 
 

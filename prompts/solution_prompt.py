@@ -31,6 +31,7 @@ Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - ```mermaid ... ``` für Mermaid
 
 Bitte gib auch Bewertungskriterien an um eine faire Bewertung zu ermöglichen. Es können maximal {{max_points}} Punkte erzielt werden.
+Die Bewertungskriterien sollten (abgesehen von standard good practice) keine Punkte enthalten, die aus der Aufgabenstellung nicht ersichtlich sind.
 """
 
 

@@ -1,20 +1,31 @@
 /**
- * Markdown + LaTeX Renderer für TutorAI.
+ * Markdown + LaTeX + Mermaid Renderer für TutorAI.
  *
  * Verwendet:
  * - marked.js (MIT) für Markdown-Parser
  * - KaTeX (MIT) für LaTeX-Rendering
+ * - Mermaid.js (MIT) für Diagramme (flowchart, sequence, class, state, etc.)
  * - highlight.js (BSD-3) für Python-Syntax-Highlighting
  *
  * Inline-Latex:  $...$        → Inline
  * Display-Latex: $$...$$      → Block
+ * Mermaid:       ```mermaid   → SVG-Diagramm
  *
  * usage:
- *   renderMarkdown(text, element)
- *   renderMarkdown(text, element, { preview: true })  // Editor-Preview
+ *   await renderMarkdown(text, element)
+ *   await renderMarkdown(text, element, { preview: true })  // Editor-Preview
  */
 
-function renderMarkdown(text, targetElement, options = {}) {
+// Initialize Mermaid on first load
+if (typeof mermaid !== 'undefined') {
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'default',
+    securityLevel: 'loose',
+  });
+}
+
+async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
     targetElement.innerHTML = '';
     return;
@@ -22,15 +33,23 @@ function renderMarkdown(text, targetElement, options = {}) {
 
   const { preview = false } = options;
 
-  // 1a. Extract $$...$$ blocks and replace with placeholders
+  // 1a. Extract ```mermaid ... ``` blocks and replace with placeholders
+  const mermaidBlocks = [];
+  let processed = text.replace(/```mermaid\n([\s\S]*?)```/g, (match, diagram) => {
+    const idx = mermaidBlocks.length;
+    mermaidBlocks.push(diagram.trim());
+    return `%%MERmaid_BLOCK_${idx}%%`;
+  });
+
+  // 1b. Extract $$...$$ blocks and replace with placeholders
   const latexBlocks = [];
-  let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
     const idx = latexBlocks.length;
     latexBlocks.push(latex.trim());
     return `%%LATEX_BLOCK_${idx}%%`;
   });
 
-  // 1b. Extract $...$ inline math and replace with placeholders.
+  // 1c. Extract $...$ inline math and replace with placeholders.
   //     This is critical: if $...$ content contains characters that look like
   //     HTML tags (e.g. <img ...>), marked will pass them through as raw HTML
   //     and they get executed via innerHTML before KaTeX ever sees them.
@@ -76,6 +95,16 @@ function renderMarkdown(text, targetElement, options = {}) {
   //    while preserving safe HTML and our KaTeX/syntax-highlighted output.
   if (typeof DOMPurify !== 'undefined') {
     html = DOMPurify.sanitize(html);
+  }
+
+  // 8. Render Mermaid diagrams (async — mermaid.render() returns a Promise)
+  if (mermaidBlocks.length > 0 && typeof mermaid !== 'undefined') {
+    const renderedDiagrams = await Promise.all(mermaidBlocks.map((diagram) => {
+      return renderMermaid(diagram);
+    }));
+    renderedDiagrams.forEach((svg, idx) => {
+      html = html.replace(`%%MERmaid_BLOCK_${idx}%%`, svg);
+    });
   }
 
   // Always wrap in .markdown-preview so CSS rules apply consistently.
@@ -184,15 +213,47 @@ function decodeTextEntities(html) {
   // Decode &lt; and &gt; in text nodes only, leaving real HTML tags intact.
   // Splits on HTML tags and <pre> blocks so we only touch text content
   // (even-indexed parts after the split).
-  const parts = html.split(/(<pre>[\s\S]*?<\/pre>|<span class="katex(?:-display)?">[\s\S]*?<\/span>|<[^>]*>)/g);
+  const parts = html.split(/(<pre>[\s\S]*?<\/pre>|<span class="katex(?:-display)?">[\s\S]*?<\/span>|<div class="mermaid-diagram">[\s\S]*?<\/div>|<[^>]*>)/g);
   return parts.map((part, i) => {
     if (i % 2 === 0) {
       // Text node — decode escaped angle brackets
       return part.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
     }
-    // HTML tag / pre block / KaTeX output — leave as-is
+    // HTML tag / pre block / KaTeX output / mermaid diagram — leave as-is
     return part;
   }).join('');
+}
+
+// ─── Mermaid Diagram Rendering ──────────────────────────────────────
+
+async function renderMermaid(diagramText) {
+  if (typeof mermaid === 'undefined') {
+    return `<pre class="text-orange-500 bg-orange-50 p-2 rounded">Mermaid not loaded</pre>`;
+  }
+
+  try {
+    const { svg } = await mermaid.render(`mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, diagramText);
+
+    // Parse SVG into a temp DOM element to read the viewBox dimensions
+    const temp = document.createElement('div');
+    temp.innerHTML = svg;
+    const svgEl = temp.querySelector('svg');
+
+    const viewBox = svgEl?.getAttribute('viewBox');
+    // viewBox = "minX minY width height" — we need the width (3rd value)
+    const parts = viewBox?.split(/\s+/);
+    const svgWidth = parts && parts.length >= 3 ? parseFloat(parts[2]) : 800;
+
+    // Keep the SVG at its natural viewBox size, but cap to the prose width.
+    // height follows from the viewBox aspect ratio → no empty whitespace.
+    svgEl?.setAttribute('width', `${Math.round(svgWidth)}px`);
+    svgEl?.removeAttribute('height');
+    svgEl?.setAttribute('style', 'max-width:100%;height:auto;display:block');
+
+    return `<div class="mermaid-diagram flex justify-center">${temp.innerHTML}</div>`;
+  } catch (e) {
+    return `<pre class="text-red-500 bg-red-50 p-2 rounded">Mermaid Error: ${escapeHtml(e.message)}\n\n${escapeHtml(diagramText)}</pre>`;
+  }
 }
 
 /**
@@ -261,7 +322,7 @@ function createMarkdownEditor(containerId, options = {}) {
       previewDiv.classList.remove('hidden');
       toggleBtn.innerHTML = '<span>✏️</span> <span>Edit</span>';
       toggleBtn.classList.add('bg-blue-50', 'border-blue-300', 'text-blue-700');
-      renderMarkdown(textarea.value, previewDiv, { preview: true });
+      renderMarkdown(textarea.value, previewDiv, { preview: true }).catch(() => {});
     } else {
       previewDiv.classList.add('hidden');
       textarea.classList.remove('hidden');
@@ -276,7 +337,7 @@ function createMarkdownEditor(containerId, options = {}) {
     if (isPreview) {
       clearTimeout(updateTimeout);
       updateTimeout = setTimeout(() => {
-        renderMarkdown(textarea.value, previewDiv, { preview: true });
+        renderMarkdown(textarea.value, previewDiv, { preview: true }).catch(() => {});
       }, 300);
     }
     if (options.onValueChange) {

@@ -36,6 +36,14 @@ Beispiel-Antwortformat:
 }
 Achte dabei auf korrektes Escaping von special Characters und Backslash.
 
+Verwende Markdown-Formatierung für bessere Lesbarkeit:
+- **fett** für wichtige Begriffe und Kernaussagen
+- *kursiv* für Betonungen
+- - Listen für Aufzählungen
+- $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX)
+- ```code``` für kurze Code-Schnipsel
+- ```mermaid ... ``` für Mermaid
+
 Bewertungskriterien:
 - Vollstaendigkeit: Wurde alle Aspekte der Aufgabe adressiert?
 - Korrektheit: Sind die Ergebnisse/Argumente richtig?
@@ -80,6 +88,14 @@ Beispiel-Antwortformat:
   "points": 10
 }
 Achte dabei auf korrektes Escaping von special Characters und Backslash.
+
+Verwende Markdown-Formatierung für bessere Lesbarkeit:
+- **fett** für wichtige Begriffe und Kernaussagen
+- *kursiv* für Betonungen
+- - Listen für Aufzählungen
+- $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX)
+- ```code``` für kurze Code-Schnipsel
+- ```mermaid ... ``` für Mermaid
 
 Beruecksichtige bei der Bewertung:
 - Anzahl bestander Tests (public + private)

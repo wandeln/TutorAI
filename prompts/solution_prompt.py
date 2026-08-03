@@ -28,6 +28,7 @@ Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - - Listen für Aufzählungen
 - $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX)
 - ```code``` für kurze Code-Schnipsel
+- ```mermaid ... ``` für Mermaid
 
 Bitte gib auch Bewertungskriterien an um eine faire Bewertung zu ermöglichen. Es können maximal {{max_points}} Punkte erzielt werden.
 """

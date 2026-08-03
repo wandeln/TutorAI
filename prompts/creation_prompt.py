@@ -27,5 +27,6 @@ Regeln:
 - Die Schwierigkeit muss der Vorgabe entsprechen
 - Bei Text-Aufgaben: Beschreibe die Aufgabenstellung. Verwende Markdown-Formatierung (**fett**, *kursiv*, Listen, $Math$, $$Display-Math$$) für bessere Lesbarkeit.
 - Bei Code-Aufgaben: Beschreibe was implementiert werden soll. Verwende $...$ für mathematische Notation.
+- Wenn Graphen zur Beschreibung benätigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
 - Keine Musterlösung, keine Punkte — das kommt später
 """

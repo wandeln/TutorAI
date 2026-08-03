@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 import logging
+import os
+from pathlib import Path
 
 # Logging konfigurieren
 logging.basicConfig(
@@ -19,6 +21,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+import hashlib
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -93,9 +97,34 @@ app = FastAPI(
 # Templates + Static
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-# Static-Files (CSS, JS)
+# ── Static asset caching (Tornado-style) ─────────────────────
+# At startup, hash every file in static/ and build a lookup map.
+# `asset("css/main.css")` → "/static/css/main.css?v=a1b2c3d4"
+# Changing the file content changes the hash → browser fetches fresh.
+
+_static_hashes: dict[str, str] = {}
+
 if (BASE_DIR / "static").exists():
+    for root, _dirs, files in os.walk(BASE_DIR / "static"):
+        for fname in files:
+            fpath = Path(root) / fname
+            rel = fpath.relative_to(BASE_DIR / "static")
+            h = hashlib.sha256(fpath.read_bytes()).hexdigest()[:8]
+            _static_hashes[str(rel).replace("\\", "/")] = h
+
     app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+def _asset(path: str) -> str:
+    """Tornado-style static_url: append content hash as ?v= query param."""
+    key = path.lstrip("/")
+    v = _static_hashes.get(key)
+    if v:
+        return f"/static/{key}?v={v}"
+    return f"/static/{key}"
+
+
+templates.env.globals["asset"] = _asset
 
 # API-Routes
 app.include_router(auth.router)

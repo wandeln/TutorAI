@@ -192,7 +192,7 @@ class LLMService:
         """Konvertiert ein Foto einer handgeschriebenen Notiz mit Formeln in Markdown mit LaTeX.
 
         Nutzt die multimodalen Faehigkeiten des LLM, um das Bild zu analysieren
-        und den enthaltenen Text und die enthaltene(n) Formel(n) als Markdown mit LaTeX-Code zurueckzugeben.
+        und den enthaltenen Text, Graphen und die enthaltene(n) Formel(n) als Markdown mit LaTeX-Code zurueckzugeben.
         """
         client = self._get_client(config)
         model = config.get("model", self.model) if config else self.model
@@ -203,10 +203,10 @@ class LLMService:
         last_error = None
 
         system_prompt = (
-            "Du bist ein Experte fuer das Erkennen von Text und mathematischen Formeln in Bildern. "
-            "Analysiere das Foto und konvertiere den Text und alle sichtbaren Formeln in gueltigen Markdown mit LaTeX-Code. "
-            "Antworte NUR mit Markdown und LaTeX-Code, keine Erklaerungen. "
-            "Nutze $ ... $ fuer inline Math und $$ ... $$ fuer display Math. "
+            "Du bist ein Experte fuer das Erkennen von Text, Graphen und mathematischen Formeln in Bildern. "
+            "Analysiere das Foto und konvertiere den Text und alle sichtbaren Graphen und Formeln in gueltigen Markdown mit Mermaid oder LaTeX-Code. "
+            "Antworte NUR mit Markdown, Mermaid und LaTeX-Code, keine Erklaerungen. "
+            "Nutze ```mermaid ... ``` für Mermaid und $ ... $ fuer inline Math und $$ ... $$ fuer display Math. "
         )
 
         deadline = time.monotonic() + timeout
@@ -241,8 +241,8 @@ class LLMService:
                                     {
                                         "type": "text",
                                         "text": (
-                                            "Konvertiere die Formel(n) in diesem Foto in LaTeX-Code. "
-                                            "Gib NUR den Markdown bzw LaTeX-Code zurueck. "
+                                            "Konvertiere die Formel(n) in diesem Foto in Markdown, Mermaid und LaTeX-Code. "
+                                            "Gib NUR den Markdown, Mermaid bzw LaTeX-Code zurueck. "
                                             "Enthält das Bild keinen Text oder Formeln, gib einen leeren String zurück."
                                         ),
                                     },

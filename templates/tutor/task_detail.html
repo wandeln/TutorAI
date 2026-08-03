@@ -425,8 +425,10 @@ class PrivateTest(unittest.TestCase):
     }
     if (suggestion.description) {
       descEditor.textarea.value = suggestion.description;
-      renderMarkdown(suggestion.description, descEditor.previewDiv, { preview: true });
-      descEditor.toggleBtn.click();
+      (async () => {
+        await renderMarkdown(suggestion.description, descEditor.previewDiv, { preview: true });
+        descEditor.toggleBtn.click();
+      })();
     }
     if (suggestion.max_points) {
       document.querySelector('input[name="max_points"]').value = suggestion.max_points;
@@ -520,8 +522,10 @@ class PrivateTest(unittest.TestCase):
 
         if (generateFields.solution && data.solution) {
           solEditor.textarea.value = data.solution;
-          renderMarkdown(data.solution, solEditor.previewDiv, { preview: true });
-          if (!solEditor.isPreview()) solEditor.toggleBtn.click();
+          (async () => {
+            await renderMarkdown(data.solution, solEditor.previewDiv, { preview: true });
+            if (!solEditor.isPreview()) solEditor.toggleBtn.click();
+          })();
           populated.push("Musterlösung");
         }
 
@@ -570,10 +574,12 @@ class PrivateTest(unittest.TestCase):
         const text = data.solution || "";
 
         solEditor.textarea.value = text;
-        renderMarkdown(text, solEditor.previewDiv, { preview: true });
-        if (!solEditor.isPreview()) {
-          solEditor.toggleBtn.click();
-        }
+        (async () => {
+          await renderMarkdown(text, solEditor.previewDiv, { preview: true });
+          if (!solEditor.isPreview()) {
+            solEditor.toggleBtn.click();
+          }
+        })();
 
         progressDiv.classList.add("hidden");
         btn.disabled = false;

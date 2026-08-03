@@ -305,32 +305,53 @@
       <div id="test-results" class="hidden"></div>
 
       <!-- ─── Feedback (LLM + Tutor) ──────────────────────── -->
-      <div id="feedback-area" class="space-y-3">
+      <div id="feedback-area" class="space-y-4">
         {% if my_submissions %}
           {% for sub in my_submissions %}
-            {% for fb in sub.feedback_list[::-1] %}
-            <div class="feedback-box {% if fb.source == 'llm' %}feedback-llm{% else %}feedback-human{% endif %}">
-              <div class="flex items-center justify-between mb-2">
-                <div class="flex items-center gap-2">
-                  <span class="text-sm font-semibold">
-                    {% if fb.source == 'llm' %}🤖 LLM{% else %}👤 {{ fb.giver_name }}{% endif %}
-                  </span>
-                  <span class="badge {% if fb.points_earned >= task.max_points * 0.5 %}badge-pass{% else %}badge-fail{% endif %}">
-                    {{ fb.points_earned }} / {{ task.max_points }} Punkte
-                  </span>
-                  <span class="text-xs text-gray-400">Versuch {{ sub.attempt_number }}</span>
-                </div>
-                <span class="text-xs text-gray-400">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-              </div>
-              {% if sub.solution or sub.code_solution %}
-              <details class="mb-2">
-                <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
-                <template class="markdown-solution" type="application/json">{% if task.task_type == 'code' %}{{ (sub.code_solution or '') | tojson }}{% else %}{{ (sub.solution or '') | tojson }}{% endif %}</template>
-              </details>
-              {% endif %}
-              <template class="markdown-feedback" type="application/json">{{ (fb.comment or '') | tojson }}</template>
+          <div class="card">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-lg font-semibold text-gray-800">Versuch #{{ sub.attempt_number }}</h3>
+              <span class="text-sm text-gray-500">{{ sub.submitted_at.strftime('%d.%m.%Y %H:%M') }}</span>
             </div>
-            {% endfor %}
+
+            <!-- Solution -->
+            <div class="mb-3">
+              <h4 class="text-sm font-semibold text-gray-600 mb-1">Eingereichte Lösung</h4>
+              {% if task.task_type == 'code' %}
+                <div class="solution-container">
+                  <template class="markdown-solution" type="application/json">{{ (sub.code_solution or '') | tojson }}</template>
+                </div>
+              {% else %}
+                <div class="solution-container">
+                  <template class="markdown-solution" type="application/json">{{ (sub.solution or '') | tojson }}</template>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Feedback entries -->
+            <div class="space-y-2">
+              {% if sub.feedback_list %}
+                {% for fb in sub.feedback_list[::-1] %}
+                <div class="feedback-box {% if fb.source == 'llm' %}feedback-llm{% else %}feedback-human{% endif %}">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-sm font-semibold">
+                        {% if fb.source == 'llm' %}🤖 LLM{% else %}👤 {{ fb.giver_name }}{% endif %}
+                      </span>
+                      <span class="badge {% if fb.points_earned >= task.max_points * 0.5 %}badge-pass{% else %}badge-fail{% endif %}">
+                        {{ fb.points_earned }} / {{ task.max_points }} Punkte
+                      </span>
+                    </div>
+                    <span class="text-xs text-gray-400">{{ fb.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                  </div>
+                  <template class="markdown-feedback" type="application/json">{{ (fb.comment or '') | tojson }}</template>
+                </div>
+                {% endfor %}
+              {% else %}
+                <p class="text-gray-400 text-sm italic">Noch kein Feedback.</p>
+              {% endif %}
+            </div>
+          </div>
           {% endfor %}
         {% endif %}
       </div>
@@ -1027,7 +1048,7 @@
       // Hide progress
       progressDiv.classList.add("hidden");
 
-      // Build feedback box — matching the template style
+      // Build submission card — matching the template style
       const badgeClass = data.points >= {{ task.max_points }} * 0.5 ? 'badge-pass' : 'badge-fail';
 
       const now = new Date();
@@ -1036,37 +1057,49 @@
       let feedbackJson = encodeURIComponent(JSON.stringify(data.comment));
       let solutionJson = encodeURIComponent(JSON.stringify(submittedText));
 
+      let solutionHtml = '';
+      {% if task.task_type == 'code' %}
+      solutionHtml = '<div class="solution-container"><template class="markdown-solution" type="application/json" data-raw="' + solutionJson + '"></template></div>';
+      {% else %}
+      solutionHtml = '<div class="solution-container"><template class="markdown-solution" type="application/json" data-raw="' + solutionJson + '"></template></div>';
+      {% endif %}
+
       let html = `
-        <div class="feedback-box feedback-llm">
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-semibold">🤖 LLM</span>
-              <span class="badge ${badgeClass}">${data.points} / {{ task.max_points }} Punkte</span>
-              <span class="text-xs text-gray-400">Versuch ${attemptNumber}</span>
-            </div>
-            <span class="text-xs text-gray-400">${timeStr}</span>
+        <div class="card">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-semibold text-gray-800">Versuch #${attemptNumber}</h3>
+            <span class="text-sm text-gray-500">${timeStr.replace(' ', ' um ').replace(/^\d{4}-/, '').replace(/-\d{2} /, '.')}</span>
           </div>
-          <details class="mb-2">
-            <summary class="cursor-pointer text-xs font-semibold text-blue-600 hover:text-blue-800">Eingereichte Lösung anzeigen</summary>
-            <template class="markdown-solution" type="application/json" data-raw="${solutionJson}"></template>
-          </details>
-          <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
-      `;
+          <div class="mb-3">
+            <h4 class="text-sm font-semibold text-gray-600 mb-1">Eingereichte Lösung</h4>
+            ${solutionHtml}
+          </div>
+          <div class="space-y-2">
+            <div class="feedback-box feedback-llm">
+              <div class="flex items-center justify-between mb-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold">🤖 LLM</span>
+                  <span class="badge ${badgeClass}">${data.points} / {{ task.max_points }} Punkte</span>
+                </div>
+                <span class="text-xs text-gray-400">${timeStr}</span>
+              </div>
+              <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
+            </div>`;
 
       if (data.remaining_attempts !== undefined && data.remaining_attempts < 999) {
-        html += `<div class="border-t pt-2 mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) moeglich.</div>`;
+        html += `<div class="mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) moeglich.</div>`;
       }
 
-      html += '</div>';
+      html += '</div></div>';
 
       // Prepend to feedback area (neuestes zuerst)
       const feedbackArea = document.getElementById("feedback-area");
       feedbackArea.insertAdjacentHTML('afterbegin', html);
 
-      // Render Markdown in the newly added feedback elements
-      const newFeedbackBox = feedbackArea.firstElementChild;
-      if (newFeedbackBox) {
-        newFeedbackBox.querySelectorAll('template.markdown-feedback[type="application/json"]').forEach(el => {
+      // Render Markdown in the newly added elements
+      const newCard = feedbackArea.firstElementChild;
+      if (newCard) {
+        newCard.querySelectorAll('template.markdown-feedback[type="application/json"]').forEach(el => {
           try {
             const jsonStr = decodeURIComponent(el.getAttribute('data-raw') || '');
             const raw = JSON.parse(jsonStr);
@@ -1078,7 +1111,7 @@
             console.warn('Failed to render feedback markdown:', e, el.getAttribute('data-raw'));
           }
         });
-        newFeedbackBox.querySelectorAll('template.markdown-solution[type="application/json"]').forEach(el => {
+        newCard.querySelectorAll('template.markdown-solution[type="application/json"]').forEach(el => {
           try {
             const jsonStr2 = decodeURIComponent(el.getAttribute('data-raw') || '');
             const raw2 = JSON.parse(jsonStr2);

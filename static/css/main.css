@@ -309,6 +309,51 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Scrollbars — CodeMirror + Markdown Code Blocks
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Shared scrollbar styles for dark code surfaces */
+.CodeMirror,
+.markdown-preview pre {
+  scrollbar-color: #555c69 transparent;
+  scrollbar-width: thin;
+}
+
+.CodeMirror::-webkit-scrollbar,
+.markdown-preview pre::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.CodeMirror::-webkit-scrollbar-thumb,
+.markdown-preview pre::-webkit-scrollbar-thumb {
+  background-color: #555c69;
+  border-radius: 4px;
+}
+
+.CodeMirror::-webkit-scrollbar-thumb:hover,
+.markdown-preview pre::-webkit-scrollbar-thumb:hover {
+  background-color: #6b7280;
+}
+
+.CodeMirror::-webkit-scrollbar-track,
+.markdown-preview pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* CodeMirror-v5 specific scrollbar overlays */
+.CodeMirror-vscrollbar,
+.CodeMirror-hscrollbar {
+  opacity: 0.5;
+}
+
+.CodeMirror-vscrollbar:hover,
+.CodeMirror-hscrollbar:hover {
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Markdown Editor Preview Area
    ═══════════════════════════════════════════════════════════════ */
 

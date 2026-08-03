@@ -10,7 +10,7 @@ oder:
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 import logging
 import os
 from pathlib import Path
@@ -46,6 +46,31 @@ from database.models import (
 from services.auth_service import get_current_user, hash_password, require_course_access
 
 from api import admin, auth, student, tutor, user_settings, course_members
+
+
+def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
+    if not other_scores:
+        return 100
+    below = sum(1 for s in other_scores if s < my_score)
+    equal = sum(1 for s in other_scores if s == my_score)
+    total = len(other_scores)
+    return round((below + 0.5 * equal) / total * 100)
+
+
+def _get_best_score(subs: Sequence[Submission]) -> float:
+    if not subs:
+        return 0.0
+    latest_sub = subs[0]
+    human_points = 0.0
+    llm_points = 0.0
+    override_exists = False
+    for fb in latest_sub.feedback_list:
+        if fb.source == FeedbackSource.HUMAN:
+            human_points = max(human_points, fb.points_earned)
+            override_exists = True
+        else:
+            llm_points = max(llm_points, fb.points_earned)
+    return human_points if override_exists else llm_points
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -857,6 +882,27 @@ async def task_page(
                     llm_points = max(llm_points, fb["points_earned"])
             latest_points = human_points if override_exists else llm_points
 
+        # Perzentil fuer aktuelle Aufgabe berechnen
+        student_members = session.exec(
+            select(UserCourse)
+            .where(UserCourse.course_id == course_id)
+            .where(UserCourse.role_in_course == CourseRole.STUDENT)
+        ).all()
+        other_scores = []
+        for member in student_members:
+            if member.user_id == user.id:
+                continue
+            other_subs = session.exec(
+                select(Submission)
+                .where(Submission.task_id == task.id)
+                .where(Submission.student_id == member.user_id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attrdefined]
+            ).all()
+            other_scores.append(_get_best_score(other_subs))
+        task_percentile = _calculate_percentile(latest_points, other_scores)
+    else:
+        task_percentile = None
+
     return templates.TemplateResponse(
         template,
         {
@@ -894,6 +940,7 @@ async def task_page(
             "my_submissions": my_submissions,
             "latest_points": latest_points,
             "total_attempts": len(my_submissions),
+            "task_percentile": task_percentile,
 
             "LLM_TIMEOUT": LLM_TIMEOUT,
             "prev_task": {"id": prev_task.id, "title": prev_task.title} if prev_task else None,

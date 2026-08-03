@@ -120,9 +120,24 @@
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2.5">
               <div id="points-bar" class="{% if latest_points >= task.max_points * 0.8 %}bg-green-500{% elif latest_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
-                   style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%"></div>
+                   style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%; max-width:100%"></div>
             </div>
           </div>
+
+          <!-- Perzentil -->
+          {% if task_percentile is not none %}
+          <div class="flex justify-between mb-1">
+            <span class="text-gray-600">Perzentil</span>
+            <span class="font-semibold
+              {% if task_percentile >= 80 %}text-green-600
+              {% elif task_percentile >= 50 %}text-blue-600
+              {% elif task_percentile >= 30 %}text-yellow-600
+              {% else %}text-orange-600
+              {% endif %}">
+              {{ task_percentile }}%
+            </span>
+          </div>
+          {% endif %}
 
           <!-- Versuche -->
           {% if task.max_attempts %}
@@ -133,7 +148,7 @@
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2.5">
               <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
-                   style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%"></div>
+                   style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%; max-width:100%"></div>
             </div>
           </div>
           {% else %}
@@ -150,7 +165,7 @@
     </div>
 
     <!-- ─── RIGHT: Solution Area ───────────────────────────────── -->
-    <div class="flex-1 space-y-4">
+    <div class="flex-1 min-w-0 space-y-4">
 
       {% if task.task_type == 'code' %}
         <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->

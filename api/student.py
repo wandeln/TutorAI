@@ -649,10 +649,51 @@ async def get_my_points(
 
         total_points += latest_points
 
+    # Berechne Perzentil im Kurs: Gesamtpunkte aller Studenten vergleichen
+    student_members = session.exec(
+        select(UserCourse)
+        .where(UserCourse.course_id == course_id)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
+    ).all()
+
+    other_total_scores = []
+    for member in student_members:
+        if member.user_id == user.id:
+            continue
+        member_total = 0.0
+        for task in tasks:
+            m_subs = session.exec(
+                select(Submission)
+                .where(Submission.task_id == task.id)
+                .where(Submission.student_id == member.user_id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+            ).all()
+            if m_subs:
+                m_latest = m_subs[0]
+                m_human = 0.0
+                m_llm = 0.0
+                m_override = False
+                for fb in m_latest.feedback_list:
+                    if fb.source == FeedbackSource.HUMAN:
+                        m_human = max(m_human, fb.points_earned)
+                        m_override = True
+                    else:
+                        m_llm = max(m_llm, fb.points_earned)
+                member_total += m_human if m_override else m_llm
+        other_total_scores.append(member_total)
+
+    below = sum(1 for s in other_total_scores if s < total_points)
+    equal = sum(1 for s in other_total_scores if s == total_points)
+    if other_total_scores:
+        course_percentile = round((below + 0.5 * equal) / len(other_total_scores) * 100)
+    else:
+        course_percentile = 100
+
     return {
         "total_points": round(total_points, 1),
         "max_points": max_points,
         "percentage": round(total_points / max_points * 100, 1) if max_points else 0,
+        "course_percentile": course_percentile,
     }
 
 

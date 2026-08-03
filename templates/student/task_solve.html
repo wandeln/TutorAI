@@ -308,7 +308,7 @@
       <div id="feedback-area" class="space-y-4">
         {% if my_submissions %}
           {% for sub in my_submissions %}
-          <div class="card">
+          <div class="card {% if not loop.first %}mt-6 pt-6 border-t-2 border-gray-200{% endif %}">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-lg font-semibold text-gray-800">Versuch #{{ sub.attempt_number }}</h3>
               <span class="text-sm text-gray-500">{{ sub.submitted_at.strftime('%d.%m.%Y %H:%M') }}</span>
@@ -1064,8 +1064,13 @@
       solutionHtml = '<div class="solution-container"><template class="markdown-solution" type="application/json" data-raw="' + solutionJson + '"></template></div>';
       {% endif %}
 
+      // Prepend to feedback area (neuestes zuerst)
+      const feedbackArea = document.getElementById("feedback-area");
+      let hasExisting = feedbackArea.children.length > 0;
+      let cardClass = 'card' + (hasExisting ? ' mt-6 pt-6 border-t-2 border-gray-200' : '');
+
       let html = `
-        <div class="card">
+        <div class="${cardClass}">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-semibold text-gray-800">Versuch #${attemptNumber}</h3>
             <span class="text-sm text-gray-500">${timeStr.replace(' ', ' um ').replace(/^\d{4}-/, '').replace(/-\d{2} /, '.')}</span>
@@ -1092,8 +1097,6 @@
 
       html += '</div></div>';
 
-      // Prepend to feedback area (neuestes zuerst)
-      const feedbackArea = document.getElementById("feedback-area");
       feedbackArea.insertAdjacentHTML('afterbegin', html);
 
       // Render Markdown in the newly added elements

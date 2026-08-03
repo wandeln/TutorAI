@@ -109,19 +109,20 @@
 
       <!-- Score Display -->
       <div class="card">
-        <h2 class="text-sm font-semibold text-gray-800 mb-3">Punktestand</h2>
+        <h2 class="text-sm font-semibold text-gray-800 mb-3">Aktueller Stand</h2>
         <div class="space-y-4 text-sm">
 
           <!-- Punkte -->
           <div id="points-progress">
             <div class="flex justify-between mb-1">
               <span class="text-gray-600">Punkte</span>
-              <span id="points-text" class="font-semibold">
-                0 / {{ max_points }}
+              <span id="points-text" class="font-semibold {% if latest_points >= max_points * 0.8 %}text-green-600{% elif latest_points >= max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                {{ latest_points }} / {{ max_points }}
               </span>
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2.5">
-              <div id="points-bar" class="h-2.5 rounded-full transition-all" style="width: 0%"></div>
+              <div id="points-bar" class="{% if latest_points >= max_points * 0.8 %}bg-green-500{% elif latest_points >= max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
+                   style="width: {{ (latest_points / max_points * 100) if latest_points else 0 }}%"></div>
             </div>
           </div>
 
@@ -237,6 +238,7 @@
     container.innerHTML = '';
     var isCode = data.task.task_type === 'code';
 
+    var subIndex = 0;
     data.submissions.forEach(function(sub) {
       var statusColors = {
         pending: 'bg-yellow-100 text-yellow-800',
@@ -252,7 +254,7 @@
       var statusLabel = statusLabels[sub.status] || sub.status;
 
       var card = document.createElement('div');
-      card.className = 'card';
+      card.className = 'card' + (subIndex > 0 ? ' mt-6 pt-6 border-t-2 border-gray-200' : '');
 
       // Header
       card.innerHTML = '<div class="flex items-center justify-between mb-4">' +
@@ -401,21 +403,23 @@
       card.appendChild(editPanel);
 
       container.appendChild(card);
+      subIndex++;
     });
   }
 
   // ─── Score Display ────────────────────────────────────────────
   function updateScoreDisplay(data) {
     var maxPoints = data.task.max_points;
-    var bestPoints = 0;
+    var latestPoints = 0;
 
-    // Find the best points across all submissions
-    data.submissions.forEach(function(sub) {
+    // Take points from the latest (newest) submission only
+    if (data.submissions.length > 0) {
+      var latestSub = data.submissions[0];  // newest (ordered desc by API)
       var humanPoints = 0;
       var llmPoints = 0;
       var overrideExists = false;
 
-      sub.feedback.forEach(function(fb) {
+      latestSub.feedback.forEach(function(fb) {
         if (fb.source === 'human') {
           humanPoints = Math.max(humanPoints, fb.points_earned);
           overrideExists = true;
@@ -424,11 +428,10 @@
         }
       });
 
-      var subBest = overrideExists ? humanPoints : llmPoints;
-      bestPoints = Math.max(bestPoints, subBest);
-    });
+      latestPoints = overrideExists ? humanPoints : llmPoints;
+    }
 
-    var pct = maxPoints > 0 ? (bestPoints / maxPoints * 100) : 0;
+    var pct = maxPoints > 0 ? (latestPoints / maxPoints * 100) : 0;
 
     // Determine color based on percentage
     var colorClass, barClass;
@@ -445,7 +448,7 @@
 
     // Update points text
     var pointsText = document.getElementById('points-text');
-    pointsText.textContent = bestPoints + ' / ' + maxPoints;
+    pointsText.textContent = latestPoints + ' / ' + maxPoints;
     pointsText.className = 'font-semibold ' + colorClass;
 
     // Update points bar
@@ -486,6 +489,9 @@
         return;
       }
 
+      // Update score from server response
+      updateScoreFromServer(data.latest_points, data.max_points);
+
       showToast('LLM-Bewertung wurde übernommen.', 'success');
       loadData();
     } catch (err) {
@@ -524,10 +530,42 @@
         return;
       }
 
+      // Update score from server response
+      updateScoreFromServer(data.latest_points, data.max_points);
+
       showToast('Tutor-Bewertung gespeichert.', 'success');
       loadData();
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Update score from server response ────────────────────────
+  function updateScoreFromServer(latestPoints, maxPoints) {
+    var pct = maxPoints > 0 ? (latestPoints / maxPoints * 100) : 0;
+
+    var colorClass, barClass;
+    if (pct >= 80) {
+      colorClass = 'text-green-600';
+      barClass = 'bg-green-500';
+    } else if (pct >= 50) {
+      colorClass = 'text-yellow-600';
+      barClass = 'bg-yellow-500';
+    } else {
+      colorClass = 'text-red-600';
+      barClass = 'bg-red-500';
+    }
+
+    var pointsText = document.getElementById('points-text');
+    if (pointsText) {
+      pointsText.textContent = latestPoints + ' / ' + maxPoints;
+      pointsText.className = 'font-semibold ' + colorClass;
+    }
+
+    var pointsBar = document.getElementById('points-bar');
+    if (pointsBar) {
+      pointsBar.style.width = pct + '%';
+      pointsBar.className = barClass + ' h-2.5 rounded-full transition-all';
     }
   }
 

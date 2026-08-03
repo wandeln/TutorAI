@@ -756,6 +756,27 @@ async def add_feedback_to_submission(
     session.commit()
     session.refresh(feedback)
 
+    # Berechne latest_points des Students für diese Aufgabe (wie student.py)
+    student_subs = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task_id)
+        .where(Submission.student_id == submission.student_id)
+        .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+    ).all()
+    latest_points = 0.0
+    if student_subs:
+        latest_sub = student_subs[0]  # newest
+        human_points = 0.0
+        llm_points = 0.0
+        override_exists = False
+        for fb in latest_sub.feedback_list:
+            if fb.source == FeedbackSource.HUMAN:
+                human_points = max(human_points, fb.points_earned)
+                override_exists = True
+            elif fb.source == FeedbackSource.LLM:
+                llm_points = max(llm_points, fb.points_earned)
+        latest_points = human_points if override_exists else llm_points
+
     return {
         "id": feedback.id,
         "source": feedback.source.value,
@@ -763,6 +784,8 @@ async def add_feedback_to_submission(
         "comment": feedback.comment,
         "giver": user.name,
         "created_at": feedback.created_at.isoformat() if feedback.created_at else "",
+        "latest_points": latest_points,
+        "max_points": task.max_points,
     }
 
 

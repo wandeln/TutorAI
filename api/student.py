@@ -400,6 +400,38 @@ async def get_submission_result(
     if task.max_attempts:
         response["remaining_attempts"] = task.max_attempts - total_attempts
 
+    # Gruppen-Durchschnitt: Alle Kursstudenten zählen (ohne Abgabe = 0 Punkte)
+    course_students = session.exec(
+        select(UserCourse)
+        .where(UserCourse.course_id == task.course_id)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
+    ).all()
+    group_scores = []
+    for gm in course_students:
+        gm_subs = session.exec(
+            select(Submission)
+            .where(Submission.task_id == task.id)
+            .where(Submission.student_id == gm.user_id)
+            .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+        ).all()
+        if gm_subs:
+            gm_latest = gm_subs[0]
+            gm_human = 0.0
+            gm_llm = 0.0
+            gm_override = False
+            for fb in gm_latest.feedback_list:
+                if fb.source == FeedbackSource.HUMAN:
+                    gm_human = max(gm_human, fb.points_earned)
+                    gm_override = True
+                else:
+                    gm_llm = max(gm_llm, fb.points_earned)
+            group_scores.append(gm_human if gm_override else gm_llm)
+        else:
+            group_scores.append(0.0)
+    task_group_avg = round(sum(group_scores) / len(group_scores), 1) if group_scores else 0.0
+
+    response["task_group_avg"] = task_group_avg
+
     return response
 
 
@@ -689,11 +721,16 @@ async def get_my_points(
     else:
         course_percentile = 100
 
+    # Gruppen-Durchschnitt: Alle Kursstudenten zählen (ohne Abgabe = 0 Punkte)
+    all_scores = other_total_scores + [total_points]
+    group_avg = round(sum(all_scores) / len(all_scores), 1)
+
     return {
         "total_points": round(total_points, 1),
         "max_points": max_points,
         "percentage": round(total_points / max_points * 100, 1) if max_points else 0,
         "course_percentile": course_percentile,
+        "group_avg": group_avg,
     }
 
 

@@ -900,8 +900,13 @@ async def task_page(
             ).all()
             other_scores.append(_get_best_score(other_subs))
         task_percentile = _calculate_percentile(latest_points, other_scores)
+
+        # Gruppen-Durchschnitt: Alle Kursstudenten zählen (ohne Abgabe = 0 Punkte)
+        all_scores = other_scores + [latest_points]
+        task_group_avg = round(sum(all_scores) / len(all_scores), 1)
     else:
         task_percentile = None
+        task_group_avg = None
 
     return templates.TemplateResponse(
         template,
@@ -941,6 +946,7 @@ async def task_page(
             "latest_points": latest_points,
             "total_attempts": len(my_submissions),
             "task_percentile": task_percentile,
+            "task_group_avg": task_group_avg,
 
             "LLM_TIMEOUT": LLM_TIMEOUT,
             "prev_task": {"id": prev_task.id, "title": prev_task.title} if prev_task else None,

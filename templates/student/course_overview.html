@@ -15,7 +15,7 @@
     <div hx-get="/api/student/courses/{{ course.id }}/my-points"
          hx-trigger="load"
          hx-swap="innerHTML"
-         id="my-points-summary">
+         id="my-points-summary" class="space-y-2">
       <p class="text-gray-500 text-sm">Wird geladen...</p>
     </div>
   </div>
@@ -87,6 +87,15 @@
         else if (percentile >= 50) percentileColor = "text-blue-600";
         else if (percentile >= 30) percentileColor = "text-yellow-600";
 
+        const groupAvg = data.group_avg ?? null;
+        let groupAvgColor = "text-gray-500";
+        if (groupAvg !== null) {
+          const groupPct = data.max_points > 0 ? (groupAvg / data.max_points * 100) : 0;
+          if (groupPct >= 80) groupAvgColor = "text-green-600";
+          else if (groupPct >= 50) groupAvgColor = "text-blue-600";
+          else if (groupPct >= 30) groupAvgColor = "text-yellow-600";
+        }
+
         evt.detail.target.innerHTML = `
           <div class="flex items-center justify-between">
             <div>
@@ -98,7 +107,10 @@
           <div class="mt-2 bg-gray-200 rounded-full h-3">
             <div class="${barColor} h-3 rounded-full transition-all" style="width: ${pct}%; max-width:100%"></div>
           </div>
-          ${percentile !== null ? `<div class="mt-3 flex items-center gap-2 text-sm"><span class="text-gray-500">Perzentil:</span><span class="font-semibold ${percentileColor}">${percentile}%</span></div>` : ''}
+          <div class="flex justify-between mb-1">
+          ${groupAvg !== null ? `<span><span class="text-gray-500">Kurs-Ø: </span><span class="font-semibold ${groupAvgColor}">${groupAvg} / ${data.max_points}</span></span>` : ''}
+            ${percentile !== null ? `<span><span class="text-gray-500">Perzentil: </span><span class="font-semibold ${percentileColor}">${percentile}%</span></span>` : ''}
+          </div>
         `;
       } catch(e) {
         // Already formatted or error

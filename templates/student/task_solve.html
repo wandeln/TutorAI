@@ -42,11 +42,11 @@
   </div>
 
   <!-- Task Navigation -->
-  <div class="flex items-center justify-between mb-6">
+  <div class="flex items-center justify-between mb-6" style="max-height:fit-content">
     {% if prev_task %}
       <a href="/courses/{{ course.id }}/tasks/{{ prev_task.id }}"
          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:-webkit-fill-available">
+                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:stretch">
         <span class="text-lg">←</span>
         <div class="flex flex-col items-start">
           <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
@@ -60,7 +60,7 @@
     {% if next_task %}
       <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}"
          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:-webkit-fill-available">
+                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:stretch">
         <div class="flex flex-col items-end text-right">
           <span class="text-xs text-gray-500">Nächste Aufgabe</span>
           <span class="text-sm font-medium">{{ next_task.title }}</span>
@@ -109,61 +109,76 @@
     <div class="flex-1 min-w-0 space-y-4">
 
         <!-- Meine Ergebnisse -->
-        <div class="card">
-        <h2 class="font-semibold text-gray-800 mb-3">Mein Stand</h2>
-        <div class="space-y-4 text-sm">
+        <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
+            <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
+            <div class="space-y-2 text-sm">
 
-            <!-- Punkte -->
-            <div id="points-progress">
-            <div class="flex justify-between mb-1">
-                <span class="text-gray-600">Punkte</span>
-                <span id="points-text" class="font-semibold {% if latest_points >= task.max_points * 0.8 %}text-green-600{% elif latest_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
-                {{ latest_points }} / {{ task.max_points }}
-                </span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2.5">
-                <div id="points-bar" class="{% if latest_points >= task.max_points * 0.8 %}bg-green-500{% elif latest_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
-                    style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%; max-width:100%"></div>
-            </div>
-            </div>
+                <!-- Punkte -->
+                <div id="points-progress">
+                <div class="flex justify-between mb-1">
+                    <span class="text-gray-600">Punkte</span>
+                    <span id="points-text" class="font-semibold {% if latest_points >= task.max_points * 0.8 %}text-green-600{% elif latest_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                    {{ latest_points }} / {{ task.max_points }}
+                    </span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="points-bar" class="{% if latest_points >= task.max_points * 0.8 %}bg-green-500{% elif latest_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
+                        style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%; max-width:100%"></div>
+                </div>
+                </div>
 
-            <!-- Perzentil -->
-            {% if task_percentile is not none %}
-            <div class="flex justify-between mb-1">
-            <span class="text-gray-600">Perzentil</span>
-            <span class="font-semibold
-                {% if task_percentile >= 80 %}text-green-600
-                {% elif task_percentile >= 50 %}text-blue-600
-                {% elif task_percentile >= 30 %}text-yellow-600
-                {% else %}text-orange-600
-                {% endif %}">
-                {{ task_percentile }}%
-            </span>
-            </div>
-            {% endif %}
+                <!-- Kurs-Durchschnitt und Perzentil -->
+                <div class="flex justify-between mb-1">
+                    {% if task_group_avg is not none %}
+                    <span>
+                    <span class="text-gray-600">Kurs-Ø: </span>
+                    <span id="group-avg-text" class="font-semibold
+                        {% if task_group_avg is not none and task_group_avg >= task.max_points * 0.8 %}text-green-600
+                        {% elif task_group_avg is not none and task_group_avg >= task.max_points * 0.5 %}text-blue-600
+                        {% elif task_group_avg is not none and task_group_avg >= task.max_points * 0.3 %}text-yellow-600
+                        {% else %}text-orange-600
+                        {% endif %}">
+                        {{ task_group_avg }} / {{ task.max_points }}
+                    </span>
+                    </span>
+                    {% endif %}
+                    {% if task_percentile is not none %}
+                    <span>
+                    <span class="text-gray-600">Perzentil: </span>
+                    <span id="percentile-text" class="font-semibold
+                        {% if task_percentile >= 80 %}text-green-600
+                        {% elif task_percentile >= 50 %}text-blue-600
+                        {% elif task_percentile >= 30 %}text-yellow-600
+                        {% else %}text-orange-600
+                        {% endif %}">
+                        {{ task_percentile }}%
+                        </span>
+                    </span>
+                    {% endif %}
+                </div>
 
-            <!-- Versuche -->
-            {% if task.max_attempts %}
-            <div id="attempts-progress">
-            <div class="flex justify-between mb-1">
-                <span class="text-gray-600">Versuche</span>
-                <span id="attempts-text">{{ total_attempts }} / {{ task.max_attempts }}</span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2.5">
-                <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
-                    style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%; max-width:100%"></div>
-            </div>
-            </div>
-            {% else %}
-            <div id="attempts-progress">
-            <div class="flex justify-between mb-1">
-                <span class="text-gray-600">Versuche</span>
-                <span id="attempts-text">{{ total_attempts }}</span>
-            </div>
-            </div>
-            {% endif %}
+                <!-- Versuche -->
+                {% if task.max_attempts %}
+                <div id="attempts-progress">
+                <div class="flex justify-between mb-1">
+                    <span class="text-gray-600">Versuche</span>
+                    <span id="attempts-text">{{ total_attempts }} / {{ task.max_attempts }}</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
+                        style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%; max-width:100%"></div>
+                </div>
+                </div>
+                {% else %}
+                <div id="attempts-progress">
+                <div class="flex justify-between mb-1">
+                    <span class="text-gray-600">Versuche</span>
+                    <span id="attempts-text">{{ total_attempts }}</span>
+                </div>
+                </div>
+                {% endif %}
 
-        </div>
+            </div>
         </div>
 
       {% if task.task_type == 'code' %}
@@ -745,6 +760,20 @@
       }
     } else if (attemptsText) {
       attemptsText.textContent = `${totalAttempts}`;
+    }
+
+    // Update group average
+    const groupAvgRow = document.getElementById('group-avg-row');
+    const groupAvgText = document.getElementById('group-avg-text');
+    if (data.task_group_avg !== undefined && data.task_group_avg !== null) {
+      groupAvgRow.style.display = 'flex';
+      const groupPct = maxPoints > 0 ? (data.task_group_avg / maxPoints * 100) : 0;
+      let colorClass = 'text-orange-600';
+      if (groupPct >= 80) colorClass = 'text-green-600';
+      else if (groupPct >= 50) colorClass = 'text-blue-600';
+      else if (groupPct >= 30) colorClass = 'text-yellow-600';
+      groupAvgText.textContent = `${data.task_group_avg} / ${maxPoints}`;
+      groupAvgText.className = `font-semibold ${colorClass}`;
     }
   }
 

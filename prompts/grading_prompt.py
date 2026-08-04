@@ -107,7 +107,7 @@ Beruecksichtige bei der Bewertung:
 - Verstaendlichkeit (Kommentare, Variablennamen)
 - Die Bewertungskriterien aus der Musterlösung
 
-Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist.
+Begründe in deinem motivierendem Feedback genau, wie die Punktebewertung zustande gekommen ist (insbesondere, wofür es wieviele Punkte Abzug gab).
 Sei nicht zu knauserig bei der Punktevergabe, halte dich aber dennoch an die Bewertungskriterien um fair zu bleiben.
 Sei lieber etwas großzügig und erkläre dafür auf motivierende Art, wie Dinge noch verbessert werden könnten, wenn man ganz penibel wäre.
 """

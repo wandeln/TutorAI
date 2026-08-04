@@ -21,22 +21,20 @@
         'text': 'badge-text',
         'code': 'badge-code'
       } %}
-      <span class="badge text-gray-600">
-        Max. {{ task.max_points }} Punkte
-      </span>
       <span class="px-2 py-0.5 rounded text-xs font-medium
         {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
         {% else %}bg-gray-100 text-gray-600
         {% endif %}" style="align-content: center;">
         {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
       </span>
-      {% if task.max_attempts %}
-      <span class="badge bg-gray-100 text-gray-600">
-        {{ task.max_attempts }} Versuche
+      <span class="badge px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+        {{ latest_points }} /  {{ task.max_points }} Punkte
       </span>
-      {% endif %}
+      <span class="badge px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+        {{ total_attempts }}{% if task.max_attempts %} / {{ task.max_attempts }}{% endif %} Versuche
+      </span>
       {% if task.deadline %}
-      <span class="badge bg-orange-100 text-orange-700">
+      <span class="badge px-2 py-0.5 rounded bg-orange-100 text-orange-700">
         ⏰ Deadline: {{ task.deadline[:10] }}
       </span>
       {% endif %}
@@ -105,67 +103,68 @@
       </div>
       {% endif %}
 
-      <!-- Meine Ergebnisse -->
-      <div class="card">
-        <h2 class="font-semibold text-gray-800 mb-3">Mein Stand</h2>
-        <div class="space-y-4 text-sm">
-
-          <!-- Punkte -->
-          <div id="points-progress">
-            <div class="flex justify-between mb-1">
-              <span class="text-gray-600">Punkte</span>
-              <span id="points-text" class="font-semibold {% if latest_points >= task.max_points * 0.8 %}text-green-600{% elif latest_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
-                {{ latest_points }} / {{ task.max_points }}
-              </span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2.5">
-              <div id="points-bar" class="{% if latest_points >= task.max_points * 0.8 %}bg-green-500{% elif latest_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
-                   style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%; max-width:100%"></div>
-            </div>
-          </div>
-
-          <!-- Perzentil -->
-          {% if task_percentile is not none %}
-          <div class="flex justify-between mb-1">
-            <span class="text-gray-600">Perzentil</span>
-            <span class="font-semibold
-              {% if task_percentile >= 80 %}text-green-600
-              {% elif task_percentile >= 50 %}text-blue-600
-              {% elif task_percentile >= 30 %}text-yellow-600
-              {% else %}text-orange-600
-              {% endif %}">
-              {{ task_percentile }}%
-            </span>
-          </div>
-          {% endif %}
-
-          <!-- Versuche -->
-          {% if task.max_attempts %}
-          <div id="attempts-progress">
-            <div class="flex justify-between mb-1">
-              <span class="text-gray-600">Versuche</span>
-              <span id="attempts-text">{{ total_attempts }} / {{ task.max_attempts }}</span>
-            </div>
-            <div class="w-full bg-gray-200 rounded-full h-2.5">
-              <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
-                   style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%; max-width:100%"></div>
-            </div>
-          </div>
-          {% else %}
-          <div id="attempts-progress">
-            <div class="flex justify-between mb-1">
-              <span class="text-gray-600">Versuche</span>
-              <span id="attempts-text">{{ total_attempts }}</span>
-            </div>
-          </div>
-          {% endif %}
-
-        </div>
-      </div>
     </div>
 
     <!-- ─── RIGHT: Solution Area ───────────────────────────────── -->
     <div class="flex-1 min-w-0 space-y-4">
+
+        <!-- Meine Ergebnisse -->
+        <div class="card">
+        <h2 class="font-semibold text-gray-800 mb-3">Mein Stand</h2>
+        <div class="space-y-4 text-sm">
+
+            <!-- Punkte -->
+            <div id="points-progress">
+            <div class="flex justify-between mb-1">
+                <span class="text-gray-600">Punkte</span>
+                <span id="points-text" class="font-semibold {% if latest_points >= task.max_points * 0.8 %}text-green-600{% elif latest_points >= task.max_points * 0.5 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                {{ latest_points }} / {{ task.max_points }}
+                </span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="points-bar" class="{% if latest_points >= task.max_points * 0.8 %}bg-green-500{% elif latest_points >= task.max_points * 0.5 %}bg-yellow-500{% else %}bg-red-500{% endif %} h-2.5 rounded-full transition-all"
+                    style="width: {{ (latest_points / task.max_points * 100) if latest_points else 0 }}%; max-width:100%"></div>
+            </div>
+            </div>
+
+            <!-- Perzentil -->
+            {% if task_percentile is not none %}
+            <div class="flex justify-between mb-1">
+            <span class="text-gray-600">Perzentil</span>
+            <span class="font-semibold
+                {% if task_percentile >= 80 %}text-green-600
+                {% elif task_percentile >= 50 %}text-blue-600
+                {% elif task_percentile >= 30 %}text-yellow-600
+                {% else %}text-orange-600
+                {% endif %}">
+                {{ task_percentile }}%
+            </span>
+            </div>
+            {% endif %}
+
+            <!-- Versuche -->
+            {% if task.max_attempts %}
+            <div id="attempts-progress">
+            <div class="flex justify-between mb-1">
+                <span class="text-gray-600">Versuche</span>
+                <span id="attempts-text">{{ total_attempts }} / {{ task.max_attempts }}</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="attempts-bar" class="bg-blue-600 h-2.5 rounded-full transition-all"
+                    style="width: {{ (total_attempts / task.max_attempts * 100) if total_attempts else 0 }}%; max-width:100%"></div>
+            </div>
+            </div>
+            {% else %}
+            <div id="attempts-progress">
+            <div class="flex justify-between mb-1">
+                <span class="text-gray-600">Versuche</span>
+                <span id="attempts-text">{{ total_attempts }}</span>
+            </div>
+            </div>
+            {% endif %}
+
+        </div>
+        </div>
 
       {% if task.task_type == 'code' %}
         <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->
@@ -1082,7 +1081,7 @@
       // Prepend to feedback area (neuestes zuerst)
       const feedbackArea = document.getElementById("feedback-area");
       let hasExisting = feedbackArea.children.length > 0;
-      let cardClass = 'card' + (hasExisting ? ' mt-6 pt-6 border-t-2 border-gray-200' : '');
+      let cardClass = 'card' + (hasExisting ? ' mt-6 pt-6 border-b-2 border-gray-200' : '');
 
       let html = `
         <div class="${cardClass}">

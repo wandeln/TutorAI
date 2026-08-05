@@ -938,6 +938,7 @@ async def task_page(
                 "model_solution": task.model_solution if is_tutor else None,
                 "test_code": task.test_code if is_tutor else None,
                 "is_visible": task.is_visible if is_tutor else None,
+                "hints_enabled": task.hints_enabled,
             },
             "is_tutor": is_tutor,
             "is_code": is_code,

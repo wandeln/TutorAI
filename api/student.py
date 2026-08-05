@@ -10,11 +10,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlmodel import Session, select
+from sqlmodel import Session, SQLModel, select
 
 from database.base import get_session
 from database.models import (
-    User, Task, Submission, Feedback,
+    User, Task, Submission, Feedback, HintExchange,
     TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
 )
@@ -144,6 +144,7 @@ async def get_task_detail(
         "deadline": task.deadline,
         "code_template": task.code_template if task.task_type.value == "code" else None,
         "public_test_code": public_test_code,
+        "hints_enabled": task.hints_enabled,
     }
 
 
@@ -771,3 +772,169 @@ async def latex_from_image(
         "latex": result.get("data", {}).get("latex", ""),
         "latency_ms": result.get("latency_ms", 0),
     }
+
+
+# =================================================================
+# SOKRATISCHE HINWEISE (Hints)
+# =================================================================
+
+class HintRequest(SQLModel):
+    question: str
+    current_solution: str = ""
+
+
+@router.post("/tasks/{task_id}/hints")
+async def request_hint(
+    task_id: int,
+    hint_request: HintRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Student fragt einen sokratischen Hinweis bei.
+
+    Das LLM bekommt Kontext (Aufgabenstellung, Musterloesung, aktuelle Loesung,
+    vorherige Submissions mit Feedback, Hinweisverlauf) und antwortet in
+    sokratischer Weise, ohne die Loesung zu verraten.
+    """
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    if not task.hints_enabled:
+        raise HTTPException(403, "Hinweise sind fuer diese Aufgabe deaktiviert.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == task.course_id)
+    ).first()
+
+    if not membership:
+        raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
+
+    # Sammle Hinweise-Verlauf (letzte 5) fuer Kontext
+    hint_history = session.exec(
+        select(HintExchange)
+        .where(HintExchange.task_id == task.id)
+        .where(HintExchange.student_id == user.id)
+        .order_by(HintExchange.created_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    hint_history_text = ""
+    if hint_history:
+        lines = []
+        for i, he in enumerate(hint_history[:5]):
+            lines.append(f"Frage {i+1}: {he.question}")
+            lines.append(f"Antwort {i+1}: {he.llm_response}")
+            lines.append("")
+        hint_history_text = "\n".join(lines)
+
+    # Sammle vorherige Submissions mit Feedback
+    prev_submissions = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task.id)
+        .where(Submission.student_id == user.id)
+        .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    prev_submissions_text = ""
+    if prev_submissions:
+        lines = []
+        for sub in prev_submissions[:5]:
+            solution_text = sub.solution if task.task_type.value == "text" else sub.code_solution
+            lines.append(f"Abgabe #{sub.attempt_number}: {solution_text[:500]}")
+            for fb in sub.feedback_list:
+                lines.append(f"  Feedback: {fb.comment}")
+                lines.append(f"  Punkte: {fb.points_earned}/{task.max_points}")
+            lines.append("")
+        prev_submissions_text = "\n".join(lines)
+
+    # Erstelle HintExchange-Eintrag
+    hint_exchange = HintExchange(
+        task_id=task.id,
+        student_id=user.id,
+        question=hint_request.question,
+        current_solution=hint_request.current_solution,
+    )
+    session.add(hint_exchange)
+    session.commit()
+    session.refresh(hint_exchange)
+
+    # Resolve effektive LLM-Config
+    llm_cfg = get_effective_llm_config(session)
+
+    # Rufe LLM fuer sokratischen Hinweis auf
+    result = await llm_service.generate_socratic_hint(
+        task_description=task.description,
+        model_solution=task.model_solution or "(Keine Musterloesung hintergelegt)",
+        code_template=task.code_template or "",
+        current_solution=hint_request.current_solution,
+        previous_submissions=prev_submissions_text,
+        hint_history=hint_history_text,
+        student_question=hint_request.question,
+        config=llm_cfg,
+    )
+
+    if not result.get("success"):
+        error_msg = result.get("error", "Unbekannter Fehler")
+        hint_exchange.llm_response = f"Fehler beim Generieren des Hinweises: {error_msg}"
+        session.commit()
+        raise HTTPException(500, f"LLM-Fehler: {error_msg}")
+
+    # Speichere LLM-Antwort
+    llm_data = result.get("data", {})
+    hint_text = llm_data.get("hint", "Konnte keinen Hinweis generieren.")
+    hint_exchange.llm_response = hint_text
+    hint_exchange.response_at = datetime.now()
+    session.commit()
+    session.refresh(hint_exchange)
+
+    return {
+        "id": hint_exchange.id,
+        "question": hint_exchange.question,
+        "llm_response": hint_text,
+        "suggestion_type": llm_data.get("suggestion_type", "hint"),
+        "created_at": hint_exchange.created_at.isoformat(),
+        "response_at": hint_exchange.response_at.isoformat() if hint_exchange.response_at else None,
+        "latency_ms": result.get("latency_ms", 0),
+    }
+
+
+@router.get("/tasks/{task_id}/hints")
+async def get_hints(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Lädt den Hinweis-Verlauf fuer eine Aufgabe."""
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == task.course_id)
+    ).first()
+
+    if not membership:
+        raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
+
+    hints = session.exec(
+        select(HintExchange)
+        .where(HintExchange.task_id == task.id)
+        .where(HintExchange.student_id == user.id)
+        .order_by(HintExchange.created_at.asc())  # type: ignore[attr-defined]
+    ).all()
+
+    return [
+        {
+            "id": h.id,
+            "question": h.question,
+            "llm_response": h.llm_response,
+            "current_solution": h.current_solution,
+            "created_at": h.created_at.isoformat(),
+            "response_at": h.response_at.isoformat() if h.response_at else None,
+        }
+        for h in hints
+    ]

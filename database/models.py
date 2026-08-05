@@ -168,6 +168,7 @@ class TaskBase(SQLModel):
     test_code: Optional[str] = Field(default=None)     # Unit-Tests (einziger String mit PublicTest + PrivateTest)
     is_visible: bool = Field(default=True)             # Für Studenten sichtbar
     display_order: int = Field(default=0)              # Anzeigereihenfolge im Kurs
+    hints_enabled: bool = Field(default=True)          # Socratic-Hints fuer Studenten
 
 
 class Task(TaskBase, table=True):
@@ -182,6 +183,7 @@ class Task(TaskBase, table=True):
     course: Course = Relationship(back_populates="tasks")
     creator: User = Relationship(back_populates="created_tasks")
     submissions: List["Submission"] = Relationship(back_populates="task")
+    hint_exchanges: List["HintExchange"] = Relationship(back_populates="task")
 
 
 class TaskCreate(SQLModel):
@@ -197,6 +199,7 @@ class TaskCreate(SQLModel):
     test_code: Optional[str] = Field(default=None)
     is_visible: bool = Field(default=True)
     display_order: int = Field(default=0)
+    hints_enabled: bool = Field(default=True)
 
 
 class TaskRead(TaskBase):
@@ -219,6 +222,47 @@ class TaskUpdate(SQLModel):
     test_code: Optional[str] = None
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
+    hints_enabled: Optional[bool] = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# HINT EXCHANGE (Socratic Hint Dialog)
+# ═══════════════════════════════════════════════════════════════════
+
+class HintExchangeBase(SQLModel):
+    task_id: int = Field(foreign_key="tasks.id")
+    student_id: int = Field(foreign_key="users.id")
+    question: str
+    llm_response: str = Field(default="")
+    current_solution: str = Field(default="")      # Current content in the editor at time of request
+
+
+class HintExchange(HintExchangeBase, table=True):
+    __tablename__ = "hint_exchanges"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=datetime.now)
+    response_at: Optional[datetime] = None          # Timestamp when LLM responded
+
+    # Relationships
+    task: Task = Relationship(back_populates="hint_exchanges")
+
+
+class HintExchangeCreate(SQLModel):
+    task_id: int
+    question: str
+    current_solution: str = Field(default="")
+
+
+class HintExchangeRead(SQLModel):
+    id: int
+    task_id: int
+    student_id: int
+    question: str
+    llm_response: str
+    current_solution: str
+    created_at: datetime
+    response_at: Optional[datetime] = None
 
 
 # ═══════════════════════════════════════════════════════════════════

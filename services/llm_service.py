@@ -21,6 +21,7 @@ from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIM
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
 from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE, CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
+from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,40 @@ class LLMService:
         )
 
         return await self._call_plain(prompt, config=config)
+
+    async def generate_socratic_hint(
+        self,
+        task_description: str,
+        model_solution: str,
+        code_template: str,
+        current_solution: str,
+        previous_submissions: str,
+        hint_history: str,
+        student_question: str,
+        custom_prompt: Optional[str] = None,
+        config: Optional[dict] = None,
+    ):
+        """Generiert einen sokratischen Hinweis fuer einen Studenten.
+
+        Verwendet die Sokratische Methode: Stellt Fragen, gibt gezielte Hinweise,
+        aber verratet niemals die direkte Loesung.
+
+        Returns JSON mit:
+            hint: Markdown-formatierter Text
+            suggestion_type: 'question' | 'hint' | 'encouragement' | 'correction'
+        """
+        prompt = self._render_prompt(
+            custom_prompt or SOCRATIC_HINT_PROMPT_TEMPLATE,
+            task_description=task_description,
+            model_solution=model_solution,
+            code_template=code_template or "(Kein Code-Template)",
+            current_solution=current_solution or "(Noch keine Loesung)",
+            previous_submissions=previous_submissions or "(Keine vorherigen Abgaben)",
+            hint_history=hint_history or "(Dies ist die erste Frage)",
+            student_question=student_question,
+        )
+
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
     async def generate_code_template_and_tests(
         self,

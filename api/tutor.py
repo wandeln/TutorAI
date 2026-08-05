@@ -86,6 +86,7 @@ async def list_tasks(
             "has_tests": bool(t.test_code),
             "submission_count": len(t.submissions),
             "is_visible": t.is_visible,
+            "hints_enabled": t.hints_enabled,
             "display_order": t.display_order,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
@@ -189,6 +190,7 @@ async def get_task(
         "deadline": task.deadline,
         "code_template": task.code_template if task.task_type.value == "code" else None,
         "test_code": task.test_code if is_tutor else None,
+        "hints_enabled": task.hints_enabled,
     }
     
     if is_tutor:
@@ -246,6 +248,7 @@ async def update_task(
     if "code_template" in body: task.code_template = body["code_template"]
     if "test_code" in body: task.test_code = body["test_code"]
     if "is_visible" in body: task.is_visible = body["is_visible"]
+    if "hints_enabled" in body: task.hints_enabled = body["hints_enabled"]
     
     task.updated_at = datetime.now(timezone.utc)
     session.add(task)

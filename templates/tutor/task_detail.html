@@ -72,9 +72,19 @@
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
         </div>
       </div>
+
+      <div class="mt-4 pt-4">
+        <label class="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" name="hints_enabled" value="true"
+                 {% if not task or task.hints_enabled %}checked{% endif %}
+                 class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+          <span class="text-sm font-medium text-gray-700">💡 Hinweise aktivieren</span>
+            <p class="text-xs text-gray-400 ml-2 mt-1">Studenten können gezielte Hinweise bei einem KI-Tutor einholen, ohne die Lösung zu sehen.</p>
+        </label>
+        </div>
     </div>
 
-    <!-- ─── Task Description ───────────────────────────────────── -->
+    <!-- Task Description -->
     <div id="description-editor-container" class="card">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold text-gray-800">Aufgabenstellung</h2>
@@ -626,6 +636,10 @@ class PrivateTest(unittest.TestCase):
     // Visibility - after clicking toggle, title is reversed, so we invert
     const visBtn = document.getElementById("visibility-btn");
     body.is_visible = !visBtn.title.includes('freischalten');
+
+    // Hints enabled - from checkbox
+    const hintsCheckbox = document.querySelector('[name="hints_enabled"]');
+    body.hints_enabled = hintsCheckbox ? hintsCheckbox.checked : true;
 
     const btn = document.getElementById("save-task-btn");
     btn.disabled = true;

@@ -21,12 +21,13 @@ CODETEMPLATE:
 Gib NUR die Lösung selbst aus — keine Einleitung, kein JSON, keine Meta-Kommentare.
 Bei Code: Nur den funktionalen Code.
 Bei Text: Die direkte Antwort/Erläuterung.
+Falls es mehrere korrekte Lösungen geben kann, gehe kurz darauf ein.
 
 Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - **fett** für wichtige Begriffe und Kernaussagen
 - *kursiv* für Betonungen
 - - Listen für Aufzählungen
-- $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX)
+- $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX) ( Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden)
 - ```code``` für kurze Code-Schnipsel
 - ```mermaid ... ``` für Mermaid
 
@@ -62,7 +63,7 @@ Gib deine Antwort als gültiges JSON-Objekt mit folgenden Schlüsseln:
   "public_tests": "...",       // Public unittest-Code (inkl. `import unittest`). Liefere hilfreiche assertion messages für die Studenten in den assert calls (z.B. self.assertEqual(traverse_inorder(None), [], "Hast du den Fall root=None korrekt berücksichtigt?"))
   "private_tests": "..."       // Private unittest-Code (inkl. `import unittest`)
 }
-Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$).
+Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden.
 
 Regeln:
 - Die `code_template` MUSS zur `model_solution` passen — gleiche Signaturen, gleiche Struktur, nur ohne Implementierung.

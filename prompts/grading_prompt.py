@@ -34,7 +34,7 @@ Beispiel-Antwortformat:
   "feedback": "**Gute Lösung overall.** Du hast den Algorithmus korrekt erkannt. Die Formel $f(n) = f(n-1) + f(n-2)$ ist richtig. Allerdings fehlen die **Basisfälle** — fuege $f(0) = 0$ und $f(1) = 1$ hinzu. Ein Tip: Tabelliere die Werte Schritt fur Schritt, das macht den Ansatz deutlicher.",
   "points": 7
 }
-Achte dabei auf korrektes Escaping von special Characters und Backslash.
+Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden.
 
 Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - **fett** für wichtige Begriffe und Kernaussagen
@@ -89,7 +89,7 @@ Beispiel-Antwortformat:
   "feedback": "**3 von 4 Tests bestanden.** Der Algorithmus ist im Kern korrekt. Der fehlende Test scheitert an einem Edge-Case mit leerer Eingabe. Fuege eine **Praefuerung** `if not lst: return 0` am Anfang hinzu. Die Zeitkomplexitaet $O(n)$ ist optimal.",
   "points": 10
 }
-Achte dabei auf korrektes Escaping von special Characters und Backslash.
+Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden.
 
 Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - **fett** für wichtige Begriffe und Kernaussagen

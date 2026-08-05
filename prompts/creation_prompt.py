@@ -19,7 +19,7 @@ Gib als Antwort ein gültiges JSON-Objekt mit EXAKT diesen beiden Feldern:
   "title": "<kurzer, prägnanter Titel>",
   "description": "<vollständige Aufgabenstellung für Studierende>"
 }
-Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$).
+Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden.
 
 Regeln:
 - Der Titel soll klar sein (z.B. „Blatt3-01: Rekursion“)

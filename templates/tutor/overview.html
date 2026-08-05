@@ -16,12 +16,6 @@
       <h1 class="text-2xl font-bold text-gray-900">Punktübersicht</h1>
       <p class="text-sm text-gray-500 mt-1">Klicke auf eine Punktezahl, um die Einreichung zu bewerten.</p>
     </div>
-    <div class="flex gap-3">
-      <button id="export-excel-btn"
-              class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2 text-sm">
-        📊 Excel exportieren
-      </button>
-    </div>
   </div>
 
   <!-- Summary Stats -->
@@ -81,7 +75,59 @@
     </table>
   </div>
 
+  <!-- Action Buttons (unter der Tabelle) -->
+  <div class="flex items-center gap-3 mt-6">
+    <button id="generate-report-btn"
+            class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2 text-sm">
+      📝 Report generieren
+    </button>
+    <button id="export-excel-btn"
+            class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2 text-sm">
+      📊 Excel exportieren
+    </button>
+  </div>
+
 </div>
+
+<!-- Report Modal -->
+<div id="report-modal" class="hidden fixed inset-0 z-[100] flex items-start justify-center bg-black/50 overflow-y-auto" style="padding: 2rem;">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8 flex flex-col" style="max-height: calc(100vh - 4rem);">
+    <!-- Modal Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+      <h2 class="text-xl font-bold text-gray-900">📋 Kurs-Performance-Report</h2>
+      <div class="flex items-center gap-2">
+        <button id="report-copy-btn"
+                class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
+          📋 Kopieren
+        </button>
+        <button id="report-pdf-btn"
+                class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
+          📄 PDF exportieren
+        </button>
+        <button id="report-close-btn"
+                class="text-gray-400 hover:text-gray-600 text-xl leading-none p-1 transition">
+          ✕
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <!-- Loading State -->
+      <div id="report-loading" class="hidden flex flex-col items-center justify-center py-16">
+        <div class="animate-spin text-3xl mb-4">⏳</div>
+        <p class="text-gray-600 font-medium">Report wird generiert...</p>
+        <p class="text-sm text-gray-400 mt-1">Dies kann bis zu einer Minute dauern</p>
+      </div>
+
+      <!-- Report Content -->
+      <div id="report-content" class="hidden">
+        <!-- Wird dynamisch per JS gefüllt -->
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}
@@ -254,9 +300,11 @@
   // ─── Excel Export ───────────────────────────────────────────
   document.getElementById('export-excel-btn').addEventListener('click', async () => {
     const filterText = document.getElementById('filter-input').value;
+    const typeFilter = document.getElementById('type-filter').value;
 
     try {
       const params = new URLSearchParams({ filter_text: filterText });
+      if (typeFilter) params.set('type_filter', typeFilter);
       const res = await fetch('/api/courses/' + courseId + '/export-excel?' + params, {
         method: 'POST',
         credentials: 'same-origin',
@@ -283,6 +331,154 @@
     } catch (err) {
       showToast('Export-Fehler: ' + err.message, 'error');
     }
+  });
+
+  // ─── Report Modal ───────────────────────────────────────────
+  const reportModal = document.getElementById('report-modal');
+  const reportContent = document.getElementById('report-content');
+  const reportLoading = document.getElementById('report-loading');
+  const reportCloseBtn = document.getElementById('report-close-btn');
+
+  function openReportModal() {
+    reportModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeReportModal() {
+    reportModal.classList.add('hidden');
+    document.body.style.overflow = '';
+    reportContent.innerHTML = '';
+  }
+
+  reportCloseBtn.addEventListener('click', closeReportModal);
+
+  // Close on backdrop click
+  reportModal.addEventListener('click', (e) => {
+    if (e.target === reportModal) closeReportModal();
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !reportModal.classList.contains('hidden')) closeReportModal();
+  });
+
+  // Generate report button
+  document.getElementById('generate-report-btn').addEventListener('click', async () => {
+    const filterText = document.getElementById('filter-input').value;
+    const typeFilter = document.getElementById('type-filter').value;
+
+    // Show modal with loading state
+    reportLoading.classList.remove('hidden');
+    reportContent.classList.add('hidden');
+    reportContent.innerHTML = '';
+    openReportModal();
+
+    try {
+      const params = new URLSearchParams({ filter_text: filterText });
+      if (typeFilter) params.set('type_filter', typeFilter);
+
+      const res = await fetch('/api/courses/' + courseId + '/generate-report?' + params, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        reportLoading.classList.add('hidden');
+        reportContent.classList.remove('hidden');
+        reportContent.innerHTML = '<div class="p-4 bg-red-50 border border-red-300 rounded-lg text-red-700">' +
+          '<strong>❌ Fehler</strong><br/>' + (data.detail || 'Report-Generierung fehlgeschlagen.') + '</div>';
+        return;
+      }
+
+      reportLoading.classList.add('hidden');
+      reportContent.classList.remove('hidden');
+
+      // Render markdown with the existing renderMarkdown function
+      await renderMarkdown(data.report, reportContent, { preview: true });
+
+      showToast('Report wurde generiert.', 'success');
+
+    } catch (err) {
+      reportLoading.classList.add('hidden');
+      reportContent.classList.remove('hidden');
+      reportContent.innerHTML = '<div class="p-4 bg-red-50 border border-red-300 rounded-lg text-red-700">' +
+        '<strong>❌ Fehler</strong><br/>' + err.message + '</div>';
+      showToast('Report-Generierung fehlgeschlagen.', 'error');
+    }
+  });
+
+  // ─── Copy report content ──────────────────────────────────────
+  document.getElementById('report-copy-btn').addEventListener('click', () => {
+    const markdownPreview = document.querySelector('#report-content .markdown-preview');
+    if (markdownPreview) {
+      const text = markdownPreview.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Report in die Zwischenablage kopiert.', 'success');
+      }).catch(() => {
+        showToast('Kopieren fehlgeschlagen.', 'error');
+      });
+    } else {
+      showToast('Kein Report zum Kopieren vorhanden.', 'warning');
+    }
+  });
+
+  // ─── PDF Export ───────────────────────────────────────────────
+  document.getElementById('report-pdf-btn').addEventListener('click', () => {
+    const markdownPreview = document.querySelector('#report-content .markdown-preview');
+    if (!markdownPreview) {
+      showToast('Kein Report zum Exportieren vorhanden.', 'warning');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=800,height=900');
+    if (!printWindow) {
+      showToast('Pop-up-Blocker verhindert den Export.', 'error');
+      return;
+    }
+
+    const courseName = '{{ course.name }}';
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="de">
+      <head>
+        <meta charset="UTF-8">
+        <title>Kurs-Report: ${courseName}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; padding: 2cm 2.5cm; }
+          h1 { font-size: 20pt; font-weight: 800; margin-bottom: 12px; color: #1F4E79; border-bottom: 2px solid #1F4E79; padding-bottom: 8px; }
+          h2 { font-size: 15pt; font-weight: 700; margin-top: 20px; margin-bottom: 8px; color: #2E74B5; }
+          h3 { font-size: 12pt; font-weight: 700; margin-top: 14px; margin-bottom: 6px; color: #333; }
+          h4, h5, h6 { font-weight: 700; margin-top: 10px; margin-bottom: 4px; }
+          p { margin-bottom: 8px; }
+          ul, ol { margin-left: 1.5cm; margin-bottom: 8px; }
+          ul { list-style-type: disc; }
+          ul ul { list-style-type: circle; }
+          ol { list-style-type: decimal; }
+          li { margin-bottom: 4px; }
+          code { font-family: 'Consolas', 'Courier New', monospace; font-size: 10pt; background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+          pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; margin-bottom: 10px; font-size: 9pt; }
+          pre code { background: none; padding: 0; }
+          blockquote { border-left: 3px solid #2E74B5; padding: 6px 12px; margin: 8px 0; background: #f0f6fc; }
+          hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+          th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+          th { background: #2E74B5; color: white; font-weight: 700; }
+          @media print { body { padding: 1.5cm 2cm; } }
+        </style>
+      </head>
+      <body>
+        ${markdownPreview.innerHTML}
+        <script>
+          window.onload = function() { window.print(); };
+        <\/script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    showToast('Print-Dialog wurde geöffnet. Wähle "Als PDF speichern".', 'success');
   });
 
   // ─── Initial Load ───────────────────────────────────────────

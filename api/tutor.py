@@ -20,6 +20,7 @@ from database.models import (
     Feedback,
     FeedbackSource,
     GlobalUserRole,
+    HintExchange,
     Submission,
     SubmissionStatus,
     Task,
@@ -877,6 +878,7 @@ async def export_excel(
 
     # Query-Parameter
     filter_text = request.query_params.get("filter_text", "").strip()
+    type_filter = request.query_params.get("type_filter", "").strip()
 
     # Alle sichtbaren Aufgaben des Kurses
     tasks = list(session.exec(
@@ -889,6 +891,8 @@ async def export_excel(
     # Filter nach Suchbegriff
     if filter_text:
         tasks = [t for t in tasks if filter_text.lower() in t.title.lower()]
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type.value == type_filter]
 
     # Alle Studenten des Kurses
     memberships = session.exec(
@@ -941,3 +945,156 @@ async def export_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KURS-PERFORMANCE-REPORT (LLM)
+# ═══════════════════════════════════════════════════════════════════
+
+@router.post("/courses/{course_id}/generate-report")
+async def generate_course_report(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Generiert einen detaillierten Performance-Report für den Kurs via LLM.
+
+    Sammelt alle Daten der gefilterten Aufgaben (Aufgaben, Submissions, Feedback,
+    Hinweise) und lässt das LLM einen strukturierten Markdown-Report erstellen.
+    """
+    user, _ = user_and_course
+
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    # Filter aus Query-Parametern (identisch zu get_course_overview)
+    filter_text = request.query_params.get("filter_text", "").strip()
+    type_filter = request.query_params.get("type_filter", "").strip()
+
+    # Alle sichtbaren Aufgaben des Kurses
+    tasks = list(session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+    ).all())
+
+    if filter_text:
+        tasks = [t for t in tasks if filter_text.lower() in t.title.lower()]
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type.value == type_filter]
+
+    if not tasks:
+        raise HTTPException(400, "Keine Aufgaben gefunden. Passe den Filter an.")
+
+    # Alle Studenten des Kurses
+    memberships = session.exec(
+        select(UserCourse)
+        .where(UserCourse.course_id == course_id)
+        .where(UserCourse.role_in_course == CourseRole.STUDENT)
+    ).all()
+    students = [m.user for m in memberships]
+
+    # ── Daten für das LLM sammeln ──────────────────────────────
+
+    # Aufgaben-Informationen formatieren
+    tasks_lines = []
+    for t in tasks:
+        tasks_lines.append(f"- **{t.title}** ({t.task_type.value}) — {t.max_points} Punkte, Max. Versuche: {t.max_attempts or 'unlimitiert'}")
+        tasks_lines.append(f"  Aufgabenstellung: {t.description[:500]}")
+        if t.model_solution:
+            tasks_lines.append(f"  Musterlösung: {t.model_solution[:500]}")
+        tasks_lines.append("")
+    tasks_data = "\n".join(tasks_lines)
+
+    # Studentendaten formatieren (Submissions + Feedback + Hinweise)
+    students_lines = []
+    for student in students:
+        students_lines.append(f"### {student.name} ({student.username})")
+
+        has_submissions = False
+        for task in tasks:
+            # Alle Submissions für diesen Student bei dieser Aufgabe
+            subs = session.exec(
+                select(Submission)
+                .where(Submission.task_id == task.id)
+                .where(Submission.student_id == student.id)
+                .order_by(Submission.submitted_at.asc())  # type: ignore[attr-defined]
+            ).all()
+
+            if not subs:
+                continue
+
+            has_submissions = True
+            best_points = 0.0
+            total_attempts = len(subs)
+            latest_sub = subs[-1]
+
+            # Punkte aus Feedback sammeln
+            for fb in latest_sub.feedback_list:
+                if fb.source == FeedbackSource.HUMAN:
+                    best_points = max(best_points, fb.points_earned)
+                else:
+                    best_points = max(best_points, fb.points_earned)
+
+            # Solve-Zeiten
+            solve_times = [s.solve_time_seconds for s in subs if s.solve_time_seconds > 0]
+            avg_time = sum(solve_times) / len(solve_times) if solve_times else 0
+            max_time = max(solve_times) if solve_times else 0
+
+            students_lines.append("")
+            students_lines.append(f"- **{task.title}**:")
+            students_lines.append(f"  Punkte: {best_points}/{task.max_points}, Versuche: {total_attempts}")
+            if solve_times:
+                students_lines.append(f"  Bearbeitungsdauer: Ø {avg_time/60:.1f}min, Max {max_time/60:.1f}min")
+
+            # Feedback-Kommentare der letzten Submission
+            for fb in latest_sub.feedback_list:
+                source_label = "LLM" if fb.source == FeedbackSource.LLM else "Tutor"
+                fb_comment = fb.comment[:300] if fb.comment else "(keinen Kommentar)"
+                students_lines.append(f"  [{source_label}]: {fb_comment}")
+
+            # Hinweis-Anfragen für diese Aufgabe
+            hints = session.exec(
+                select(HintExchange)
+                .where(HintExchange.task_id == task.id)
+                .where(HintExchange.student_id == student.id)
+            ).all()
+            if hints:
+                students_lines.append(f"  Hinweise angefragt: {len(hints)} mal")
+                for h in hints[:3]:
+                    students_lines.append(f"    Frage: {h.question[:200]}")
+                    students_lines.append(f"    Antwort: {h.llm_response[:200]}")
+
+        if not has_submissions:
+            students_lines.append("  **Keine Einreichungen**")
+
+        students_lines.append("")
+
+    students_data = "\n".join(students_lines)
+
+    # LLM-Config ermitteln
+    llm_config = get_effective_llm_config(session, course_id)
+
+    # Report generieren
+    logger.info(f"Generate course report for {course.name}: {len(tasks)} tasks, {len(students)} students")
+    result = await llm_service.generate_course_report(
+        course_name=course.name,
+        tasks_data=tasks_data,
+        students_data=students_data,
+        config=llm_config,
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            500,
+            f"Report-Generierung fehlgeschlagen: {result.get('error', 'Unbekannter Fehler')}",
+        )
+
+    return {
+        "success": True,
+        "report": result["data"]["report"],
+        "latency_ms": result["latency_ms"],
+    }

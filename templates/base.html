@@ -88,7 +88,7 @@
 <body class="bg-gray-50 min-h-screen flex flex-col">
 
   <!-- ─── Navigation ──────────────────────────────────────────── -->
-  <nav class="sticky top-0 z-50 bg-blue-700 text-white shadow-lg">
+  <nav class="sticky top-0 z-50 bg-blue-700 text-white shadow-lg" style="overflow-x:auto;scrollbar-width:none">
     <div class="container mx-auto px-4 py-3 flex items-center justify-between">
 
       <!-- Logo / Home -->
@@ -170,7 +170,7 @@
         </select>
         {% endif %}
 
-        <a href="/settings" class="flex items-center gap-2 text-sm hover:opacity-80 transition">
+        <a href="/settings" class="flex items-center justify-center gap-2 text-sm hover:opacity-80 transition">
           <span>👤</span>
           <span>{{ current_user.name }}</span>
           <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
@@ -189,7 +189,7 @@
           hx-post="/api/auth/logout"
           hx-swap="none"
           hx-on::after-request="window.location.href = '/login'"
-          class="text-blue-200 hover:text-white transition text-sm"
+          class="text-blue-200 hover:text-white transition text-sm w-full"
         >
           🔑 Abmelden
         </button>

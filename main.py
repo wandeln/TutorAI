@@ -38,6 +38,7 @@ from database.models import (
     CourseRole,
     FeedbackSource,
     GlobalUserRole,
+    HintExchange,
     Task,
     User,
     UserCourse,
@@ -1077,6 +1078,22 @@ async def submission_review_page(
         task.task_type.value, task.task_type.value
     )
 
+    # Load hints for this student + task
+    hints = session.exec(
+        select(HintExchange)
+        .where(HintExchange.task_id == task_id)
+        .where(HintExchange.student_id == student_id)
+        .order_by(HintExchange.created_at.asc())
+    ).all()
+    hints_data = [
+        {
+            "question": h.question,
+            "llm_response": h.llm_response,
+            "created_at": h.created_at.isoformat(),
+        }
+        for h in hints
+    ]
+
     return templates.TemplateResponse(
         "tutor/submission_review.html",
         {
@@ -1106,6 +1123,8 @@ async def submission_review_page(
             },
             "latest_points": latest_points,
             "total_attempts": len(student_subs),
+            "hints": hints_data,
+            "hints_enabled": task.hints_enabled,
             "prev_task": {"id": prev_task_obj.id, "title": prev_task_obj.title} if prev_task_obj else None,
             "next_task": {"id": next_task_obj.id, "title": next_task_obj.title} if next_task_obj else None,
         },

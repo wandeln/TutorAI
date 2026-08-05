@@ -416,7 +416,7 @@ class LLMService:
                     continue
 
                 try:
-                    result = json.loads(content.replace('\\','\\\\'))
+                    result = json.loads(content)#.replace('\\','\\\\'))
                 except json.JSONDecodeError:
                     # Fallback: JSON aus freiem Text extrahieren
                     result = self._extract_json(content)

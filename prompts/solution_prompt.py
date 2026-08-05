@@ -62,7 +62,7 @@ Gib deine Antwort als gültiges JSON-Objekt mit folgenden Schlüsseln:
   "public_tests": "...",       // Public unittest-Code (inkl. `import unittest`). Liefere hilfreiche assertion messages für die Studenten in den assert calls (z.B. self.assertEqual(traverse_inorder(None), [], "Hast du den Fall root=None korrekt berücksichtigt?"))
   "private_tests": "..."       // Private unittest-Code (inkl. `import unittest`)
 }
-Achte dabei auf korrektes Escaping von special Characters und Backslash.
+Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$).
 
 Regeln:
 - Die `code_template` MUSS zur `model_solution` passen — gleiche Signaturen, gleiche Struktur, nur ohne Implementierung.

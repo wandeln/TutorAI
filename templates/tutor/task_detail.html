@@ -104,11 +104,7 @@
             <div id="ai-progress-bar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
           </div>
         </div>
-        <div id="ai-suggestion-result" class="hidden text-sm text-gray-700 whitespace-pre-wrap mt-3 p-3 bg-white rounded border border-purple-200"></div>
-        <button type="button" id="use-suggestion-btn"
-                class="hidden mt-2 bg-green-600 text-white px-4 py-1.5 rounded text-sm hover:bg-green-700 transition font-medium">
-          ✓ Vorschlag in Formular übernehmen
-        </button>
+
       </div>
 
       <textarea id="description-textarea" name="description" required rows="8"
@@ -332,7 +328,6 @@ class PrivateTest(unittest.TestCase):
   })();
 
   // ─── AI Suggestion Panel ────────────────────────────────────
-  let aiSuggestionData = null;
   let aiTimerInterval = null;
 
   const LLM_TIMEOUT = {{ LLM_TIMEOUT }};
@@ -352,14 +347,10 @@ class PrivateTest(unittest.TestCase):
     const description = descEditor.textarea.value;
 
     const progressDiv = document.getElementById("ai-suggestion-progress");
-    const resultDiv = document.getElementById("ai-suggestion-result");
-    const useBtn = document.getElementById("use-suggestion-btn");
     const timerSpan = document.getElementById("ai-timer");
     const progressBar = document.getElementById("ai-progress-bar");
 
     progressDiv.classList.remove("hidden");
-    resultDiv.classList.add("hidden");
-    useBtn.classList.add("hidden");
 
     let elapsed = 0;
     if (aiTimerInterval) clearInterval(aiTimerInterval);
@@ -393,21 +384,25 @@ class PrivateTest(unittest.TestCase):
         return;
       }
 
-      aiSuggestionData = data;
       const suggestion = data.suggestion || data;
 
-      let text = "";
-      if (typeof suggestion === "object") {
-        for (const [k, v] of Object.entries(suggestion)) {
-          text += k + ": " + v + "\n";
-        }
-      } else {
-        text = suggestion;
+      // Directly populate form fields (like LLM solution does)
+      if (suggestion.title) {
+        document.querySelector('input[name="title"]').value = suggestion.title;
       }
-      resultDiv.textContent = text;
-      resultDiv.classList.remove("hidden");
-      useBtn.classList.remove("hidden");
+      if (suggestion.description) {
+        descEditor.textarea.value = suggestion.description;
+        (async () => {
+          await renderMarkdown(suggestion.description, descEditor.previewDiv, { preview: true });
+          descEditor.toggleBtn.click();
+        })();
+      }
+      if (suggestion.max_points) {
+        document.querySelector('input[name="max_points"]').value = suggestion.max_points;
+      }
+
       progressDiv.classList.add("hidden");
+      showToast("Vorschlag übernommen!", "success");
 
     } catch (err) {
       clearInterval(aiTimerInterval);
@@ -416,26 +411,7 @@ class PrivateTest(unittest.TestCase):
     }
   });
 
-  document.getElementById("use-suggestion-btn").addEventListener("click", () => {
-    if (!aiSuggestionData) return;
-    const suggestion = aiSuggestionData.suggestion || aiSuggestionData;
 
-    if (suggestion.title) {
-      document.querySelector('input[name="title"]').value = suggestion.title;
-    }
-    if (suggestion.description) {
-      descEditor.textarea.value = suggestion.description;
-      (async () => {
-        await renderMarkdown(suggestion.description, descEditor.previewDiv, { preview: true });
-        descEditor.toggleBtn.click();
-      })();
-    }
-    if (suggestion.max_points) {
-      document.querySelector('input[name="max_points"]').value = suggestion.max_points;
-    }
-
-    showToast("Vorschlag übernommen!", "success");
-  });
 
   // ─── AI Model Solution Panel ────────────────────────────────
   let solutionTimerInterval = null;

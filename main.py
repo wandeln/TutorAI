@@ -867,6 +867,7 @@ async def task_page(
                 "attempt_number": sub.attempt_number,
                 "submitted_at": sub.submitted_at,
                 "status": sub.status.value,
+                "solve_time_seconds": sub.solve_time_seconds,
                 "feedback_list": feedbacks,
             })
         if my_submissions:

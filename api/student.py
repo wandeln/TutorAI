@@ -215,6 +215,7 @@ async def submit_solution(
         solution=body.get("solution", ""),
         code_solution=body.get("code_solution", ""),
         attempt_number=len(existing_subs) + 1,
+        solve_time_seconds=body.get("solve_time_seconds", 0.0),
         status=SubmissionStatus.PENDING,
     )
 

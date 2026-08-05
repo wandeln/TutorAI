@@ -275,6 +275,7 @@ class SubmissionBase(SQLModel):
     solution: str = Field(default="")          # Für Text-Aufgaben
     code_solution: str = Field(default="")     # Für Code-Aufgaben
     attempt_number: int = Field(default=1)
+    solve_time_seconds: float = Field(default=0.0)  # Zeit in Sekunden bis zum Einreichen
 
 
 class Submission(SubmissionBase, table=True):
@@ -294,12 +295,14 @@ class SubmissionCreate(SQLModel):
     task_id: int
     solution: str = Field(default="")
     code_solution: str = Field(default="")
+    solve_time_seconds: float = Field(default=0.0)
 
 
 class SubmissionRead(SubmissionBase):
     id: int
     submitted_at: datetime
     status: SubmissionStatus
+    solve_time_seconds: float = Field(default=0.0)
     feedback_list: List["FeedbackRead"] = []
 
 

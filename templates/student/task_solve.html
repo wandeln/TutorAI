@@ -212,7 +212,10 @@
       {% if task.task_type == 'code' %}
         <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->
         <div class="card">
-          <h2 class="font-semibold text-gray-800 mb-3">Deine Lösung</h2>
+          <h2 class="font-semibold text-gray-800 mb-3 flex items-baseline gap-2">
+            Deine Lösung
+            <span id="solve-timer" class="text-sm font-mono text-blue-600 ml-auto tabular-nums">00:00</span>
+          </h2>
 
           <!-- Code-Editor -->
           <textarea id="code-editor"
@@ -279,6 +282,7 @@
         <div id="text-editor-container" class="card">
           <div class="flex items-center justify-between mb-3">
             <h2 class="font-semibold text-gray-800">Deine Lösung</h2>
+            <span id="solve-timer" class="text-sm font-mono text-blue-600 tabular-nums">00:00</span>
           </div>
           <textarea id="text-solution"
                     class="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -370,7 +374,12 @@
           <div class="card {% if not loop.first %}mt-6 pt-6 border-t-2 border-gray-200{% endif %}">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-lg font-semibold text-gray-800">Versuch #{{ sub.attempt_number }}</h3>
-              <span class="text-sm text-gray-500">{{ sub.submitted_at.strftime('%d.%m.%Y %H:%M') }}</span>
+              <div class="flex items-center gap-3">
+                {% if sub.solve_time_seconds and sub.solve_time_seconds > 0 %}
+                <span class="text-sm font-mono text-blue-600 tabular-nums">🕐 {{ (sub.solve_time_seconds // 60) | int }}:{{ '%02d' | format(sub.solve_time_seconds | int % 60) }}</span>
+                {% endif %}
+                <span class="text-sm text-gray-500">{{ sub.submitted_at.strftime('%d.%m.%Y %H:%M') }}</span>
+              </div>
             </div>
 
             <!-- Solution -->
@@ -457,6 +466,30 @@
     div.textContent = text;
     return div.innerHTML;
   }
+
+  // ─── Solve timer (measures time to solve the task) ─────────
+  const solveStartTimeRef = [Date.now()];
+  let solveTimerInterval = null;
+  function getSolveTime() {
+    return (Date.now() - solveStartTimeRef[0]) / 1000;
+  }
+  function formatSolveTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+  function updateSolveTimer() {
+    const el = document.getElementById('solve-timer');
+    if (el) el.textContent = '🕐 ' + formatSolveTime(getSolveTime());
+  }
+  function resetSolveTimer() {
+    solveStartTimeRef[0] = Date.now();
+    if (solveTimerInterval) clearInterval(solveTimerInterval);
+    solveTimerInterval = setInterval(updateSolveTimer, 1000);
+    updateSolveTimer();
+  }
+  solveTimerInterval = setInterval(updateSolveTimer, 1000);
+  updateSolveTimer();
 
 
   // ─── Helper: analyse Navbar height ──────────────────────────
@@ -1069,6 +1102,13 @@
 
     btn.disabled = true;
 
+    // Freeze solve timer on submit
+    const solvedTime = getSolveTime();
+    if (solveTimerInterval) clearInterval(solveTimerInterval);
+    const solveTimerEl = document.getElementById('solve-timer');
+    if (solveTimerEl) solveTimerEl.textContent = '🕐 ' + formatSolveTime(solvedTime);
+    body.solve_time_seconds = solvedTime;
+
     // Show progress bar
     progressDiv.classList.remove("hidden");
     let elapsed = 0;
@@ -1100,6 +1140,7 @@
       if (!res.ok) {
         clearInterval(gradingTimerInterval);
         progressDiv.classList.add("hidden");
+        resetSolveTimer();
         showToast(submitData.detail || "Fehler", "error");
         btn.disabled = false;
         return;
@@ -1136,6 +1177,7 @@
 
       if (!data || (data.status !== "graded" && data.status !== "error" && data.status !== "overridden")) {
         progressDiv.classList.add("hidden");
+        resetSolveTimer();
         showToast("Grading Timeout — bitte versuche es spaeter erneut.", "error");
         btn.disabled = false;
         return;
@@ -1143,6 +1185,7 @@
 
       if (data.status === "error") {
         progressDiv.classList.add("hidden");
+        resetSolveTimer();
         showToast(data.comment || data.message || "Grading-Fehler — bitte versuche es erneut.", "error");
         btn.disabled = false;
         return;
@@ -1151,11 +1194,15 @@
       // Hide progress
       progressDiv.classList.add("hidden");
 
-      // Build submission card — matching the template style
+      // Reset solve timer for next attempt
+      resetSolveTimer();
+
+      // Build submission card
       const badgeClass = data.points >= {{ task.max_points }} * 0.5 ? 'badge-pass' : 'badge-fail';
 
       const now = new Date();
-      const timeStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      const timeDisplay = String(now.getDate()).padStart(2,'0') + '.' + String(now.getMonth()+1).padStart(2,'0') + '.' + now.getFullYear() + ' um ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+      const timeShort = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
 
       let feedbackJson = encodeURIComponent(JSON.stringify(data.comment));
       let solutionJson = encodeURIComponent(JSON.stringify(submittedText));
@@ -1167,6 +1214,14 @@
       solutionHtml = '<div class="solution-container"><template class="markdown-solution" type="application/json" data-raw="' + solutionJson + '"></template></div>';
       {% endif %}
 
+      // Format solve time for display
+      let solveTimeDisplay = '';
+      if (solvedTime > 0) {
+        const sm = Math.floor(solvedTime / 60);
+        const ss = Math.floor(solvedTime % 60);
+        solveTimeDisplay = '<span class="text-sm font-mono text-blue-600 tabular-nums">🕐 ' + String(sm).padStart(2, '0') + ':' + String(ss).padStart(2, '0') + '</span>';
+      }
+
       // Prepend to feedback area (neuestes zuerst)
       const feedbackArea = document.getElementById("feedback-area");
       let hasExisting = feedbackArea.children.length > 0;
@@ -1176,7 +1231,10 @@
         <div class="${cardClass}">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-semibold text-gray-800">Versuch #${attemptNumber}</h3>
-            <span class="text-sm text-gray-500">${timeStr.replace(' ', ' um ').replace(/^\d{4}-/, '').replace(/-\d{2} /, '.')}</span>
+            <div class="flex items-center gap-3">
+              ${solveTimeDisplay}
+              <span class="text-sm text-gray-500">${timeDisplay}</span>
+            </div>
           </div>
           <div class="mb-3">
             <h4 class="text-sm font-semibold text-gray-600 mb-1">Eingereichte Lösung</h4>
@@ -1189,7 +1247,7 @@
                   <span class="text-sm font-semibold">🤖 LLM</span>
                   <span class="badge ${badgeClass}">${data.points} / {{ task.max_points }} Punkte</span>
                 </div>
-                <span class="text-xs text-gray-400">${timeStr}</span>
+                <span class="text-xs text-gray-400">${timeShort}</span>
               </div>
               <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
             </div>`;

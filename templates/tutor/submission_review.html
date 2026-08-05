@@ -345,7 +345,13 @@
       // Student solution
       var solSection = document.createElement('div');
       solSection.className = 'mb-4';
-      solSection.innerHTML = '<h4 class="text-sm font-semibold text-gray-600 mb-2">Lösung des Students</h4>';
+      var timeHtml = '';
+      if (sub.solve_time_seconds && sub.solve_time_seconds > 0) {
+        var m = Math.floor(sub.solve_time_seconds / 60);
+        var s = Math.floor(sub.solve_time_seconds % 60);
+        timeHtml = ' <span class="text-xs font-mono text-blue-600 ml-auto tabular-nums">🕐 ' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '</span>';
+      }
+      solSection.innerHTML = '<h4 class="text-sm font-semibold text-gray-600 mb-2 flex items-baseline gap-2">Lösung des Students' + timeHtml + '</h4>';
 
       var solContainer = document.createElement('div');
       solContainer.className = 'solution-container';

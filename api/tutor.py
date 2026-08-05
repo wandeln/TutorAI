@@ -741,6 +741,7 @@ async def get_student_submissions(
             "attempt_number": sub.attempt_number,
             "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else "",
             "status": sub.status.value,
+            "solve_time_seconds": sub.solve_time_seconds,
             "feedback": feedback,
         })
 

@@ -130,7 +130,7 @@
                 <!-- Kurs-Durchschnitt und Perzentil -->
                 <div class="flex justify-between mb-1">
                     {% if task_group_avg is not none %}
-                    <span>
+                    <span id="group-avg-row">
                     <span class="text-gray-600">Kurs-Ø: </span>
                     <span id="group-avg-text" class="font-semibold
                         {% if task_group_avg is not none and task_group_avg >= task.max_points * 0.8 %}text-green-600
@@ -767,7 +767,7 @@
     // Update group average
     const groupAvgRow = document.getElementById('group-avg-row');
     const groupAvgText = document.getElementById('group-avg-text');
-    if (data.task_group_avg !== undefined && data.task_group_avg !== null) {
+    if (data.task_group_avg !== undefined && data.task_group_avg !== null && groupAvgRow) {
       groupAvgRow.style.display = 'flex';
       const groupPct = maxPoints > 0 ? (data.task_group_avg / maxPoints * 100) : 0;
       let colorClass = 'text-orange-600';

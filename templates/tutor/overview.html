@@ -96,10 +96,6 @@
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
       <h2 class="text-xl font-bold text-gray-900">📋 Kurs-Performance-Report</h2>
       <div class="flex items-center gap-2">
-        <button id="report-copy-btn"
-                class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
-          📋 Kopieren
-        </button>
         <button id="report-pdf-btn"
                 class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
           📄 PDF exportieren
@@ -406,21 +402,6 @@
       reportContent.innerHTML = '<div class="p-4 bg-red-50 border border-red-300 rounded-lg text-red-700">' +
         '<strong>❌ Fehler</strong><br/>' + err.message + '</div>';
       showToast('Report-Generierung fehlgeschlagen.', 'error');
-    }
-  });
-
-  // ─── Copy report content ──────────────────────────────────────
-  document.getElementById('report-copy-btn').addEventListener('click', () => {
-    const markdownPreview = document.querySelector('#report-content .markdown-preview');
-    if (markdownPreview) {
-      const text = markdownPreview.innerText;
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Report in die Zwischenablage kopiert.', 'success');
-      }).catch(() => {
-        showToast('Kopieren fehlgeschlagen.', 'error');
-      });
-    } else {
-      showToast('Kein Report zum Kopieren vorhanden.', 'warning');
     }
   });
 

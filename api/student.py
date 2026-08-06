@@ -5,6 +5,7 @@ Rolle: Student (im Kurs)
 """
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/api/student", tags=["Student"])
 grading_service = GradingService()
 sandbox_runner = SandboxedRunner()
 llm_service = LLMService()
+logger = logging.getLogger(__name__)
 
 
 # Helper: Extrahiere PublicTest-Klasse aus test_code-String
@@ -639,10 +641,11 @@ async def get_my_submissions(
 @router.get("/courses/{course_id}/my-points")
 async def get_my_points(
     course_id: int,
+    request: Request,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Punkteübersicht für alle Aufgaben im Kurs."""
+    """Punkteübersicht und Aufgabenliste für alle (gefilterten) Aufgaben im Kurs."""
     membership = session.exec(
         select(UserCourse)
         .where(UserCourse.user_id == user.id)
@@ -652,12 +655,30 @@ async def get_my_points(
     if not membership:
         raise HTTPException(403, "Kein Zugriff.")
 
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    # Filter aus Query-Parametern
+    filter_text = request.query_params.get("filter_text", "").strip()
+    type_filter = request.query_params.get("type_filter", "").strip()
+
     tasks = session.exec(
-        select(Task).where(Task.course_id == course_id)
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all()
 
+    if filter_text:
+        tasks = [t for t in tasks if filter_text.lower() in t.title.lower()]
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type.value == type_filter]
+
+    task_list = []
     total_points = 0.0
     max_points = 0
+
     for task in tasks:
         max_points += task.max_points
         subs = session.exec(
@@ -667,23 +688,37 @@ async def get_my_points(
             .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
         ).all()
 
-        latest_points = 0.0
+        human_points = 0.0
+        llm_points = 0.0
+        override_exists = False
+        has_feedback = False
         if subs:
             latest_sub = subs[0]  # newest
-            human_points = 0.0
-            llm_points = 0.0
-            override_exists = False
             for fb in latest_sub.feedback_list:
+                has_feedback = True
                 if fb.source == FeedbackSource.HUMAN:
                     human_points = max(human_points, fb.points_earned)
                     override_exists = True
                 else:
                     llm_points = max(llm_points, fb.points_earned)
-            latest_points = human_points if override_exists else llm_points
+        my_points = human_points if override_exists else llm_points
 
-        total_points += latest_points
+        total_points += my_points
 
-    # Berechne Perzentil im Kurs: Gesamtpunkte aller Studenten vergleichen
+        task_list.append({
+            "id": task.id,
+            "title": task.title,
+            "task_type": task.task_type.value,
+            "max_points": task.max_points,
+            "max_attempts": task.max_attempts,
+            "attempts_used": len(subs),
+            "deadline": task.deadline,
+            "has_tests": bool(task.test_code),
+            "my_points": my_points,
+            "has_feedback": has_feedback,
+        })
+
+    # Berechne Perzentil im Kurs: Gesamtpunkte der gefilterten Aufgaben vergleichen
     student_members = session.exec(
         select(UserCourse)
         .where(UserCourse.course_id == course_id)
@@ -695,7 +730,7 @@ async def get_my_points(
         if member.user_id == user.id:
             continue
         member_total = 0.0
-        for task in tasks:
+        for task in tasks:  # Gefilterte Aufgaben (konsistent mit total_points)
             m_subs = session.exec(
                 select(Submission)
                 .where(Submission.task_id == task.id)
@@ -723,7 +758,7 @@ async def get_my_points(
     else:
         course_percentile = 100
 
-    # Gruppen-Durchschnitt: Alle Kursstudenten zählen (ohne Abgabe = 0 Punkte)
+    # Gruppen-Durchschnitt
     all_scores = other_total_scores + [total_points]
     group_avg = round(sum(all_scores) / len(all_scores), 1)
 
@@ -733,6 +768,7 @@ async def get_my_points(
         "percentage": round(total_points / max_points * 100, 1) if max_points else 0,
         "course_percentile": course_percentile,
         "group_avg": group_avg,
+        "tasks": task_list,
     }
 
 
@@ -939,3 +975,154 @@ async def get_hints(
         }
         for h in hints
     ]
+
+
+@router.post("/courses/{course_id}/generate-report")
+async def generate_student_report(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Generiert einen persönlichen Performance-Report für den Studenten via LLM.
+
+    Sammelt alle Daten der gefilterten Aufgaben (Aufgaben, eigene Submissions,
+    Feedback, Hinweise, Bearbeitungsdauer) und lässt das LLM einen strukturierten
+    Markdown-Report erstellen, der dem Studenten hilft, seine Schwächen zu erkennen
+    und Tipps zur Verbesserung liefert.
+    """
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+
+    if not membership:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+    # Filter aus Query-Parametern (identisch zu Tutor-Overview)
+    filter_text = request.query_params.get("filter_text", "").strip()
+    type_filter = request.query_params.get("type_filter", "").strip()
+
+    # Alle sichtbaren Aufgaben des Kurses
+    tasks = list(session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)
+        .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+    ).all())
+
+    if filter_text:
+        tasks = [t for t in tasks if filter_text.lower() in t.title.lower()]
+    if type_filter:
+        tasks = [t for t in tasks if t.task_type.value == type_filter]
+
+    if not tasks:
+        raise HTTPException(400, "Keine Aufgaben gefunden. Passe den Filter an.")
+
+    # ── Daten für das LLM sammeln ──────────────────────────────
+
+    # Aufgaben-Informationen formatieren
+    tasks_lines = []
+    for t in tasks:
+        tasks_lines.append(f"- **{t.title}** ({t.task_type.value}) — {t.max_points} Punkte, Max. Versuche: {t.max_attempts or 'unlimitiert'}")
+        tasks_lines.append(f"  Aufgabenstellung: {t.description[:500]}")
+        if t.model_solution:
+            tasks_lines.append(f"  Musterlösung: {t.model_solution[:500]}")
+        tasks_lines.append("")
+    tasks_data = "\n".join(tasks_lines)
+
+    # Persönliche Studentendaten formatieren (Submissions + Feedback + Hinweise)
+    student_lines = []
+    student_lines.append(f"Student: {user.name} ({user.username})")
+    student_lines.append("")
+
+    has_submissions = False
+    for task in tasks:
+        # Alle Submissions des Studenten für diese Aufgabe
+        subs = session.exec(
+            select(Submission)
+            .where(Submission.task_id == task.id)
+            .where(Submission.student_id == user.id)
+            .order_by(Submission.submitted_at.asc())  # type: ignore[attr-defined]
+        ).all()
+
+        if not subs:
+            student_lines.append(f"- **{task.title}**: Keine Einreichung")
+            student_lines.append("")
+            continue
+
+        has_submissions = True
+        best_points = 0.0
+        total_attempts = len(subs)
+        latest_sub = subs[-1]
+
+        # Punkte aus Feedback sammeln
+        for fb in latest_sub.feedback_list:
+            if fb.source == FeedbackSource.HUMAN:
+                best_points = max(best_points, fb.points_earned)
+            else:
+                best_points = max(best_points, fb.points_earned)
+
+        # Solve-Zeiten
+        solve_times = [s.solve_time_seconds for s in subs if s.solve_time_seconds > 0]
+        avg_time = sum(solve_times) / len(solve_times) if solve_times else 0
+        max_time = max(solve_times) if solve_times else 0
+
+        student_lines.append(f"- **{task.title}**:")
+        student_lines.append(f"  Punkte: {best_points}/{task.max_points}, Versuche: {total_attempts}")
+        if solve_times:
+            student_lines.append(f"  Bearbeitungsdauer: Ø {avg_time/60:.1f}min, Max {max_time/60:.1f}min")
+
+        # Feedback-Kommentare der letzten Submission
+        for fb in latest_sub.feedback_list:
+            source_label = "LLM" if fb.source == FeedbackSource.LLM else "Tutor"
+            fb_comment = fb.comment[:300] if fb.comment else "(keinen Kommentar)"
+            student_lines.append(f"  [{source_label}]: {fb_comment}")
+
+        # Hinweis-Anfragen für diese Aufgabe
+        hints = session.exec(
+            select(HintExchange)
+            .where(HintExchange.task_id == task.id)
+            .where(HintExchange.student_id == user.id)
+        ).all()
+        if hints:
+            student_lines.append(f"  Hinweise angefragt: {len(hints)} mal")
+            for h in hints[:3]:
+                student_lines.append(f"    Frage: {h.question[:200]}")
+                student_lines.append(f"    Antwort: {h.llm_response[:200]}")
+
+        student_lines.append("")
+
+    if not has_submissions:
+        student_lines.append("Keine Einreichungen bei den gefilterten Aufgaben.")
+
+    student_data = "\n".join(student_lines)
+
+    # LLM-Config ermitteln
+    llm_config = get_effective_llm_config(session, course_id)
+
+    # Report generieren
+    logger.info(f"Generate student report for {course.name}: {len(tasks)} tasks")
+    result = await llm_service.generate_student_report(
+        course_name=course.name,
+        tasks_data=tasks_data,
+        student_data=student_data,
+        config=llm_config,
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            500,
+            f"Report-Generierung fehlgeschlagen: {result.get('error', 'Unbekannter Fehler')}",
+        )
+
+    return {
+        "success": True,
+        "report": result["data"]["report"],
+        "latency_ms": result["latency_ms"],
+    }

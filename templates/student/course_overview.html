@@ -10,112 +10,417 @@
   </div>
 
   <!-- Points Summary -->
-  <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
+  <div id="summary-stats" class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
     <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
-    <div hx-get="/api/student/courses/{{ course.id }}/my-points"
-         hx-trigger="load"
-         hx-swap="innerHTML"
-         id="my-points-summary" class="space-y-2">
+    <div id="my-points-summary" class="space-y-2">
       <p class="text-gray-500 text-sm">Wird geladen...</p>
     </div>
   </div>
 
-  <!-- Task List -->
-  <div class="space-y-4">
-    {% for task in tasks %}
-    <div class="card flex items-center justify-between">
-      <div class="flex-1">
-        <div class="flex items-center gap-3">
-          <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
-             class="text-lg font-semibold text-blue-600 hover:underline">
-            {{ task.title }}
-          </a>
-        </div>
-        <div class="text-sm text-gray-500 mt-1">
-          {{ task.attempts_used }}{% if task.max_attempts is not none %}/{{ task.max_attempts }}{% endif %} Versuche
-          {% if task.deadline %}· ⏰ Deadline {{ task.deadline[:10] }}{% endif %}
-          <span class="px-2 py-0.5 rounded text-xs font-medium
-            {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
-            {% else %}bg-gray-100 text-gray-600
-            {% endif %}" style="align-content: center;">
-            {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
-          </span>
-        </div>
+  <!-- Filters -->
+  <div class="card mb-6">
+    <div class="flex items-center gap-4 flex-wrap">
+      <div class="flex-1 min-w-[200px]">
+        <label class="block text-sm font-medium text-gray-700 mb-1">Suche</label>
+        <input type="text" id="filter-input" placeholder="z.B. Blatt1, Rekursion..."
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
       </div>
-      <div class="flex items-center gap-6">
-        <div class="text-right">
-          <div class="text-lg font-bold
-            {% if task.my_points >= task.max_points * 0.8 %}text-green-600
-            {% elif task.my_points >= task.max_points * 0.5 %}text-yellow-600
-            {% elif task.my_points > 0 %}text-orange-600
-            {% else %}text-gray-400
-            {% endif %}">
-            {{ task.my_points }}/{{ task.max_points }}
-          </div>
-          <div class="text-xs text-gray-400">Punkte</div>
-        </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Aufgabentyp</label>
+        <select id="type-filter" class="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+          <option value="">Alle</option>
+          <option value="text">Textaufgaben</option>
+          <option value="code">Codeaufgaben</option>
+        </select>
+      </div>
+      <div class="flex items-end">
+        <button id="clear-filter-btn" class="text-gray-500 hover:text-gray-700 text-sm px-3 py-2" style="margin-top:20px">
+          ✕ Filter löschen
+        </button>
       </div>
     </div>
-    {% endfor %}
   </div>
 
-  {% if not tasks %}
-  <div class="text-center py-12 text-gray-400">
-    <p class="text-xl">Derzeit keine Aufgaben verfügbar.</p>
+  <!-- Loading State -->
+  <div id="loading-state" class="hidden text-center py-12">
+    <div class="inline-flex items-center gap-2 text-blue-600">
+      <span class="animate-spin">⏳</span>
+      <span>Daten werden geladen...</span>
+    </div>
   </div>
-  {% endif %}
+
+  <!-- Task List -->
+  <div id="task-list-container" class="space-y-4">
+    <!-- Wird dynamisch per JS gefüllt -->
+  </div>
+
+  <!-- Action Buttons -->
+  <div id="action-buttons" class="flex items-center gap-3 mt-6">
+    <button id="generate-report-btn"
+            class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2 text-sm">
+      📝 Report generieren
+    </button>
+  </div>
 
 </div>
+
+<!-- Report Modal -->
+<div id="report-modal" class="hidden fixed inset-0 z-[100] flex items-start justify-center bg-black/50 overflow-y-auto" style="padding: 2rem;">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8 flex flex-col" style="max-height: calc(100vh - 4rem);">
+    <!-- Modal Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+      <h2 class="text-xl font-bold text-gray-900">📋 Mein Performance-Report</h2>
+      <div class="flex items-center gap-2">
+        <button id="report-copy-btn"
+                class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
+          📋 Kopieren
+        </button>
+        <button id="report-pdf-btn"
+                class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1">
+          📄 PDF exportieren
+        </button>
+        <button id="report-close-btn"
+                class="text-gray-400 hover:text-gray-600 text-xl leading-none p-1 transition">
+          ✕
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <!-- Loading State -->
+      <div id="report-loading" class="hidden flex flex-col items-center justify-center py-16">
+        <div class="animate-spin text-3xl mb-4">⏳</div>
+        <p class="text-gray-600 font-medium">Report wird generiert...</p>
+        <p class="text-sm text-gray-400 mt-1">Dies kann bis zu einer Minute dauern</p>
+      </div>
+
+      <!-- Report Content -->
+      <div id="report-content" class="hidden">
+        <!-- Wird dynamisch per JS gefüllt -->
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  // Format the points summary
-  document.body.addEventListener("htmx:afterSwap", (evt) => {
-    if (evt.detail.target.id === "my-points-summary") {
-      try {
-        const data = JSON.parse(evt.detail.xhr.responseText);
-        const pct = data.percentage || 0;
-        let barColor = "bg-gray-300";
-        if (pct >= 80) barColor = "bg-green-500";
-        else if (pct >= 50) barColor = "bg-yellow-500";
-        else if (pct > 0) barColor = "bg-orange-500";
+  const courseId = {{ course.id }};
 
-        const percentile = data.course_percentile ?? null;
-        let percentileColor = "text-orange-600";
-        if (percentile >= 80) percentileColor = "text-green-600";
-        else if (percentile >= 50) percentileColor = "text-blue-600";
-        else if (percentile >= 30) percentileColor = "text-yellow-600";
+  // ─── Load Data ──────────────────────────────────────────────
+  async function loadData(filterText = '', typeFilter = '') {
+    const loading = document.getElementById('loading-state');
+    const taskContainer = document.getElementById('task-list-container');
 
-        const groupAvg = data.group_avg ?? null;
-        let groupAvgColor = "text-gray-500";
-        if (groupAvg !== null) {
-          const groupPct = data.max_points > 0 ? (groupAvg / data.max_points * 100) : 0;
-          if (groupPct >= 80) groupAvgColor = "text-green-600";
-          else if (groupPct >= 50) groupAvgColor = "text-blue-600";
-          else if (groupPct >= 30) groupAvgColor = "text-yellow-600";
-        }
+    loading.classList.remove('hidden');
+    taskContainer.classList.add('hidden');
 
-        evt.detail.target.innerHTML = `
-          <div class="flex items-center justify-between">
-            <div>
-              <span class="text-2xl font-bold text-blue-700">${data.total_points}</span>
-              <span class="text-gray-500"> / ${data.max_points} Punkte</span>
-            </div>
-            <div class="text-2xl font-bold text-blue-700">${pct}%</div>
-          </div>
-          <div class="mt-2 bg-gray-200 rounded-full h-3">
-            <div class="${barColor} h-3 rounded-full transition-all" style="width: ${pct}%; max-width:100%"></div>
-          </div>
-          <div class="flex justify-between mb-1">
-          ${groupAvg !== null ? `<span><span class="text-gray-500">Kurs-Ø: </span><span class="font-semibold ${groupAvgColor}">${groupAvg} / ${data.max_points}</span></span>` : ''}
-            ${percentile !== null ? `<span><span class="text-gray-500">Perzentil: </span><span class="font-semibold ${percentileColor}">${percentile}%</span></span>` : ''}
-          </div>
-        `;
-      } catch(e) {
-        // Already formatted or error
+    try {
+      const params = new URLSearchParams({ filter_text: filterText });
+      if (typeFilter) params.set('type_filter', typeFilter);
+
+      const res = await fetch('/api/student/courses/' + courseId + '/my-points?' + params, {
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Laden.', 'error');
+        return;
       }
+
+      renderPointsSummary(data);
+      renderTaskList(data);
+
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    } finally {
+      loading.classList.add('hidden');
+      taskContainer.classList.remove('hidden');
+    }
+  }
+
+  // ─── Render Points Summary ──────────────────────────────────
+  function renderPointsSummary(data) {
+    const summary = document.getElementById('my-points-summary');
+    const pct = data.percentage || 0;
+    let barColor = "bg-gray-300";
+    if (pct >= 80) barColor = "bg-green-500";
+    else if (pct >= 50) barColor = "bg-yellow-500";
+    else if (pct > 0) barColor = "bg-orange-500";
+
+    const percentile = data.course_percentile ?? null;
+    let percentileColor = "text-orange-600";
+    if (percentile >= 80) percentileColor = "text-green-600";
+    else if (percentile >= 50) percentileColor = "text-blue-600";
+    else if (percentile >= 30) percentileColor = "text-yellow-600";
+
+    const groupAvg = data.group_avg ?? null;
+    let groupAvgColor = "text-gray-500";
+    if (groupAvg !== null) {
+      const groupPct = data.max_points > 0 ? (groupAvg / data.max_points * 100) : 0;
+      if (groupPct >= 80) groupAvgColor = "text-green-600";
+      else if (groupPct >= 50) groupAvgColor = "text-blue-600";
+      else if (groupPct >= 30) groupAvgColor = "text-yellow-600";
+    }
+
+    let groupHtml = '';
+    if (groupAvg !== null) {
+      groupHtml = `<span><span class="text-gray-500">Kurs-Ø: </span><span class="font-semibold ${groupAvgColor}">${groupAvg} / ${data.max_points}</span></span>`;
+    }
+
+    summary.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-2xl font-bold text-blue-700">${data.total_points}</span>
+          <span class="text-gray-500"> / ${data.max_points} Punkte</span>
+        </div>
+        <div class="text-2xl font-bold text-blue-700">${pct}%</div>
+      </div>
+      <div class="mt-2 bg-gray-200 rounded-full h-3">
+        <div class="${barColor} h-3 rounded-full transition-all" style="width: ${pct}%; max-width:100%"></div>
+      </div>
+      <div class="flex justify-between mb-1">
+        ${groupHtml}
+        ${percentile !== null ? `<span><span class="text-gray-500">Perzentil: </span><span class="font-semibold ${percentileColor}">${percentile}%</span></span>` : ''}
+      </div>
+    `;
+  }
+
+  // ─── Render Task List ───────────────────────────────────────
+  function renderTaskList(data) {
+    const container = document.getElementById('task-list-container');
+    const tasks = data.tasks || [];
+
+    if (tasks.length === 0) {
+      container.innerHTML = `
+        <div class="text-center py-12 text-gray-400">
+          <p class="text-xl">Derzeit keine Aufgaben verfügbar.</p>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+    tasks.forEach(task => {
+      const pct = task.max_points > 0 ? task.my_points / task.max_points : 0;
+      let pointColor = 'text-gray-400';
+      if (pct >= 0.8) pointColor = 'text-green-600';
+      else if (pct >= 0.5) pointColor = 'text-yellow-600';
+      else if (task.my_points > 0) pointColor = 'text-orange-600';
+
+      const typeBadge = task.task_type === 'code'
+        ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">💻 Code</span>'
+        : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">📄 Text</span>';
+
+      let deadlineHtml = '';
+      if (task.deadline) {
+        const dl = new Date(task.deadline).toLocaleDateString('de-DE');
+        deadlineHtml = ` · ⏰ Deadline ${dl}`;
+      }
+
+      let feedbackHtml = '';
+      if (task.has_feedback) {
+        feedbackHtml = `<a href="/courses/${courseId}/tasks/${task.id}" class="text-blue-600 hover:underline text-sm">📋 Feedback anzeigen</a>`;
+      }
+
+      html += `
+        <div class="card flex items-center justify-between">
+          <div class="flex-1">
+            <div class="flex items-center gap-3">
+              <a href="/courses/${courseId}/tasks/${task.id}"
+                 class="text-lg font-semibold text-blue-600 hover:underline">
+                ${task.title}
+              </a>
+            </div>
+            <div class="text-sm text-gray-500 mt-1">
+              ${task.attempts_used}${task.max_attempts != null ? '/' + task.max_attempts : ''} Versuche${deadlineHtml} ${typeBadge}
+              ${feedbackHtml ? '<br>' + feedbackHtml : ''}
+            </div>
+          </div>
+          <div class="flex items-center gap-6">
+            <div class="text-right">
+              <div class="text-lg font-bold ${pointColor}">
+                ${task.my_points}/${task.max_points}
+              </div>
+              <div class="text-xs text-gray-400">Punkte</div>
+            </div>
+          </div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  // ─── Filter Events ──────────────────────────────────────────
+  let filterTimeout;
+
+  document.getElementById('filter-input').addEventListener('input', (e) => {
+    clearTimeout(filterTimeout);
+    filterTimeout = setTimeout(() => loadData(e.target.value, document.getElementById('type-filter').value), 300);
+  });
+
+  document.getElementById('type-filter').addEventListener('change', (e) => {
+    loadData(document.getElementById('filter-input').value, e.target.value);
+  });
+
+  document.getElementById('clear-filter-btn').addEventListener('click', () => {
+    document.getElementById('filter-input').value = '';
+    document.getElementById('type-filter').value = '';
+    loadData('', '');
+  });
+
+  // ─── Report Modal ───────────────────────────────────────────
+  const reportModal = document.getElementById('report-modal');
+  const reportContent = document.getElementById('report-content');
+  const reportLoading = document.getElementById('report-loading');
+  const reportCloseBtn = document.getElementById('report-close-btn');
+
+  function openReportModal() {
+    reportModal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeReportModal() {
+    reportModal.classList.add('hidden');
+    document.body.style.overflow = '';
+    reportContent.innerHTML = '';
+  }
+
+  reportCloseBtn.addEventListener('click', closeReportModal);
+
+  // Close on backdrop click
+  reportModal.addEventListener('click', (e) => {
+    if (e.target === reportModal) closeReportModal();
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !reportModal.classList.contains('hidden')) closeReportModal();
+  });
+
+  // Generate report button
+  document.getElementById('generate-report-btn').addEventListener('click', async () => {
+    const filterText = document.getElementById('filter-input').value;
+    const typeFilter = document.getElementById('type-filter').value;
+
+    // Show modal with loading state
+    reportLoading.classList.remove('hidden');
+    reportContent.classList.add('hidden');
+    reportContent.innerHTML = '';
+    openReportModal();
+
+    try {
+      const params = new URLSearchParams({ filter_text: filterText });
+      if (typeFilter) params.set('type_filter', typeFilter);
+
+      const res = await fetch('/api/student/courses/' + courseId + '/generate-report?' + params, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        reportLoading.classList.add('hidden');
+        reportContent.classList.remove('hidden');
+        reportContent.innerHTML = '<div class="p-4 bg-red-50 border border-red-300 rounded-lg text-red-700">' +
+          '<strong>❌ Fehler</strong><br/>' + (data.detail || 'Report-Generierung fehlgeschlagen.') + '</div>';
+        return;
+      }
+
+      reportLoading.classList.add('hidden');
+      reportContent.classList.remove('hidden');
+
+      // Render markdown with the existing renderMarkdown function
+      await renderMarkdown(data.report, reportContent, { preview: true });
+
+      showToast('Report wurde generiert.', 'success');
+
+    } catch (err) {
+      reportLoading.classList.add('hidden');
+      reportContent.classList.remove('hidden');
+      reportContent.innerHTML = '<div class="p-4 bg-red-50 border border-red-300 rounded-lg text-red-700">' +
+        '<strong>❌ Fehler</strong><br/>' + err.message + '</div>';
+      showToast('Report-Generierung fehlgeschlagen.', 'error');
     }
   });
+
+  // ─── Copy report content ──────────────────────────────────────
+  document.getElementById('report-copy-btn').addEventListener('click', () => {
+    const markdownPreview = document.querySelector('#report-content .markdown-preview');
+    if (markdownPreview) {
+      const text = markdownPreview.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        showToast('Report in die Zwischenablage kopiert.', 'success');
+      }).catch(() => {
+        showToast('Kopieren fehlgeschlagen.', 'error');
+      });
+    } else {
+      showToast('Kein Report zum Kopieren vorhanden.', 'warning');
+    }
+  });
+
+  // ─── PDF Export ───────────────────────────────────────────────
+  document.getElementById('report-pdf-btn').addEventListener('click', () => {
+    const markdownPreview = document.querySelector('#report-content .markdown-preview');
+    if (!markdownPreview) {
+      showToast('Kein Report zum Exportieren vorhanden.', 'warning');
+      return;
+    }
+
+    const printWindow = window.open('', '_blank', 'width=800,height=900');
+    if (!printWindow) {
+      showToast('Pop-up-Blocker verhindert den Export.', 'error');
+      return;
+    }
+
+    const courseName = '{{ course.name }}';
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html lang="de">
+      <head>
+        <meta charset="UTF-8">
+        <title>Mein Performance-Report: ${courseName}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; padding: 2cm 2.5cm; }
+          h1 { font-size: 20pt; font-weight: 800; margin-bottom: 12px; color: #1F4E79; border-bottom: 2px solid #1F4E79; padding-bottom: 8px; }
+          h2 { font-size: 15pt; font-weight: 700; margin-top: 20px; margin-bottom: 8px; color: #2E74B5; }
+          h3 { font-size: 12pt; font-weight: 700; margin-top: 14px; margin-bottom: 6px; color: #333; }
+          h4, h5, h6 { font-weight: 700; margin-top: 10px; margin-bottom: 4px; }
+          p { margin-bottom: 8px; }
+          ul, ol { margin-left: 1.5cm; margin-bottom: 8px; }
+          ul { list-style-type: disc; }
+          ul ul { list-style-type: circle; }
+          ol { list-style-type: decimal; }
+          li { margin-bottom: 4px; }
+          code { font-family: 'Consolas', 'Courier New', monospace; font-size: 10pt; background: #f5f5f5; padding: 1px 4px; border-radius: 3px; }
+          pre { background: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; margin-bottom: 10px; font-size: 9pt; }
+          pre code { background: none; padding: 0; }
+          blockquote { border-left: 3px solid #2E74B5; padding: 6px 12px; margin: 8px 0; background: #f0f6fc; }
+          hr { border: none; border-top: 1px solid #ccc; margin: 16px 0; }
+          table { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
+          th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+          th { background: #2E74B5; color: white; font-weight: 700; }
+          @media print { body { padding: 1.5cm 2cm; } }
+        </style>
+      </head>
+      <body>
+        ${markdownPreview.innerHTML}
+        <script>
+          window.onload = function() { window.print(); };
+        <\/script>
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    showToast('Print-Dialog wurde geöffnet. Wähle "Als PDF speichern".', 'success');
+  });
+
+  // ─── Initial Load ───────────────────────────────────────────
+  loadData();
 </script>
 {% endblock %}

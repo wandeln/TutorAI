@@ -23,7 +23,7 @@ from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PR
 from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
 from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE, CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
-from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE
+from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +356,43 @@ class LLMService:
             course_name=course_name,
             tasks_data=tasks_data,
             students_data=students_data,
+        )
+
+        result = await self._call_plain(prompt, config=config)
+
+        # Passe das Return-Format an, um "report" statt "model_solution" zu verwenden
+        if result["success"]:
+            result["data"] = {"report": result["data"]["model_solution"]}
+
+        return result
+
+    async def generate_student_report(
+        self,
+        course_name: str,
+        tasks_data: str,
+        student_data: str,
+        config: Optional[dict] = None,
+    ):
+        """Generiert einen persönlichen Performance-Report für einen Studenten als Markdown.
+
+        Analysiert die Daten der gefilterten Aufgaben des Studenten und erstellt
+        einen strukturierten Report mit Tipps und Empfehlungen zur Verbesserung.
+
+        Args:
+            course_name: Name des Kurses
+            tasks_data: Formatierter Text mit Aufgaben-Informationen (Titel, Typ, Punkte, etc.)
+            student_data: Formatierter Text mit den persönlichen Daten des Studenten
+                (Einreichungen, Feedback, Hinweise, Bearbeitungsdauer)
+            config: Optionale LLM-Konfiguration pro Kurs
+
+        Returns:
+            Dict mit "success", "data"{"report": markdown_text}, "latency_ms", "raw_response"
+        """
+        prompt = self._render_prompt(
+            STUDENT_REPORT_PROMPT_TEMPLATE,
+            course_name=course_name,
+            tasks_data=tasks_data,
+            student_data=student_data,
         )
 
         result = await self._call_plain(prompt, config=config)

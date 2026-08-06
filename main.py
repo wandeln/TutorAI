@@ -241,6 +241,7 @@ async def index(
             course_earned = 0.0
             course_possible = 0
             completed_count = 0
+            medals = {"bronze": 0, "silver": 0, "gold": 0, "platinum": 0}
             for task in tasks:
                 course_possible += task.max_points
                 subs = session.exec(
@@ -266,6 +267,15 @@ async def index(
                 if latest > 0:
                     completed_count += 1
                 course_earned += latest
+
+                # Medal count per task
+                if task.max_points > 0:
+                    pct = latest / task.max_points
+                    if pct >= 1.0: medals["platinum"] += 1
+                    elif pct >= 0.9: medals["gold"] += 1
+                    elif pct >= 0.8: medals["silver"] += 1
+                    elif pct >= 0.7: medals["bronze"] += 1
+
             total_completed += completed_count
             total_points_earned += course_earned
             total_points_possible += course_possible
@@ -274,6 +284,7 @@ async def index(
                 "total_tasks": len(tasks),
                 "earned": course_earned,
                 "possible": course_possible,
+                "medals": medals,
             }
 
     pct = 0.0

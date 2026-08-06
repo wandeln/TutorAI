@@ -138,7 +138,7 @@
 
         <!-- Meine Ergebnisse -->
         <div class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
-            <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
+            <h2 class="font-semibold text-blue-800 mb-2 flex items-center gap-2">📊 Dein Punktestand <span id="tier-badge-icon"></span></h2>
             <div class="space-y-2">
 
                 <!-- Punkte -->
@@ -1299,7 +1299,7 @@
               </div>
               <template class="markdown-feedback" type="application/json" data-raw="${feedbackJson}"></template>
             </div>
-            <div class="motivation-result"></div>`;
+            </div>`;
 
       if (data.remaining_attempts !== undefined && data.remaining_attempts < 999) {
         html += `<div class="mt-2 text-sm text-gray-500">Noch ${data.remaining_attempts} Versuch(e) moeglich.</div>`;
@@ -1309,8 +1309,8 @@
 
       feedbackArea.insertAdjacentHTML('afterbegin', html);
 
-      // Show motivation after card is inserted
-      showMotivation(pct, tier, feedbackArea.firstElementChild);
+      // Show motivation modal
+      showMotivation(pct, tier);
 
       // Render Markdown in the newly added elements
       const newCard = feedbackArea.firstElementChild;
@@ -1519,7 +1519,7 @@
       'Es ist noch kein Meister vom Himmel gefallen',
       'Übung macht den Meister! ✨',
       'Gib nicht auf – du schaffst das!',
-      'Jeder Versuch macht einen Schritt weiter! 🚀',
+      'Mit jedem Versuch kommst du einen Schritt weiter! 🚀',
       'Mach weiter so – der Lernaufwand zahlt sich aus!',
     ],
     '50to70': [
@@ -1531,7 +1531,7 @@
     ],
     '70to80': [
       'Gratulation! Bronze verdient! 🥉',
-      'Gut gemacht! Du liegst über dem Durchschnitt! 🥉',
+      'Gut gemacht! Bronze gewonnen! 🥉',
       'Super Leistung – Bronze gesichert! 🥉',
     ],
     '80to90': [
@@ -1549,7 +1549,7 @@
       'Absolute Perfektion! 💎 Meisterhaft!',
       'Platin! Du bist unschlagbar! 💎',
       'Perfekt! Ein wahrer Meister! 💎',
-      'Volltreffer! Legendarische Leistung! 💎',
+      'Volltreffer! Legendäre Leistung! 💎',
       '100% – Du hast es dominiert! 💎',
     ],
   };
@@ -1568,45 +1568,45 @@
     return msgs[Math.floor(Math.random() * msgs.length)];
   }
 
-  function showMotivation(pct, tier, cardEl) {
+  function showMotivation(pct, tier) {
     const msg = getRandomMessage(tier.key);
-    const resultDiv = cardEl ? cardEl.querySelector('.motivation-result') : null;
-
-    if (tier.badge) {
-      if (resultDiv) {
-        resultDiv.innerHTML = `
-          <div class="encourage-banner" style="background:linear-gradient(135deg, #f0f9ff, #e0f2fe); border-color:#3b82f6;">
-            <span class="encourage-text" style="color:#1e40af;">${msg}</span>
-            <span class="badge-tier ${tier.badge}" style="margin-left:8px;">${tier.emoji} ${tier.badge.replace('badge-', '').toUpperCase()}</span>
-          </div>`;
-      }
-      showBadgeModal(tier.emoji, msg, tier.badge, pct);
-      runMotivationAnimation(tier.animation);
-    } else {
-      if (resultDiv) {
-        resultDiv.innerHTML = `<div class="encourage-banner"><span class="encourage-text">${msg}</span></div>`;
-      }
-    }
-  }
-
-  function showBadgeModal(emoji, message, badgeClass, pct) {
     const overlay = document.getElementById('badge-overlay');
     const emojiEl = document.getElementById('badge-emoji');
     const msgEl = document.getElementById('badge-message');
     const subEl = document.getElementById('badge-sub');
     const tierContainer = document.getElementById('badge-tier-container');
 
-    emojiEl.textContent = emoji;
-    msgEl.textContent = message;
-    const badgeName = badgeClass.replace('badge-', '').charAt(0).toUpperCase() + badgeClass.replace('badge-', '').slice(1);
-    subEl.textContent = Math.round(pct) + '% erreicht · ' + badgeName + ' Badge';
-    tierContainer.innerHTML = `<span class="badge-tier ${badgeClass}">${emoji} ${badgeName.toUpperCase()}</span>`;
+    emojiEl.textContent = tier.emoji;
+    msgEl.textContent = msg;
+
+    if (tier.badge) {
+      const badgeName = tier.badge.replace('badge-', '').charAt(0).toUpperCase() + tier.badge.replace('badge-', '').slice(1);
+      subEl.textContent = Math.round(pct) + '% erreicht · ' + badgeName + ' Badge';
+      tierContainer.innerHTML = '<span class="badge-tier ' + tier.badge + '">' + tier.emoji + ' ' + badgeName.toUpperCase() + '</span>';
+      runMotivationAnimation(tier.animation);
+      updateTierBadgeIcon(tier.badge);
+    } else {
+      subEl.textContent = Math.round(pct) + '% erreicht';
+      tierContainer.innerHTML = '';
+      updateTierBadgeIcon(null);
+    }
 
     overlay.classList.add('active');
-
     const closeBtn = document.getElementById('badge-close');
     closeBtn.onclick = () => overlay.classList.remove('active');
     overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('active'); };
+  }
+
+  function updateTierBadgeIcon(badgeClass) {
+    const iconEl = document.getElementById('tier-badge-icon');
+    if (!iconEl) return;
+    if (badgeClass) {
+      const emojiMap = { 'badge-bronze': '🥉', 'badge-silver': '🥈', 'badge-gold': '🥇', 'badge-platinum': '💎' };
+      const emoji = emojiMap[badgeClass] || '';
+      iconEl.innerHTML = '<span class="badge-tier ' + badgeClass + '" style="font-size:0.75rem; padding:2px 10px;">' + emoji + '</span>';
+    } else {
+      iconEl.innerHTML = '';
+    }
   }
 
   // ─── Particle Effects (Canvas) ───────────────────────────────
@@ -1732,5 +1732,16 @@
 
     effectAnimFrame = requestAnimationFrame(animate);
   }
+
+  // ─── Init: Show tier badge icon on page load ─────────────────
+  (function() {
+    const maxPoints = {{ task.max_points }} || 1;
+    const latestPoints = {{ latest_points }} || 0;
+    const pct = (latestPoints / maxPoints) * 100;
+    const tier = getMotivationTier(pct);
+    if (tier.badge) {
+      updateTierBadgeIcon(tier.badge);
+    }
+  })();
 </script>
 {% endblock %}

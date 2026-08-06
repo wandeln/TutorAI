@@ -11,7 +11,7 @@
 
   <!-- Points Summary -->
   <div id="summary-stats" class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
-    <h2 class="font-semibold text-blue-800 mb-2">📊 Dein Punktestand</h2>
+    <h2 class="font-semibold text-blue-800 mb-2 flex items-center gap-2">📊 Dein Punktestand <span id="tier-badge-icon"></span></h2>
     <div id="my-points-summary" class="space-y-2">
       <p class="text-gray-500 text-sm">Wird geladen...</p>
     </div>
@@ -105,6 +105,18 @@
 
 {% endblock %}
 
+{% block extra_head %}
+<style>
+  .badge-tier { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:9999px; font-size:0.75rem; font-weight:700; text-transform:uppercase; white-space:nowrap; margin-right:6px; }
+  .badge-tier:last-child { margin-right:0; }
+  .badge-bronze { background:linear-gradient(135deg, #f5deb3, #cd7f32, #b8860b); color:#5c3317; }
+  .badge-silver { background:linear-gradient(135deg, #f0f0f0, #c0c0c0, #a8a8a8); color:#4a4a4a; }
+  .badge-gold { background:linear-gradient(135deg, #fff8dc, #ffd700, #daa520); color:#6b4c00; }
+  .badge-platinum { background:linear-gradient(135deg, #e8e8e8, #b9f2ff, #7dd3fc, #b9f2ff); color:#1e3a5f; animation:platinumShine 2s ease-in-out infinite; }
+  @keyframes platinumShine { 0%,100%{box-shadow:0 0 8px rgba(125,211,252,0.5);} 50%{box-shadow:0 0 16px rgba(125,211,252,0.8);} }
+</style>
+{% endblock %}
+
 {% block extra_scripts %}
 <script>
   const courseId = {{ course.id }};
@@ -134,6 +146,7 @@
 
       renderPointsSummary(data);
       renderTaskList(data);
+      renderMedals(data);
 
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
@@ -215,15 +228,16 @@
         ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">💻 Code</span>'
         : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">📄 Text</span>';
 
+      let medalBadge = '';
+      if (pct >= 1.0) medalBadge = '<span class="badge-tier badge-platinum">💎</span>';
+      else if (pct >= 0.9) medalBadge = '<span class="badge-tier badge-gold">🥇</span>';
+      else if (pct >= 0.8) medalBadge = '<span class="badge-tier badge-silver">🥈</span>';
+      else if (pct >= 0.7) medalBadge = '<span class="badge-tier badge-bronze">🥉</span>';
+
       let deadlineHtml = '';
       if (task.deadline) {
         const dl = new Date(task.deadline).toLocaleDateString('de-DE');
         deadlineHtml = ` · ⏰ Deadline ${dl}`;
-      }
-
-      let feedbackHtml = '';
-      if (task.has_feedback) {
-        feedbackHtml = `<a href="/courses/${courseId}/tasks/${task.id}" class="text-blue-600 hover:underline text-sm">📋 Feedback anzeigen</a>`;
       }
 
       html += `
@@ -236,8 +250,7 @@
               </a>
             </div>
             <div class="text-sm text-gray-500 mt-1">
-              ${task.attempts_used}${task.max_attempts != null ? '/' + task.max_attempts : ''} Versuche${deadlineHtml} ${typeBadge}
-              ${feedbackHtml ? '<br>' + feedbackHtml : ''}
+              ${task.attempts_used}${task.max_attempts != null ? '/' + task.max_attempts : ''} Versuche${deadlineHtml}&nbsp;${typeBadge}${medalBadge ? '&nbsp;&nbsp;&nbsp;&nbsp;' + medalBadge : ''}
             </div>
           </div>
           <div class="flex items-center gap-6">
@@ -252,6 +265,37 @@
     });
 
     container.innerHTML = html;
+  }
+
+  // ─── Render Medal Badges ──────────────────────────────────────
+  function renderMedals(data) {
+    const tasks = data.tasks || [];
+    const counts = { bronze: 0, silver: 0, gold: 0, platinum: 0 };
+    const tierInfo = [
+      { threshold: 1.0, key: 'platinum', emoji: '💎' },
+      { threshold: 0.9, key: 'gold', emoji: '🥇' },
+      { threshold: 0.8, key: 'silver', emoji: '🥈' },
+      { threshold: 0.7, key: 'bronze', emoji: '🥉' },
+    ];
+    tasks.forEach(task => {
+      if (task.max_points <= 0) return;
+      const pct = task.my_points / task.max_points;
+      for (const tier of tierInfo) {
+        if (pct >= tier.threshold) { counts[tier.key]++; break; }
+      }
+    });
+    const iconEl = document.getElementById('tier-badge-icon');
+    if (!iconEl) return;
+    let parts = [];
+    const medalEmoji = { platinum: '💎', gold: '🥇', silver: '🥈', bronze: '🥉' };
+    const medalOrder = ['platinum', 'gold', 'silver', 'bronze'];
+    medalOrder.forEach(key => {
+      if (counts[key] > 0) {
+        const prefix = counts[key] > 1 ? counts[key] + ' ' : '';
+        parts.push('<span class="badge-tier badge-' + key + '">' + prefix + medalEmoji[key] + '</span>');
+      }
+    });
+    iconEl.innerHTML = parts.length > 0 ? parts.join('') : '';
   }
 
   // ─── Filter Events ──────────────────────────────────────────

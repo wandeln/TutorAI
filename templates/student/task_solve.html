@@ -291,27 +291,88 @@
           <!-- Unified toolbar: Preview + LaTeX-Upload -->
           <div id="text-editor-toolbar" class="flex items-center gap-2 mt-2">
             <!-- Preview button injected by createMarkdownEditor (anchor: text-editor-toolbar) -->
-            <button id="latex-upload-btn" type="button"
-                    class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5"
-                    title="Foto einer handgeschriebenen Formel in LaTeX umwandeln">
-              <span>📷</span> Foto → LaTeX
-            </button>
+            <!-- Toggle buttons: Foto / Zeichnen -->
+            <div id="latex-toggle-group" class="flex items-center rounded-lg border border-gray-300 overflow-hidden">
+              <button id="latex-toggle-photo" type="button"
+                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 transition inline-flex items-center gap-1.5"
+                      title="Foto einer handgeschriebenen Formel in LaTeX umwandeln">
+                <span>📷</span> Foto
+              </button>
+              <button id="latex-toggle-draw" type="button"
+                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 border-l border-gray-300 transition inline-flex items-center gap-1.5"
+                      title="Formel zeichnen und in LaTeX umwandeln">
+                <span>✏️</span> Zeichnen
+              </button>
+            </div>
           </div>
 
           <!-- Latex Upload Area -->
           <div id="latex-upload-area" class="hidden mt-3">
-            <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
-              <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
-                <div class="text-2xl mb-1">📸</div>
-                <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto herein</p>
-                <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
+
+            <!-- Photo mode -->
+            <div id="latex-photo-mode">
+              <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
+                <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
+                  <div class="text-2xl mb-1">📸</div>
+                  <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto herein</p>
+                  <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
+                </div>
+                <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
+                <input type="file" id="latex-camera-input" accept="image/*" capture="environment" class="hidden" />
+                <button id="latex-camera-btn" type="button" class="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
+                  <span>📷</span><span>Foto mit Kamera machen</span>
+                </button>
               </div>
-              <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
-              <input type="file" id="latex-camera-input" accept="image/*" capture="environment" class="hidden" />
-              <button id="latex-camera-btn" type="button" class="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
-                <span>📷</span><span>Foto mit Kamera machen</span>
-              </button>
             </div>
+
+            <!-- Draw mode -->
+            <div id="latex-draw-mode" class="hidden">
+              <div class="border-2 border-dashed border-indigo-300 rounded-lg p-3 bg-indigo-50/50">
+                <!-- Progress bar above canvas -->
+                <div id="latex-canvas-progress" class="hidden mb-2">
+                  <div class="flex items-center gap-2 text-xs text-indigo-700 mb-1">
+                    <span class="animate-spin">⏳</span>
+                    <span>LLM erkennt Formel...</span>
+                    <span id="latex-canvas-timer" class="font-mono">0s</span>
+                  </div>
+                  <div class="w-full bg-indigo-200 rounded-full h-1.5">
+                    <div id="latex-canvas-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
+                  </div>
+                </div>
+                <!-- Canvas wrapper for overlay -->
+                <div class="relative w-full">
+                  <canvas id="latex-canvas" class="w-full bg-white rounded cursor-crosshair touch-none block object-cover" style="height:40vh;object-position:center"></canvas>
+                  <div id="latex-canvas-overlay" class="hidden absolute inset-0 bg-white/60 backdrop-blur-sm rounded pointer-events-auto"></div>
+                </div>
+                <div class="flex items-center justify-between mt-2">
+                  <div class="flex items-center gap-2">
+                    <button id="latex-clear-canvas-btn" type="button" class="text-xs bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-200 transition">
+                      🗑️ Löschen
+                    </button>
+                    <button id="latex-eraser-btn" type="button" class="text-xs bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg transition">
+                      <span id="latex-eraser-icon">🧽</span> <span id="latex-eraser-label">Radierer</span>
+                    </button>
+                    <div id="latex-stroke-width-btns" class="flex items-center gap-0.5 bg-white border border-gray-300 rounded p-0.5">
+                      <button type="button" data-width="2" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
+                        <div class="rounded-full border-2 border-gray-800" style="width:12px;height:12px"></div>
+                      </button>
+                      <button type="button" data-width="4" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded bg-indigo-600">
+                        <div class="rounded-full border-2 border-white" style="width:18px;height:18px"></div>
+                      </button>
+                      <button type="button" data-width="6" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
+                        <div class="rounded-full border-2 border-gray-800" style="width:24px;height:24px"></div>
+                      </button>
+                    </div>
+                  </div>
+                  <button id="latex-convert-canvas-btn" type="button" class="text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition">
+                    📋 Einfügen
+                  </button>
+                </div>
+                <div id="latex-canvas-status" class="text-xs mt-1"></div>
+              </div>
+            </div>
+
+            <!-- Preview (shared) -->
             <div id="latex-preview-container" class="hidden mt-2">
               <div class="flex items-center gap-3">
                 <img id="latex-preview" class="max-h-28 rounded border border-gray-200" />
@@ -332,15 +393,7 @@
                   <div id="latex-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
                 </div>
               </div>
-              <div id="latex-result-area" class="hidden mt-2">
-                <div class="flex items-center justify-between mb-1">
-                  <span class="text-xs font-semibold text-green-700">Erkanntes LaTeX:</span>
-                  <button id="latex-insert-btn" type="button" class="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition">
-                    In Lösung einfügen
-                  </button>
-                </div>
-                <div id="latex-result" class="font-mono text-xs bg-green-50 border border-green-200 rounded p-2 text-green-800 break-all max-h-24 overflow-y-auto"></div>
-              </div>
+
             </div>
           </div>
 
@@ -926,7 +979,8 @@
   // ─── LaTeX Image Upload ──────────────────────────────────────
   {% if task.task_type != 'code' %}
   (function() {
-    const uploadBtn = document.getElementById("latex-upload-btn");
+    const togglePhoto = document.getElementById("latex-toggle-photo");
+    const toggleDraw = document.getElementById("latex-toggle-draw");
     const uploadArea = document.getElementById("latex-upload-area");
     const dropZone = document.getElementById("latex-drop-zone");
     const fileInput = document.getElementById("latex-file-input");
@@ -935,19 +989,22 @@
     const fileNameEl = document.getElementById("latex-file-name");
     const statusEl = document.getElementById("latex-conversion-status");
     const cancelBtn = document.getElementById("latex-cancel-btn");
-    const resultArea = document.getElementById("latex-result-area");
-    const resultEl = document.getElementById("latex-result");
-    const insertBtn = document.getElementById("latex-insert-btn");
     const latexProgress = document.getElementById("latex-progress");
     const latexTimer = document.getElementById("latex-timer");
     const latexProgressBar = document.getElementById("latex-progress-bar");
 
     const cameraInput = document.getElementById("latex-camera-input");
     const cameraBtn = document.getElementById("latex-camera-btn");
+    const latexCanvas = document.getElementById("latex-canvas");
+    const latexCtx = latexCanvas ? latexCanvas.getContext("2d") : null;
 
-    if (!uploadBtn || !uploadArea) return;
+    const latexCanvasProgress = document.getElementById("latex-canvas-progress");
+    const latexCanvasTimer = document.getElementById("latex-canvas-timer");
+    const latexCanvasProgressBar = document.getElementById("latex-canvas-progress-bar");
+    const latexCanvasOverlay = document.getElementById("latex-canvas-overlay");
+    const latexCanvasStatus = document.getElementById("latex-canvas-status");
 
-    let currentLatex = "";
+    if (!togglePhoto || !toggleDraw || !uploadArea) return;
 
     // Camera button
     cameraBtn.addEventListener("click", (e) => {
@@ -959,28 +1016,227 @@
       if (cameraInput.files.length > 0) handleFile(cameraInput.files[0]);
     });
 
-    // Toggle upload area visibility
-    uploadBtn.addEventListener("click", () => {
-      const isHidden = uploadArea.classList.contains("hidden");
-      if (isHidden) {
-        uploadArea.classList.remove("hidden");
-        previewContainer.classList.add("hidden");
-        resultArea.classList.add("hidden");
-        latexProgress.classList.add("hidden");
-        uploadBtn.classList.add("bg-gray-50", "border-gray-300", "text-blue-700");
+    // ─── Mode switching ──────────────────────────────────────
+    const photoMode = document.getElementById("latex-photo-mode");
+    const drawMode = document.getElementById("latex-draw-mode");
+
+    function activateToggle(btn, active) {
+      if (active) {
+        btn.classList.remove("text-gray-500", "hover:text-gray-700");
+        btn.classList.add("bg-indigo-600", "text-white");
       } else {
+        btn.classList.remove("bg-indigo-600", "text-white");
+        btn.classList.add("text-gray-500", "hover:text-gray-700");
+      }
+    }
+
+    function showPhotoMode() {
+      photoMode.classList.remove("hidden");
+      drawMode.classList.add("hidden");
+      previewContainer.classList.add("hidden");
+      uploadArea.classList.remove("hidden");
+      latexProgress.classList.add("hidden");
+      latexCanvasProgress.classList.add("hidden");
+      latexCanvasOverlay.classList.add("hidden");
+      latexCanvasStatus.innerHTML = "";
+      activateToggle(togglePhoto, true);
+      activateToggle(toggleDraw, false);
+    }
+
+    function showDrawMode() {
+      photoMode.classList.add("hidden");
+      drawMode.classList.remove("hidden");
+      previewContainer.classList.add("hidden");
+      uploadArea.classList.remove("hidden");
+      latexProgress.classList.add("hidden");
+      latexCanvasProgress.classList.add("hidden");
+      latexCanvasOverlay.classList.add("hidden");
+      latexCanvasStatus.innerHTML = "";
+      activateToggle(toggleDraw, true);
+      activateToggle(togglePhoto, false);
+      setupCanvas();
+    }
+
+    function hideUploadArea() {
+      uploadArea.classList.add("hidden");
+      activateToggle(togglePhoto, false);
+      activateToggle(toggleDraw, false);
+    }
+
+    togglePhoto.addEventListener("click", () => {
+      if (togglePhoto.classList.contains("bg-indigo-600")) {
         closeUpload();
+      } else {
+        showPhotoMode();
       }
     });
 
+    toggleDraw.addEventListener("click", () => {
+      if (toggleDraw.classList.contains("bg-indigo-600")) {
+        closeUpload();
+      } else {
+        showDrawMode();
+      }
+    });
+
+    // ─── Canvas drawing ──────────────────────────────────────
+    let isDrawing = false, isErasing = false;
+    let drawPrevX = 0, drawPrevY = 0;
+    let canvasSetupDone = false;
+    let canvasConverting = false;
+    let canvasTimerInterval = null;
+
+    const strokeWidthButtons = document.querySelectorAll(".stroke-width-btn");
+    const clearCanvasBtn = document.getElementById("latex-clear-canvas-btn");
+    const convertCanvasBtn = document.getElementById("latex-convert-canvas-btn");
+    const eraserBtn = document.getElementById("latex-eraser-btn");
+    const eraserIcon = document.getElementById("latex-eraser-icon");
+    const eraserLabel = document.getElementById("latex-eraser-label");
+    let currentStrokeWidth = 4;
+
+    // Fixed high internal resolution – CSS object-contain handles visual scaling
+    // No toDataURL/drawImage round-trip → keine Block-Artefakte
+    const INTERNAL_W = 2000, INTERNAL_H = 1125;
+
+    function setupCanvas() {
+      if (canvasSetupDone || !latexCanvas || !latexCtx) return;
+      canvasSetupDone = true;
+
+      latexCanvas.width = INTERNAL_W;
+      latexCanvas.height = INTERNAL_H;
+      latexCtx.fillStyle = "#ffffff";
+      latexCtx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+      latexCtx.lineCap = "round";
+      latexCtx.lineJoin = "round";
+      latexCtx.strokeStyle = "#111827";
+
+      // Abort in-progress strokes when CSS size changes
+      new ResizeObserver(() => { isDrawing = false; }).observe(latexCanvas);
+
+      strokeWidthButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          currentStrokeWidth = parseInt(btn.dataset.width);
+          strokeWidthButtons.forEach(b => {
+            b.classList.remove("bg-indigo-600");
+            b.classList.add("hover:bg-gray-100");
+            const circle = b.querySelector("div");
+            circle.classList.remove("border-white");
+            circle.classList.add("border-gray-800");
+          });
+          btn.classList.add("bg-indigo-600");
+          btn.classList.remove("hover:bg-gray-100");
+          const circle = btn.querySelector("div");
+          circle.classList.remove("border-gray-800");
+          circle.classList.add("border-white");
+        });
+      });
+
+      function getPos(e) {
+        const r = latexCanvas.getBoundingClientRect();
+        const cssX = (e.clientX ?? e.touches[0].clientX) - r.left;
+        const cssY = (e.clientY ?? e.touches[0].clientY) - r.top;
+        // Compute scale live from current CSS dims → keine Staleness nach Resize
+        const scale = Math.max(r.width / INTERNAL_W, r.height / INTERNAL_H);
+        const offX = (INTERNAL_W * scale - r.width) / 2;
+        const offY = (INTERNAL_H * scale - r.height) / 2;
+        return [(cssX + offX) / scale, (cssY + offY) / scale, scale];
+      }
+
+      latexCanvas.addEventListener("pointerdown", (e) => {
+        isDrawing = true;
+        const pos = getPos(e);
+        [drawPrevX, drawPrevY] = [pos[0], pos[1]];
+      });
+      latexCanvas.addEventListener("pointermove", (e) => {
+        if (!isDrawing) return;
+        const [x, y, scale] = getPos(e);
+        latexCtx.beginPath();
+        latexCtx.moveTo(drawPrevX, drawPrevY);
+        latexCtx.lineTo(x, y);
+        latexCtx.globalCompositeOperation = "source-over";
+        if (isErasing) {
+          latexCtx.lineWidth = (currentStrokeWidth * 3) / scale;
+          latexCtx.strokeStyle = "#ffffff";
+        } else {
+          latexCtx.lineWidth = currentStrokeWidth / scale;
+          latexCtx.strokeStyle = "#111827";
+        }
+        latexCtx.stroke();
+        [drawPrevX, drawPrevY] = [x, y];
+      });
+      const stopDraw = () => { isDrawing = false; };
+      latexCanvas.addEventListener("pointerup", stopDraw);
+      latexCanvas.addEventListener("pointerleave", stopDraw);
+    }
+
+    clearCanvasBtn?.addEventListener("click", () => {
+      if (latexCtx && latexCanvas) {
+        latexCtx.fillStyle = "#ffffff";
+        latexCtx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+      }
+    });
+
+    convertCanvasBtn?.addEventListener("click", () => {
+      convertCanvasToLatex();
+    });
+
+    eraserBtn?.addEventListener("click", () => {
+      isErasing = !isErasing;
+      if (isErasing) {
+        eraserIcon.textContent = "✏️";
+        eraserLabel.textContent = "Stift";
+        eraserBtn.classList.remove("bg-gray-200", "text-gray-600");
+        eraserBtn.classList.add("bg-indigo-600", "text-white");
+      } else {
+        eraserIcon.textContent = "🧽";
+        eraserLabel.textContent = "Radierer";
+        eraserBtn.classList.remove("bg-indigo-600", "text-white");
+        eraserBtn.classList.add("bg-gray-200", "text-gray-600");
+      }
+    });
+
+    // Toggle upload area visibility handled by togglePhoto/toggleDraw click listeners above
+
     function closeUpload() {
-      uploadArea.classList.add("hidden");
+      canvasConverting = false;
+      if (canvasTimerInterval) clearInterval(canvasTimerInterval);
+      canvasTimerInterval = null;
+      hideUploadArea();
+      latexCanvasProgress.classList.add("hidden");
+      latexCanvasOverlay.classList.add("hidden");
+      latexCanvasStatus.innerHTML = "";
+      photoMode.classList.add("hidden");
+      drawMode.classList.add("hidden");
       previewContainer.classList.add("hidden");
-      resultArea.classList.add("hidden");
       latexProgress.classList.add("hidden");
-      uploadBtn.classList.remove("bg-gray-50", "border-gray-300", "text-blue-700");
       fileInput.value = "";
-      currentLatex = "";
+      statusEl.innerHTML = "";
+      isErasing = false;
+      if (eraserBtn) {
+        eraserBtn.classList.remove("bg-indigo-600", "text-white");
+        eraserBtn.classList.add("bg-gray-200", "text-gray-600");
+      }
+      if (eraserIcon) {
+        eraserIcon.textContent = "🧽";
+      }
+      if (eraserLabel) {
+        eraserLabel.textContent = "Radierer";
+      }
+      currentStrokeWidth = 4;
+      if (strokeWidthButtons) {
+        strokeWidthButtons.forEach((b, i) => {
+          b.classList.remove("bg-indigo-600");
+          b.classList.add("hover:bg-gray-100");
+          const circle = b.querySelector("div");
+          circle.classList.remove("border-white");
+          circle.classList.add("border-gray-800");
+        });
+        strokeWidthButtons[1].classList.add("bg-indigo-600");
+        strokeWidthButtons[1].classList.remove("hover:bg-gray-100");
+        const circle = strokeWidthButtons[1].querySelector("div");
+        circle.classList.remove("border-gray-800");
+        circle.classList.add("border-white");
+      }
     }
 
     cancelBtn.addEventListener("click", closeUpload);
@@ -1007,6 +1263,10 @@
       if (fileInput.files.length > 0) handleFile(fileInput.files[0]);
     });
 
+    function switchToPhotoMode() {
+      showPhotoMode();
+    }
+
     function handleFile(file) {
       // Validate
       const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
@@ -1025,9 +1285,7 @@
         previewImg.src = e.target.result;
         fileNameEl.textContent = file.name + " (" + (file.size / 1024).toFixed(0) + " KB)";
         previewContainer.classList.remove("hidden");
-        resultArea.classList.add("hidden");
-
-        // Convert
+        statusEl.innerHTML = "";
         convertToLatex(e.target.result, file.type);
       };
       reader.readAsDataURL(file);
@@ -1075,27 +1333,84 @@
         clearInterval(timerInterval);
         latexProgressBar.style.width = "100%";
 
-        currentLatex = data.latex;
-        resultEl.textContent = data.latex;
-        resultArea.classList.remove("hidden");
-
-        // Hide progress, show success status
         latexProgress.classList.add("hidden");
-        statusEl.innerHTML = '<span class="text-green-600">✅ Formel erkannt (' + (data.latency_ms || 0) + 'ms)</span>';
+        insertLatexIntoSolution(data.latex);
+        statusEl.innerHTML = '<span class="text-green-600">✅ Formel eingefügt (' + (data.latency_ms || 0) + 'ms)</span>';
       })
       .catch((err) => {
         clearInterval(timerInterval);
         latexProgress.classList.add("hidden");
 
-        currentLatex = "";
-        resultArea.classList.add("hidden");
         statusEl.innerHTML = '<span class="text-red-600">❌ ' + err.message + '</span>';
       });
     }
 
-    // Insert LaTeX into solution
-    insertBtn.addEventListener("click", () => {
-      if (!currentLatex.trim()) return;
+    function convertCanvasToLatex() {
+      if (!latexCanvas || canvasConverting) return;
+      canvasConverting = true;
+
+      const dataUrl = latexCanvas.toDataURL("image/jpeg", 0.92);
+      latexCanvasStatus.innerHTML = "";
+      latexCanvasProgress.classList.remove("hidden");
+      latexCanvasOverlay.classList.remove("hidden");
+      latexCanvasTimer.textContent = "0s";
+      latexCanvasProgressBar.style.width = llmProgressPct(0) + "%";
+
+      let elapsed = 0;
+      canvasTimerInterval = setInterval(() => {
+        elapsed++;
+        latexCanvasTimer.textContent = elapsed + "s";
+        latexCanvasProgressBar.style.width = llmProgressPct(elapsed) + "%";
+      }, 1000);
+
+      const base64Data = dataUrl.split(",")[1];
+
+      fetch("/api/student/latex-from-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          image_base64: base64Data,
+          mime_type: "image/jpeg"
+        }),
+      })
+      .then(async (res) => {
+        let data;
+        try {
+          data = await res.json();
+        } catch {
+          data = { detail: "Server-Fehler" };
+        }
+        if (!res.ok) {
+          throw new Error(data.detail || "Konvertierung fehlgeschlagen");
+        }
+        return data;
+      })
+      .then((data) => {
+        clearInterval(canvasTimerInterval);
+        canvasTimerInterval = null;
+        latexCanvasProgressBar.style.width = "100%";
+        canvasConverting = false;
+
+        setTimeout(() => {
+          latexCanvasProgress.classList.add("hidden");
+          latexCanvasOverlay.classList.add("hidden");
+          insertLatexIntoSolution(data.latex);
+          latexCanvasStatus.innerHTML = '<span class="text-green-600">✅ Formel eingefügt (' + (data.latency_ms || 0) + 'ms)</span>';
+        }, 400);
+      })
+      .catch((err) => {
+        clearInterval(canvasTimerInterval);
+        canvasTimerInterval = null;
+        canvasConverting = false;
+        latexCanvasProgress.classList.add("hidden");
+        latexCanvasOverlay.classList.add("hidden");
+        latexCanvasStatus.innerHTML = '<span class="text-red-600">❌ ' + err.message + '</span>';
+      });
+    }
+
+    function insertLatexIntoSolution(latex) {
+      if (!latex.trim()) return;
 
       {% if task.task_type == 'text' %}
       const textarea = document.getElementById("text-solution");
@@ -1107,23 +1422,20 @@
         const before = textarea.value.substring(0, start);
         const after = textarea.value.substring(end);
 
-        // Add newline if needed
         const prefix = (before.length > 0 && !before.endsWith("\n")) ? "\n" : "";
 
-        textarea.value = before + prefix + currentLatex + after;
+        textarea.value = before + prefix + latex + after;
 
-        // Set cursor after inserted text
-        const newPos = start + prefix.length + currentLatex.length;
+        const newPos = start + prefix.length + latex.length;
         textarea.setSelectionRange(newPos, newPos);
         textarea.focus();
 
-        // Trigger input event for any linked editors
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
 
         showToast("LaTeX in Loesung eingefuegt!", "success");
         closeUpload();
       }
-    });
+    }
   })();
   {% endif %}
 

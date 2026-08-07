@@ -1530,20 +1530,20 @@
       'Solides Ergebnis – du bist auf dem richtigen Weg! 📈',
     ],
     '70to80': [
-      'Gratulation! Bronze verdient! 🥉',
-      'Gut gemacht! Bronze gewonnen! 🥉',
-      'Super Leistung – Bronze gesichert! 🥉',
+      'Gratulation! Bronze verdient!',
+      'Gut gemacht! Bronze gewonnen!',
+      'Super Leistung – Bronze gesichert!',
     ],
     '80to90': [
-      'Super! Silber verdient! 🥈',
-      'Ausgezeichnet! Du bist ein Profi! 🥈',
-      'Bravo! Silberne Leistung! 🥈',
+      'Super! Silber verdient!',
+      'Ausgezeichnet! Du bist ein Profi!',
+      'Bravo! Silberne Leistung!',
     ],
     '90to99': [
-      'Grandios! Gold verdient! 🥇',
-      'Herausragend! Du rockst das! 🥇',
-      'Fantastisch! Goldene Leistung! 🥇',
-      'Außergewöhnlich! Fast perfekt! 🥇',
+      'Grandios! Gold verdient!',
+      'Herausragend! Du rockst das!',
+      'Fantastisch! Goldene Leistung!',
+      'Außergewöhnlich! Fast perfekt!',
     ],
     '100': [
       'Absolute Perfektion! 💎 Meisterhaft!',
@@ -1623,7 +1623,7 @@
 
     let particles = [];
     let startTime = performance.now();
-    const DURATION = type === 'gold-rain' ? 4000 : type === 'fireworks-big' ? 3500 : type === 'fireworks-small' ? 2500 : 2000;
+    const DURATION = type === 'gold-rain' ? 5000 : type === 'fireworks-big' ? 3500 : type === 'fireworks-small' ? 3000 : 3000;
 
     if (type === 'confetti') {
       for (let i = 0; i < 80; i++) {
@@ -1640,15 +1640,15 @@
         });
       }
     } else if (type === 'fireworks-small') {
-      for (let f = 0; f < 2; f++) {
+      for (let f = 0; f < 6; f++) {
         setTimeout(() => spawnFirework(canvas, particles, { x: canvas.width * (0.3 + Math.random() * 0.4), y: canvas.height * (0.2 + Math.random() * 0.3) }), f * 400);
       }
     } else if (type === 'fireworks-big') {
-      for (let f = 0; f < 4; f++) {
+      for (let f = 0; f < 8; f++) {
         setTimeout(() => spawnFirework(canvas, particles, { x: canvas.width * (0.2 + Math.random() * 0.6), y: canvas.height * (0.1 + Math.random() * 0.4) }, true), f * 350);
       }
     } else if (type === 'gold-rain') {
-      for (let i = 0; i < 150; i++) {
+      for (let i = 0; i < 450; i++) {
         particles.push({
           x: Math.random() * canvas.width,
           y: Math.random() * canvas.height * -0.5,
@@ -1722,9 +1722,11 @@
         particles.push({
           x: pos.x, y: pos.y,
           vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed,
-          size: big ? (2+Math.random()*1.5) : (1.5+Math.random()),
+          //size: big ? (2+Math.random()*1.5) : (1.5+Math.random()),
+          size: big ? (2+Math.random()*1.5) : (1.7+Math.random()*1.2),
           color: colors[Math.floor(Math.random()*colors.length)],
-          life: big ? (60+Math.floor(Math.random()*30)) : (40+Math.floor(Math.random()*20)),
+          //life: big ? (60+Math.floor(Math.random()*30)) : (40+Math.floor(Math.random()*20)),
+          life: big ? (60+Math.floor(Math.random()*30)) : (50+Math.floor(Math.random()*25)),
           maxLife: big ? 90 : 60,
         });
       }

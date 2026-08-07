@@ -433,7 +433,12 @@
       <div class="badge-message" id="badge-message"></div>
       <div class="badge-sub" id="badge-sub"></div>
       <div id="badge-tier-container"></div>
-      <button class="badge-close" id="badge-close">Weiter</button>
+      <div id="badge-actions" class="flex items-center justify-center gap-3 mt-4">
+        <button class="badge-action-btn badge-action-primary" id="badge-feedback-btn">📋 Feedback</button>
+        {% if next_task %}
+        <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}" class="badge-action-btn" id="badge-next-btn">Nächste Aufgabe →</a>
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -488,8 +493,10 @@
   .badge-modal .badge-emoji { font-size:3.5rem; margin-bottom:0.5rem; display:block; animation:badgeBounce 0.6s ease; }
   .badge-modal .badge-message { font-size:1.25rem; font-weight:700; color:#1f2937; margin-bottom:0.25rem; }
   .badge-modal .badge-sub { font-size:0.85rem; color:#6b7280; margin-bottom:1rem; }
-  .badge-modal .badge-close { margin-top:0.75rem; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:0.75rem; padding:0.5rem 1.5rem; font-size:0.85rem; color:#374151; cursor:pointer; transition:background 0.2s; }
-  .badge-modal .badge-close:hover { background:#e5e7eb; }
+  .badge-modal .badge-action-btn { margin-top:0.75rem; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:0.75rem; padding:0.5rem 1.5rem; font-size:0.85rem; color:#374151; cursor:pointer; transition:background 0.2s; text-decoration:none; display:inline-flex; align-items:center; gap:0.35rem; }
+  .badge-modal .badge-action-btn:hover { background:#e5e7eb; }
+  .badge-modal .badge-action-primary { background:linear-gradient(135deg, #6366f1, #8b5cf6); border:none; color:#fff; box-shadow:0 4px 12px rgba(99,102,241,0.35); }
+  .badge-modal .badge-action-primary:hover { background:linear-gradient(135deg, #4f46e5, #7c3aed); box-shadow:0 4px 16px rgba(99,102,241,0.5); }
   @keyframes badgeBounce { 0%{transform:scale(0);} 50%{transform:scale(1.2);} 70%{transform:scale(0.9);} 100%{transform:scale(1);} }
 
   /* Canvas for effects */
@@ -1592,8 +1599,21 @@
     }
 
     overlay.classList.add('active');
-    const closeBtn = document.getElementById('badge-close');
-    closeBtn.onclick = () => overlay.classList.remove('active');
+
+    // Wire up Feedback button: close overlay + scroll to LLM feedback
+    const feedbackBtn = document.getElementById('badge-feedback-btn');
+    feedbackBtn.onclick = () => {
+      overlay.classList.remove('active');
+      const feedbackArea = document.getElementById('feedback-area');
+      const newCard = feedbackArea.firstElementChild;
+      if (newCard) {
+        const feedbackBox = newCard.querySelector('.feedback-box.feedback-llm');
+        if (feedbackBox) {
+          setTimeout(() => feedbackBox.scrollIntoView({ behavior: 'smooth', block: 'center' }), 200);
+        }
+      }
+    };
+
     overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('active'); };
   }
 

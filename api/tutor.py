@@ -321,6 +321,47 @@ async def toggle_task_visibility(
     return {"message": f"Aufgabe ist jetzt {status_msg}.", "is_visible": task.is_visible}
 
 
+@router.post("/tasks/{task_id}/reset-own-submissions")
+async def reset_own_submissions(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Loescht alle eigenen Einreichungen fuer eine Aufgabe (nur PROF/TUTOR).
+
+    Ermoeoglicht Tutoren/PROFs, ihre eigenen Tests zurueckzusetzen, um
+    die Aufgabe ausfuehrlicher testen zu koennen (Student-View).
+    """
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == task.course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Keine Berechtigung.")
+
+    # Finde alle eigenen Einreichungen (inkl. Feedback)
+    own_subs = session.exec(
+        select(Submission)
+        .where(Submission.task_id == task_id)
+        .where(Submission.student_id == user.id)
+    ).all()
+
+    count = 0
+    for sub in own_subs:
+        for fb in sub.feedback_list:
+            session.delete(fb)
+        session.delete(sub)
+        count += 1
+
+    session.commit()
+    return {"message": f"{count} Einreichung(en) zurueckgesetzt."}
+
+
 class TaskReorderRequest(SQLModel):
     task_ids: list[int]
 

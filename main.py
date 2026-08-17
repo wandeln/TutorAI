@@ -819,10 +819,16 @@ async def task_page(
     if not is_tutor and not task.is_visible:
         raise HTTPException(404, "Aufgabe nicht gefunden oder noch nicht freigeschaltet.")
 
+    # Tutoren koennen mit ?as_student=1 die Aufgabe aus Studentensicht sehen
+    is_student_view = is_tutor and request.query_params.get("as_student") in ("1", "true")
+
     is_code = task.task_type.value == "code"
 
+    # Tutoren in Student-View: Zeige alle Aufgaben (auch versteckte) bei Prev/Next
+    show_hidden = is_tutor  # egal ob as_student oder nicht
+
     template = (
-        "tutor/task_detail.html" if is_tutor
+        "tutor/task_detail.html" if (is_tutor and not is_student_view)
         else "student/task_solve.html"
     )
 
@@ -836,23 +842,24 @@ async def task_page(
         .where(Task.display_order < task.display_order)  # type: ignore[operator]
         .order_by(Task.display_order.desc())  # type: ignore[attr-defined]
     )
-    if not is_tutor:
+    if not show_hidden:
         prev_query = prev_query.where(Task.is_visible == True)  # type: ignore[operator]
     prev_task = session.exec(prev_query).first()
 
+    # Studenten: nur sichtbar e Aufgaben, TUTs/PROFs: alle Aufgaben
     next_query = (
         select(Task)
         .where(Task.course_id == course_id)
         .where(Task.display_order > task.display_order)  # type: ignore[operator]
         .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     )
-    if not is_tutor:
+    if not show_hidden:
         next_query = next_query.where(Task.is_visible == True)  # type: ignore[operator]
     next_task = session.exec(next_query).first()
 
     my_submissions = []
     latest_points = 0
-    if not is_tutor:
+    if not is_tutor or is_student_view:
         subs = session.exec(
             select(Submission)
             .where(Submission.task_id == task.id)
@@ -954,6 +961,7 @@ async def task_page(
                 "hints_enabled": task.hints_enabled,
             },
             "is_tutor": is_tutor,
+            "is_student_view": is_student_view,
             "is_code": is_code,
             "code_editor": is_code,
             "my_submissions": my_submissions,

@@ -217,6 +217,10 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           {% endif %}
         </button>
+        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}?as_student=1"
+           class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium flex items-center gap-2">
+          👁️&#x200B; Student-View
+        </a>
         <button type="submit" id="save-task-btn"
                 class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
           {% if task %}Aufgabe aktualisieren{% else %}Aufgabe erstellen{% endif %}

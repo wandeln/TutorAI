@@ -56,6 +56,21 @@ def filter_public_test_results(test_results: list) -> list:
     return [t for t in test_results if 'PublicTest' in t.get('name', '')]
 
 
+# Helper: Ueberprueft Kurs-Zugriff (Student, Tutor oder PROF)
+def _check_course_access(session: Session, user: User, course_id: int) -> bool:
+    """Returns True if user is a member of the course with any valid role."""
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership:
+        return False
+    return membership.role_in_course in (
+        CourseRole.STUDENT, CourseRole.TUTOR, CourseRole.PROF
+    )
+
+
 # Helper: Formatiere Test-Ausgabe fuer Studierende
 def format_test_error(output: str) -> dict:
     """
@@ -131,7 +146,7 @@ async def get_task_detail(
         .where(UserCourse.course_id == task.course_id)
     ).first()
 
-    if not membership:
+    if not _check_course_access(session, user, task.course_id):
         raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
 
     public_test_code = extract_public_tests(task.test_code or "")
@@ -182,7 +197,7 @@ async def submit_solution(
         .where(UserCourse.course_id == task.course_id)
     ).first()
 
-    if not membership or membership.role_in_course != CourseRole.STUDENT:
+    if not _check_course_access(session, user, task.course_id):
         raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
 
     body = await request.json()

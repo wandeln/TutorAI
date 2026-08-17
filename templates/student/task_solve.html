@@ -16,6 +16,19 @@
     </div>
     <h1 class="text-2xl font-bold text-gray-900">{{ task.title }}</h1>
 
+    {% if is_student_view %}
+    <div class="flex gap-2 mt-3">
+      <a href="/courses/{{ course.id }}/tasks/{{ task.id }}"
+         class="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-green-700 transition font-medium">
+        ✏️&#x200B; Aufgabe bearbeiten
+      </a>
+      <button type="button" id="reset-submissions-btn"
+              class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-red-700 transition font-medium">
+        🗑️&#x200B; Einreichungen zurücksetzen
+      </button>
+    </div>
+    {% endif %}
+
     <div class="flex gap-2 mt-3">
       {% set badge_class = {
         'text': 'badge-text',
@@ -44,7 +57,7 @@
   <!-- Task Navigation -->
   <div class="flex items-center justify-between mb-6" style="max-height:fit-content">
     {% if prev_task %}
-      <a href="/courses/{{ course.id }}/tasks/{{ prev_task.id }}"
+      <a href="/courses/{{ course.id }}/tasks/{{ prev_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
                 text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:stretch">
         <span class="text-lg">←</span>
@@ -58,7 +71,7 @@
     {% endif %}
 
     {% if next_task %}
-      <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}"
+      <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
          class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
                 text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:stretch">
         <div class="flex flex-col items-end text-right">
@@ -2218,5 +2231,36 @@
       updateTierBadgeIcon(tier.badge);
     }
   })();
+
+  // ─── Reset submissions button (Tutor in student view) ────────
+  {% if is_student_view %}
+  (function() {
+    const btn = document.getElementById('reset-submissions-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!confirm('Wirklich alle eigenen Einreichungen fuer diese Aufgabe loeschen? Dies kann nicht rueckgaengig gemacht werden.')) return;
+      btn.disabled = true;
+      btn.textContent = '⏳ Loesche...';
+      try {
+        const res = await fetch('/api/tasks/{{ task.id }}/reset-own-submissions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          showToast(data.detail || 'Fehler beim Ruecksetzen', 'error');
+          return;
+        }
+        location.reload();
+      } catch (e) {
+        showToast('Netzwerkfehler', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '\u{1F5D1}\u200B Einreichungen zuruecksetzen';
+      }
+    });
+  })();
+  {% endif %}
 </script>
 {% endblock %}

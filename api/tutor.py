@@ -491,7 +491,11 @@ async def ai_suggest_task(
     
     if not result.get("success"):
         raise HTTPException(500, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
-    
+
+    suggestion = result.get("data", {})
+    if not suggestion.get("title") and not suggestion.get("description"):
+        raise HTTPException(500, "LLM hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.")
+
     return {
         "suggestion": result.get("data", {}),
         "latency_ms": result.get("latency_ms", 0),

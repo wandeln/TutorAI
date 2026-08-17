@@ -138,7 +138,7 @@ class LLMService:
             context=context,
         )
 
-        return await self._call_with_json(prompt, config=config)
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
     async def generate_model_solution(
         self,
@@ -533,6 +533,10 @@ class LLMService:
                 except json.JSONDecodeError:
                     # Fallback: JSON aus freiem Text extrahieren
                     result = self._extract_json(content)
+                    if result is None:
+                        last_error = "LLM hat kein gueltiges JSON geliefert"
+                        logger.warning(f"_call_with_json JSON extraction failed (attempt {attempt+1}/{max_retries})")
+                        continue
 
                 if config:
                     await client.close()
@@ -582,13 +586,33 @@ class LLMService:
         return self.client
 
     @staticmethod
-    def _extract_json(text: str) -> dict:
-        """Versucht, JSON aus freiem Text zu extrahieren (zwischen { })."""
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            try:
-                return json.loads(text[start:end])
-            except json.JSONDecodeError:
-                pass
-        return {"error": "Konnte kein JSON extrahieren", "raw": text}
+    def _extract_json(text: str) -> Optional[dict]:
+        """Versucht, JSON aus freiem Text zu extrahieren.
+
+        Prueft zuerst auf ```json-Codeblocks, dann auf { }-Muster.
+        Gibt None zurueck, wenn kein gultiges JSON gefunden wurde.
+        """
+        # First try to extract from ```json ... ``` code blocks
+        json_block = None
+        cb_start = text.find("```json")
+        if cb_start >= 0:
+            cb_start = text.find("{", cb_start)
+            cb_end = text.rfind("}")
+            if cb_start >= 0 and cb_end > cb_start:
+                json_block = text[cb_start:cb_end + 1]
+
+        # Also try raw { } extraction
+        raw_start = text.find("{")
+        raw_end = text.rfind("}") + 1
+        raw_block = None
+        if raw_start >= 0 and raw_end > raw_start:
+            raw_block = text[raw_start:raw_end]
+
+        # Try code block first, then raw
+        for block in (json_block, raw_block):
+            if block:
+                try:
+                    return json.loads(block)
+                except json.JSONDecodeError:
+                    continue
+        return None

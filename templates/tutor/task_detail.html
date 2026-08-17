@@ -398,6 +398,13 @@ class PrivateTest(unittest.TestCase):
 
       const suggestion = data.suggestion || data;
 
+      // Validate: if no title and no description, the LLM returned garbage
+      if (!suggestion.title && !suggestion.description) {
+        showToast("LLM-Antwort war leer oder ungültig. Bitte erneut versuchen.", "error");
+        progressDiv.classList.add("hidden");
+        return;
+      }
+
       // Directly populate form fields (like LLM solution does)
       if (suggestion.title) {
         document.querySelector('input[name="title"]').value = suggestion.title;

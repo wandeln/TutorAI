@@ -201,13 +201,16 @@
       data.tasks.forEach(task => {
         const points = data.scores[student.id]?.[task.id] || 0;
         const overridden = data.has_override?.[student.id]?.[task.id] || false;
+        const submitted = data.has_submitted?.[student.id]?.[task.id] || false;
         totalPoints += points;
         const pct = task.max_points > 0 ? points / task.max_points : 0;
         const cellClass = pct >= 0.8 ? 'score-pass' : pct >= 0.5 ? 'score-warning' : 'score-fail';
-        const bgClass = pct >= 0.8 ? 'bg-green-50' : pct >= 0.5 ? 'bg-yellow-50' : points > 0 ? 'bg-red-50' : 'bg-gray-50';
+        const bgClass = submitted
+            ? (pct >= 0.8 ? 'bg-green-50' : pct >= 0.5 ? 'bg-yellow-50' : 'bg-red-50')
+            : 'bg-gray-50';
 
         const overrideBadge = overridden ? ' 🖊️' : '';
-        const displayVal = points > 0 ? points : '-';
+        const displayVal = submitted ? points : '-';
         const titleText = task.title + ': ' + points + '/' + task.max_points + (overridden ? ' (Tutor-Bewertung)' : '');
         const reviewUrl = '/courses/' + courseId + '/tasks/' + task.id + '/students/' + student.id + '/review';
 

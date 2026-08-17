@@ -439,10 +439,12 @@ async def get_course_overview(
     # Scores berechnen
     scores = {}  # { student_id: { task_id: points } }
     has_override = {}  # { student_id: { task_id: bool } }
+    has_submitted = {}  # { student_id: { task_id: bool } }
 
     for student in students:
         scores[student.id] = {}
         has_override[student.id] = {}
+        has_submitted[student.id] = {}
         for task in tasks:
             subs = session.exec(
                 select(Submission)
@@ -456,6 +458,7 @@ async def get_course_overview(
             override_exists = False
             if subs:
                 latest_sub = subs[0]  # newest
+                has_submitted[student.id][task.id] = True
                 for fb in latest_sub.feedback_list:
                     if fb.source == FeedbackSource.HUMAN:
                         human_points = max(human_points, fb.points_earned)
@@ -492,6 +495,7 @@ async def get_course_overview(
         "students": student_list,
         "scores": scores,
         "has_override": has_override,
+        "has_submitted": has_submitted,
         "max_total": max_total,
     }
 

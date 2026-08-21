@@ -138,8 +138,8 @@ class LLMService:
         Das LLM liefert JSON mit EXAKT diesen Schlüsseln — nicht angeforderte
         Felder werden nicht zurückgegeben.
 
-        Enthält keine sensitive Studentendaten — nutzt daher den zweiten
-        (öffentlichen) LLM-Endpoint, falls konfiguriert.
+        Enthält keine sensitive Studentendaten — nutzt daher den Public
+        Endpoint, falls konfiguriert.
         """
         task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(task_type, task_type)
         generate_list = ", ".join(f'"{f}"' for f in generate_fields)
@@ -204,8 +204,8 @@ class LLMService:
 
         Benötigt die bereits generierte Musterlösung als Refernz.
 
-        Enthält keine sensitive Studentendaten — nutzt daher den zweiten
-        (öffentlichen) LLM-Endpoint, falls konfiguriert.
+        Enthält keine sensitive Studentendaten — nutzt daher den Public
+        Endpoint, falls konfiguriert.
 
         Returns JSON mit:
             code_template, public_tests, private_tests
@@ -571,10 +571,10 @@ class LLMService:
     def _public_config(self, config: Optional[dict]) -> Optional[dict]:
         """Config für nicht-sensitive Aufgaben (z. B. Task-/Musterlösung-Generierung).
 
-        Nutzt den zweiten (öffentlichen) LLM-Endpoint, falls konfiguriert
-        (api_url_public). API-Key und Modell fallen pro Feld auf die
-        Haupt-Config zurück. Ohne api_url_public wird die Config unverändert
-        zurückgegeben (gleicher Endpoint wie für sensitive Daten).
+        Nutzt den Public Endpoint (api_url_public), falls konfiguriert.
+        API-Key und Modell fallen pro Feld auf die Private-Endpoint-Config
+        zurück. Ohne api_url_public wird die Config unverändert zurückgegeben
+        (gleicher Endpoint wie für sensitive Daten).
         """
         if not config:
             return config

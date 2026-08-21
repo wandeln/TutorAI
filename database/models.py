@@ -366,8 +366,8 @@ class GlobalSettings(SQLModel, table=True):
     llm_api_key: Optional[str] = None
     llm_model: Optional[str] = None
     grading_prompt: Optional[str] = None
-    # Zweiter LLM-Endpoint für nicht-sensitive Aufgaben (z. B. Task-/Musterlösung-Generierung).
-    # Leer = gleicher Endpoint wie llm_api_url.
+    # Public Endpoint für nicht-sensitive Aufgaben (z. B. Task-/Musterlösung-Generierung).
+    # Leer = Private Endpoint (llm_api_url) wird verwendet.
     llm_api_url_public: Optional[str] = None
     llm_api_key_public: Optional[str] = None
     llm_model_public: Optional[str] = None

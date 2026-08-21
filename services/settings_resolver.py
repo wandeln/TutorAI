@@ -36,7 +36,7 @@ def get_effective_llm_config(
             "model": str,
             "grading_prompt": str | None,
             "source": "course" | "global" | "env",
-            # Zweiter Endpoint für nicht-sensitive Aufgaben
+            # Public Endpoint (nicht-sensitive Aufgaben)
             "api_url_public": str,
             "api_key_public": str,
             "model_public": str,
@@ -91,7 +91,7 @@ def get_effective_llm_config(
         "model": model,
         "grading_prompt": grading_prompt,
         "source": source,
-        # Zweiter Endpoint für nicht-sensitive Aufgaben (leer = Fallback auf Haupt-Endpoint)
+        # Public Endpoint (leer = Fallback auf Private Endpoint)
         "api_url_public": api_url_public,
         "api_key_public": api_key_public,
         "model_public": model_public,

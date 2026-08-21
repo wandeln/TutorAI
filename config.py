@@ -40,9 +40,9 @@ LLM_MODEL = os.getenv("LLM_MODEL", "Qwen3-32B")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
 
-# Zweiter LLM-Endpoint für nicht-sensitive Aufgaben
+# Public Endpoint für nicht-sensitive Aufgaben
 # (z. B. Generierung neuer Aufgaben oder Musterlösungen).
-# Leer lassen = gleicher Endpoint wie für sensitive Studenten-Daten.
+# Leer lassen = Private Endpoint (wie oben) wird verwendet.
 LLM_API_URL_PUBLIC = os.getenv("LLM_API_URL_PUBLIC", "")
 LLM_API_KEY_PUBLIC = os.getenv("LLM_API_KEY_PUBLIC", "")
 LLM_MODEL_PUBLIC = os.getenv("LLM_MODEL_PUBLIC", "")

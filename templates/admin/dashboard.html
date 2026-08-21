@@ -144,6 +144,13 @@
           <div class="card">
             <div class="space-y-4">
               <div>
+                <h3 class="text-sm font-semibold text-gray-700">Private Endpoint</h3>
+                <p class="text-xs text-gray-400 mt-1">
+                  Für LLM-Aufgaben <strong>mit</strong> sensitiven Studentendaten
+                  (z. B. Korrektur, Hinweise, Reports).
+                </p>
+              </div>
+              <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">API-Endpoint</label>
                 <input type="text" id="setting-llm-url"
                        placeholder="http://llm-server.uni.de:8001/v1"
@@ -167,24 +174,24 @@
 
               <div class="flex gap-3">
                 <button onclick="testLlmConnection()" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition">
-                  🧪 Ersten Endpoint testen
+                  🧪 Private Endpoint testen
                 </button>
               </div>
               <div id="llm-test-result" class="hidden text-sm"></div>
 
               <div class="border-t border-gray-200 pt-4">
-                <h3 class="text-sm font-semibold text-gray-700">Zweiter Endpoint (optional)</h3>
+                <h3 class="text-sm font-semibold text-gray-700">Public Endpoint (optional)</h3>
                 <p class="text-xs text-gray-400 mt-1 mb-3">
-                  Für Aufgaben <strong>ohne</strong> sensitive Studentendaten
+                  Für LLM-Aufgaben <strong>ohne</strong> sensitive Studentendaten
                   (z. B. Generierung neuer Aufgaben oder Musterlösungen).
-                  Leer lassen = gleicher Endpoint wie oben.
+                  Leer lassen = Private Endpoint wird verwendet.
                 </p>
 
                 <div class="space-y-4">
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">API-Endpoint</label>
                     <input type="text" id="setting-llm-url-public"
-                           placeholder="Leer = gleicher Endpoint wie oben"
+                           placeholder="Leer = Private Endpoint"
                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono">
                   </div>
 
@@ -205,7 +212,7 @@
 
                   <div class="flex gap-3">
                     <button onclick="testLlmConnection('public')" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition">
-                      🧪 Zweiten Endpoint testen
+                      🧪 Public Endpoint testen
                     </button>
                   </div>
                   <div id="llm-test-result-public" class="hidden text-sm"></div>
@@ -652,7 +659,7 @@
       document.getElementById('setting-llm-model').value = data.llm_model || '';
       document.getElementById('setting-llm-key').value = '';
 
-      // Zweiter LLM-Endpoint (nicht-sensitive Aufgaben); Key wird NICHT befuellen
+      // Public Endpoint (nicht-sensitive Aufgaben); Key wird NICHT befuellen
       document.getElementById('setting-llm-url-public').value = data.llm_api_url_public || '';
       document.getElementById('setting-llm-model-public').value = data.llm_model_public || '';
       document.getElementById('setting-llm-key-public').value = '';
@@ -683,7 +690,7 @@
       llm_api_url: document.getElementById('setting-llm-url').value.trim() || null,
       llm_api_key: document.getElementById('setting-llm-key').value.trim() || null,
       llm_model: document.getElementById('setting-llm-model').value.trim() || null,
-      // Zweiter Endpoint: URL/Modell "" = Fallback auf Haupt-Endpoint (erlaubt Löschen);
+      // Public Endpoint: URL/Modell "" = Fallback auf Private Endpoint (erlaubt Löschen);
       // API-Key "" = bestehenden Key behalten (Feld wird nicht befuellt).
       llm_api_url_public: document.getElementById('setting-llm-url-public').value.trim(),
       llm_api_key_public: document.getElementById('setting-llm-key-public').value.trim() || null,

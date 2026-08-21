@@ -539,6 +539,9 @@ async def get_global_settings(
         "llm_api_url": gs.llm_api_url,
         "llm_model": gs.llm_model,
         "grading_prompt": gs.grading_prompt,
+        # Zweiter LLM-Endpoint (nicht-sensitive Aufgaben); API-Key wird nicht ausgegeben
+        "llm_api_url_public": gs.llm_api_url_public,
+        "llm_model_public": gs.llm_model_public,
         "use_ldap": gs.use_ldap,
         "ldap_server": gs.ldap_server,
         "ldap_base_dn": gs.ldap_base_dn,
@@ -573,6 +576,8 @@ async def update_global_settings(
             "id": gs.id,
             "use_ldap": gs.use_ldap,
             "llm_model": gs.llm_model,
+            "llm_api_url_public": gs.llm_api_url_public,
+            "llm_model_public": gs.llm_model_public,
             "ldap_server": gs.ldap_server,
             "ldap_base_dn": gs.ldap_base_dn,
             "ldap_bind_dn": gs.ldap_bind_dn,

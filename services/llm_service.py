@@ -137,6 +137,9 @@ class LLMService:
         generate_fields: Untermenge von ["title", "description", "model_solution"].
         Das LLM liefert JSON mit EXAKT diesen Schlüsseln — nicht angeforderte
         Felder werden nicht zurückgegeben.
+
+        Enthält keine sensitive Studentendaten — nutzt daher den zweiten
+        (öffentlichen) LLM-Endpoint, falls konfiguriert.
         """
         task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(task_type, task_type)
         generate_list = ", ".join(f'"{f}"' for f in generate_fields)
@@ -153,7 +156,9 @@ class LLMService:
             code_template=code_template,
         )
 
-        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
+        return await self._call_with_json(
+            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
 
     async def generate_socratic_hint(
         self,
@@ -199,6 +204,9 @@ class LLMService:
 
         Benötigt die bereits generierte Musterlösung als Refernz.
 
+        Enthält keine sensitive Studentendaten — nutzt daher den zweiten
+        (öffentlichen) LLM-Endpoint, falls konfiguriert.
+
         Returns JSON mit:
             code_template, public_tests, private_tests
         """
@@ -208,7 +216,9 @@ class LLMService:
             model_solution=model_solution,
         )
 
-        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
+        return await self._call_with_json(
+            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
 
     async def convert_image_to_latex(
         self,
@@ -557,6 +567,24 @@ class LLMService:
             "latency_ms": 0,
             "raw_response": "",
         }
+
+    def _public_config(self, config: Optional[dict]) -> Optional[dict]:
+        """Config für nicht-sensitive Aufgaben (z. B. Task-/Musterlösung-Generierung).
+
+        Nutzt den zweiten (öffentlichen) LLM-Endpoint, falls konfiguriert
+        (api_url_public). API-Key und Modell fallen pro Feld auf die
+        Haupt-Config zurück. Ohne api_url_public wird die Config unverändert
+        zurückgegeben (gleicher Endpoint wie für sensitive Daten).
+        """
+        if not config:
+            return config
+        if not config.get("api_url_public"):
+            return config
+        public = dict(config)
+        public["api_url"] = config["api_url_public"]
+        public["api_key"] = config.get("api_key_public") or config.get("api_key") or self.api_key
+        public["model"] = config.get("model_public") or config.get("model") or self.model
+        return public
 
     def _get_client(self, config: Optional[dict] = None) -> AsyncOpenAI:
         """Gibt einen OpenAI-Client zurueck.

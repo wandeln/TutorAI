@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from config import BASE_DIR, DEBUG, LLM_TIMEOUT
-from database.base import create_db_and_tables, engine, get_session
+from database.base import create_db_and_tables, engine, get_session, migrate_schema
 from database.models import (
     Course,
     CourseInvite,
@@ -80,8 +80,9 @@ def _get_best_score(subs: Sequence[Submission]) -> float:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """App-Start: DB-Tabellen erstellen + Admin-User bei leerer DB."""
+    """App-Start: DB-Tabellen erstellen + Schema-Migration + Admin-User bei leerer DB."""
     create_db_and_tables()
+    migrate_schema()
 
     # Admin-User anlegen, wenn DB leer
     with Session(engine) as session:

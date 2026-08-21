@@ -366,6 +366,11 @@ class GlobalSettings(SQLModel, table=True):
     llm_api_key: Optional[str] = None
     llm_model: Optional[str] = None
     grading_prompt: Optional[str] = None
+    # Zweiter LLM-Endpoint für nicht-sensitive Aufgaben (z. B. Task-/Musterlösung-Generierung).
+    # Leer = gleicher Endpoint wie llm_api_url.
+    llm_api_url_public: Optional[str] = None
+    llm_api_key_public: Optional[str] = None
+    llm_model_public: Optional[str] = None
     use_ldap: bool = Field(default=False)
     ldap_server: Optional[str] = None
     ldap_base_dn: Optional[str] = None
@@ -379,6 +384,9 @@ class GlobalSettingsUpdate(SQLModel):
     llm_api_key: Optional[str] = None
     llm_model: Optional[str] = None
     grading_prompt: Optional[str] = None
+    llm_api_url_public: Optional[str] = None
+    llm_api_key_public: Optional[str] = None
+    llm_model_public: Optional[str] = None
     use_ldap: Optional[bool] = None
     ldap_server: Optional[str] = None
     ldap_base_dn: Optional[str] = None
@@ -393,6 +401,9 @@ class GlobalSettingsRead(SQLModel, from_attributes=True):
     llm_api_key: Optional[str]
     llm_model: Optional[str]
     grading_prompt: Optional[str]
+    llm_api_url_public: Optional[str]
+    llm_api_key_public: Optional[str]
+    llm_model_public: Optional[str]
     use_ldap: bool
     ldap_server: Optional[str]
     ldap_base_dn: Optional[str]

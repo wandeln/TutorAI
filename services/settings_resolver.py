@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 
 from config import (
     LLM_API_URL, LLM_API_KEY, LLM_MODEL,
+    LLM_API_URL_PUBLIC, LLM_API_KEY_PUBLIC, LLM_MODEL_PUBLIC,
     LDAP_ENABLED, LDAP_SERVER, LDAP_BASE_DN,
     LDAP_BIND_DN, LDAP_BIND_PW, LDAP_USER_SEARCH,
 )
@@ -35,12 +36,19 @@ def get_effective_llm_config(
             "model": str,
             "grading_prompt": str | None,
             "source": "course" | "global" | "env",
+            # Zweiter Endpoint für nicht-sensitive Aufgaben
+            "api_url_public": str,
+            "api_key_public": str,
+            "model_public": str,
         }
     """
     # Start: config.py Defaults (.env + hardcoded)
     api_url = LLM_API_URL
     api_key = LLM_API_KEY
     model = LLM_MODEL
+    api_url_public = LLM_API_URL_PUBLIC
+    api_key_public = LLM_API_KEY_PUBLIC
+    model_public = LLM_MODEL_PUBLIC
     grading_prompt = None
     source = "env"
 
@@ -56,6 +64,12 @@ def get_effective_llm_config(
             model = gs.llm_model
         if gs.grading_prompt:
             grading_prompt = gs.grading_prompt
+        if gs.llm_api_url_public:
+            api_url_public = gs.llm_api_url_public
+        if gs.llm_api_key_public:
+            api_key_public = gs.llm_api_key_public
+        if gs.llm_model_public:
+            model_public = gs.llm_model_public
 
     # Ebene 1: course_settings (Override)
     if course_id:
@@ -77,6 +91,10 @@ def get_effective_llm_config(
         "model": model,
         "grading_prompt": grading_prompt,
         "source": source,
+        # Zweiter Endpoint für nicht-sensitive Aufgaben (leer = Fallback auf Haupt-Endpoint)
+        "api_url_public": api_url_public,
+        "api_key_public": api_key_public,
+        "model_public": model_public,
     }
 
 

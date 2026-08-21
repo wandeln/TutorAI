@@ -26,6 +26,65 @@
     <input type="hidden" name="task_id" value="{{ task.id }}">
     {% endif %}
 
+    <!-- ─── LLM Task Generation (unified) ─────────────────────── -->
+    <div class="bg-purple-50 border-2 border-purple-300 rounded-xl p-6">
+      <h2 class="font-semibold text-gray-800 mb-4">🤖 LLM-Aufgabe generieren</h2>
+
+      <div class="flex flex-wrap gap-x-4 gap-y-2 mb-4">
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" id="field-title" checked class="rounded text-purple-600">
+          Titel
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" id="field-description" checked class="rounded text-purple-600">
+          Aufgabenstellung
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" id="field-solution" checked class="rounded text-purple-600">
+          Musterlösung
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if not task or task.task_type != 'code' %}hidden{% endif %}">
+          <input type="checkbox" id="field-template" checked class="rounded text-purple-600">
+          Code-Vorlage
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if not task or task.task_type != 'code' %}hidden{% endif %}">
+          <input type="checkbox" id="field-tests" checked class="rounded text-purple-600">
+          Tests (Public + Private)
+        </label>
+      </div>
+
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="ai-topic">Thema / Änderungswunsch</label>
+      <textarea id="ai-topic" rows="3"
+                placeholder="Thema der Aufgabe (z.B. Rekursion) — oder konkrete Änderungswünsche an die bestehende Aufgabe (z.B. „Etwas schwieriger formulieren“, „ein Beispiel ergänzen“, „kürzer fassen“). Leer lassen, wenn das LLM frei überarbeiten soll."
+                class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm"></textarea>
+
+      <div id="ai-generate-progress" class="hidden mt-4">
+        <div class="flex items-center gap-2 text-sm text-purple-700">
+          <span id="ai-generate-status">⏳ LLM generiert/ändert Aufgabe...</span>
+          <span id="ai-generate-timer" class="font-mono">0s</span>
+        </div>
+        <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
+          <div id="ai-generate-progress-bar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+        </div>
+        <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-3 mt-4">
+        <div class="flex items-center gap-2">
+          <label class="text-sm font-medium text-gray-700" for="ai-difficulty">Schwierigkeit:</label>
+          <select id="ai-difficulty" class="border border-purple-300 rounded px-3 py-1.5 text-sm">
+            <option value="einfach">Einfach</option>
+            <option value="mittel" selected>Mittel</option>
+            <option value="schwer">Schwer</option>
+          </select>
+        </div>
+        <button type="button" id="ai-generate-btn"
+                class="bg-purple-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-medium">
+          Generieren / ändern
+        </button>
+      </div>
+    </div>
+
     <!-- ─── Basic Info ─────────────────────────────────────────── -->
     <div class="card">
       <h2 class="font-semibold text-gray-800 mb-4">Grundlegendes</h2>
@@ -57,7 +116,7 @@
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Max. Punkte</label>
-          <input type="number" name="max_points" min="0" value="{{ task.max_points if task else 10 }}"
+          <input type="number" name="max_points" min="0" required value="{{ task.max_points if task else 10 }}"
                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
         </div>
         <div>
@@ -86,37 +145,7 @@
 
     <!-- Task Description -->
     <div id="description-editor-container" class="card">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold text-gray-800">Aufgabenstellung</h2>
-        <button type="button" id="ai-suggest-btn"
-                class="bg-purple-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-purple-700 transition flex items-center gap-2">
-          🤖 LLM-Vorschlag generieren
-        </button>
-      </div>
-
-      <!-- AI Suggestion Input -->
-      <div id="ai-suggestion-panel" class="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-        <div class="flex gap-2">
-          <input type="text" id="ai-topic" placeholder="Thema (z.B. Rekursion)"
-                 class="flex-1 border border-purple-300 rounded px-3 py-1.5 text-sm">
-          <select id="ai-difficulty" class="border border-purple-300 rounded px-3 py-1.5 text-sm">
-            <option value="einfach">Einfach</option>
-            <option value="mittel" selected>Mittel</option>
-            <option value="schwer">Schwer</option>
-          </select>
-        </div>
-        <div id="ai-suggestion-progress" class="hidden mt-3">
-          <div class="flex items-center gap-2 text-sm text-purple-700">
-            <span>⏳ LLM generiert Vorschlag...</span>
-            <span id="ai-timer" class="font-mono">0s</span>
-          </div>
-          <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
-            <div id="ai-progress-bar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
-          </div>
-          <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
-        </div>
-
-      </div>
+      <h2 class="font-semibold text-gray-800 mb-4">Aufgabenstellung</h2>
 
       <textarea id="description-textarea" name="description" required rows="8"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
@@ -130,48 +159,7 @@
 
     <!-- ─── Model Solution ──────────────────────────────────────── -->
     <div id="model-solution-editor-container" class="card">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold text-gray-800">Musterlösung <span class="text-xs text-gray-400">(optional, versteckt für Studenten)</span></h2>
-        <button type="button" id="ai-solution-btn"
-                class="bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-indigo-700 transition flex items-center gap-2">
-          🤖 LLM-Lösung generieren
-        </button>
-      </div>
-
-      <!-- AI Solution Field Selection (nur bei Code-Aufgaben) -->
-      <div id="ai-solution-fields" class="hidden mb-3 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
-        <p class="text-xs font-semibold text-indigo-700 mb-2">Welche Felder sollen generiert werden?</p>
-        <div class="flex flex-wrap gap-4">
-          <label class="flex items-center gap-1.5 text-sm text-indigo-800 cursor-pointer">
-            <input type="checkbox" id="field-solution" checked class="rounded text-indigo-600">
-            Musterlösung
-          </label>
-          <label class="flex items-center gap-1.5 text-sm text-indigo-800 cursor-pointer">
-            <input type="checkbox" id="field-template" checked class="rounded text-indigo-600">
-            Code-Vorlage
-          </label>
-          <label class="flex items-center gap-1.5 text-sm text-indigo-800 cursor-pointer">
-            <input type="checkbox" id="field-public-tests" checked class="rounded text-indigo-600">
-            Public Tests
-          </label>
-          <label class="flex items-center gap-1.5 text-sm text-indigo-800 cursor-pointer">
-            <input type="checkbox" id="field-private-tests" checked class="rounded text-indigo-600">
-            Private Tests
-          </label>
-        </div>
-      </div>
-
-      <!-- AI Solution Progress -->
-      <div id="ai-solution-progress" class="hidden mb-3">
-        <div class="flex items-center gap-2 text-sm text-indigo-700">
-          <span id="ai-solution-status">⏳ LLM generiert Lösung...</span>
-          <span id="ai-solution-timer" class="font-mono">0s</span>
-        </div>
-        <div class="mt-2 w-full bg-indigo-200 rounded-full h-2">
-          <div id="ai-solution-progress-bar" class="bg-indigo-600 h-2 rounded-full transition-all" style="width: 0%"></div>
-        </div>
-        <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
-      </div>
+      <h2 class="font-semibold text-gray-800 mb-4">Musterlösung <span class="text-xs text-gray-400">(optional, versteckt für Studenten)</span></h2>
 
       <textarea id="model-solution-editor" name="model_solution" rows="6"
                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
@@ -217,7 +205,7 @@
           <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           {% endif %}
         </button>
-        <a href="/courses/{{ course.id }}/tasks/{{ task.id }}?as_student=1"
+        <a id="student-view-link" href="/courses/{{ course.id }}/tasks/{{ task.id }}?as_student=1"
            class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium flex items-center gap-2">
           👁️&#x200B; Student-View
         </a>
@@ -295,8 +283,8 @@ class PrivateTest(unittest.TestCase):
     document.getElementById("code-section").classList.toggle("hidden", !isCode);
     document.getElementById("tests-section").classList.toggle("hidden", !isCode);
 
-    // Show/hide AI field selection checkboxes (only for code tasks)
-    document.getElementById("ai-solution-fields").classList.toggle("hidden", !isCode);
+    // Show/hide AI code checkboxes (only for code tasks)
+    document.querySelectorAll(".ai-code-field").forEach(el => el.classList.toggle("hidden", !isCode));
 
     // Model-Solution ist immer Markdown Editor — kein CodeMirror mehr
     const solHint = document.getElementById('model-solution-hint');
@@ -336,14 +324,7 @@ class PrivateTest(unittest.TestCase):
     if (testCodeCM) testCodeCM.save();
   }
 
-  // ─── Initialize AI field selection visibility ─────────────
-  // Show/hide checkboxes on page load depending on current task type
-  (function initFieldSelection() {
-    const currentType = document.getElementById("task_type_select").value;
-    document.getElementById("ai-solution-fields").classList.toggle("hidden", currentType !== "code");
-  })();
-
-  // ─── AI Suggestion Panel ────────────────────────────────────
+  // ─── LLM Task Generation (unified) ─────────────────────────
   let aiTimerInterval = null;
 
   const LLM_TIMEOUT = {{ LLM_TIMEOUT }};
@@ -355,18 +336,46 @@ class PrivateTest(unittest.TestCase):
     return Math.min(Math.round(79 * Math.pow(f, 0.5) + 16 * f), 95);
   }
 
-  document.getElementById("ai-suggest-btn").addEventListener("click", async () => {
-    const topic = document.getElementById("ai-topic").value || "allgemein";
-    const difficulty = document.getElementById("ai-difficulty").value;
+  document.getElementById("ai-generate-btn").addEventListener("click", async () => {
     const taskType = document.getElementById("task_type_select").value;
+    const isCode = taskType === "code";
     const title = document.querySelector('input[name="title"]').value;
     const description = descEditor.textarea.value;
+    const modelSolution = solEditor.textarea.value;
+    const maxPoints = document.querySelector('input[name="max_points"]').value || 10;
+    const codeTemplate = codeTemplateCM ? codeTemplateCM.getValue() : (document.getElementById("code-template-editor")?.value || "");
 
-    const progressDiv = document.getElementById("ai-suggestion-progress");
-    const timerSpan = document.getElementById("ai-timer");
-    const progressBar = document.getElementById("ai-progress-bar");
+    const generateFields = {
+      title: document.getElementById("field-title").checked,
+      description: document.getElementById("field-description").checked,
+      solution: document.getElementById("field-solution").checked,
+      template: isCode && document.getElementById("field-template").checked,
+      tests: isCode && document.getElementById("field-tests").checked,
+    };
 
+    if (!Object.values(generateFields).some(v => v)) {
+      showToast("Bitte mindestens ein Feld auswählen.", "error");
+      return;
+    }
+
+    // Thema: Seed für Neu-Generierung und Änderungs-Vorschläge
+    const topic = document.getElementById("ai-topic").value.trim();
+    const wantTextFields = generateFields.title || generateFields.description || generateFields.solution;
+    if (wantTextFields && !topic && !title.trim() && !description.trim() && !modelSolution.trim()) {
+      showToast("Bitte ein Thema angeben, damit das LLM die Aufgabe generieren kann.", "error");
+      document.getElementById("ai-topic").focus();
+      return;
+    }
+
+    const progressDiv = document.getElementById("ai-generate-progress");
+    const statusSpan = document.getElementById("ai-generate-status");
+    const timerSpan = document.getElementById("ai-generate-timer");
+    const progressBar = document.getElementById("ai-generate-progress-bar");
+    const btn = document.getElementById("ai-generate-btn");
+
+    btn.disabled = true;
     progressDiv.classList.remove("hidden");
+    statusSpan.textContent = "⏳ LLM generiert/ändert Aufgabe...";
 
     let elapsed = 0;
     if (aiTimerInterval) clearInterval(aiTimerInterval);
@@ -377,133 +386,24 @@ class PrivateTest(unittest.TestCase):
     }, 1000);
 
     try {
-      const res = await fetch(`/api/courses/{{ course.id }}/tasks/ai-suggest`, {
+      const res = await fetch(`/api/courses/{{ course.id }}/tasks/ai-generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          topic,
-          difficulty,
           task_type: taskType,
-          title,
-          context: description,
-        }),
-        credentials: "same-origin",
-      });
-
-      clearInterval(aiTimerInterval);
-      progressBar.style.width = "100%";
-
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.detail || "LLM-Fehler", "error");
-        progressDiv.classList.add("hidden");
-        return;
-      }
-
-      const suggestion = data.suggestion || data;
-
-      // Validate: if no title and no description, the LLM returned garbage
-      if (!suggestion.title && !suggestion.description) {
-        showToast("LLM-Antwort war leer oder ungültig. Bitte erneut versuchen.", "error");
-        progressDiv.classList.add("hidden");
-        return;
-      }
-
-      // Directly populate form fields (like LLM solution does)
-      if (suggestion.title) {
-        document.querySelector('input[name="title"]').value = suggestion.title;
-      }
-      if (suggestion.description) {
-        descEditor.textarea.value = suggestion.description;
-        (async () => {
-          await renderMarkdown(suggestion.description, descEditor.previewDiv, { preview: true });
-          descEditor.toggleBtn.click();
-        })();
-      }
-      if (suggestion.max_points) {
-        document.querySelector('input[name="max_points"]').value = suggestion.max_points;
-      }
-
-      progressDiv.classList.add("hidden");
-      showToast("Vorschlag übernommen!", "success");
-
-    } catch (err) {
-      clearInterval(aiTimerInterval);
-      showToast("Fehler: " + err.message, "error");
-      progressDiv.classList.add("hidden");
-    }
-  });
-
-
-
-  // ─── AI Model Solution Panel ────────────────────────────────
-  let solutionTimerInterval = null;
-
-  document.getElementById("ai-solution-btn").addEventListener("click", async () => {
-    const taskType = document.getElementById("task_type_select").value;
-    const description = descEditor.textarea.value;
-    const maxPoints = document.querySelector('input[name="max_points"]').value || 10;
-    const title = document.querySelector('input[name="title"]').value || "";
-    const codeTemplate = codeTemplateCM ? codeTemplateCM.getValue() : (document.getElementById("code-template-editor")?.value || "");
-
-    const progressDiv = document.getElementById("ai-solution-progress");
-    const statusSpan = document.getElementById("ai-solution-status");
-    const timerSpan = document.getElementById("ai-solution-timer");
-    const progressBar = document.getElementById("ai-solution-progress-bar");
-    const btn = document.getElementById("ai-solution-btn");
-
-    // For code tasks, read which fields to populate
-    let generateFields = {};
-    if (taskType === "code") {
-      generateFields = {
-        solution: document.getElementById("field-solution").checked,
-        template: document.getElementById("field-template").checked,
-        publicTests: document.getElementById("field-public-tests").checked,
-        privateTests: document.getElementById("field-private-tests").checked,
-      };
-      // If nothing selected, select all
-      if (!generateFields.solution && !generateFields.template && !generateFields.publicTests && !generateFields.privateTests) {
-        generateFields = { solution: true, template: true, publicTests: true, privateTests: true };
-        // Also check the boxes
-        document.getElementById("field-solution").checked = true;
-        document.getElementById("field-template").checked = true;
-        document.getElementById("field-public-tests").checked = true;
-        document.getElementById("field-private-tests").checked = true;
-      }
-    }
-
-    btn.disabled = true;
-    progressDiv.classList.remove("hidden");
-
-    let elapsed = 0;
-    if (solutionTimerInterval) clearInterval(solutionTimerInterval);
-    solutionTimerInterval = setInterval(() => {
-      elapsed++;
-      timerSpan.textContent = elapsed + "s";
-      progressBar.style.width = llmProgressPct(elapsed) + "%";
-    }, 1000);
-
-    try {
-      // Schritt 1: Musterlösung
-      statusSpan.textContent = "🧠 LLM generiert Musterlösung...";
-      progressBar.style.width = "10%";
-
-      const res = await fetch(`/api/tasks/{{ task.id if task else '0' }}/generate-solution`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          course_id: {{ course.id }},
+          topic: topic || "allgemein",
+          difficulty: document.getElementById("ai-difficulty").value,
+          max_points: parseInt(maxPoints),
           title,
           description,
-          task_type: taskType,
-          max_points: parseInt(maxPoints),
+          model_solution: modelSolution,
           code_template: codeTemplate,
           generate_fields: generateFields,
         }),
         credentials: "same-origin",
       });
 
-      clearInterval(solutionTimerInterval);
+      clearInterval(aiTimerInterval);
       progressBar.style.width = "100%";
 
       const data = await res.json();
@@ -514,89 +414,76 @@ class PrivateTest(unittest.TestCase):
         return;
       }
 
-      // ── Populate fields ──────────────────────────────
-      if (taskType === "code") {
-        // Code-Aufgabe: mehrere Felder befüllen
-        let populated = [];
+      // NUR aktiv gewählte Felder befüllen
+      let populated = [];
 
-        if (generateFields.solution && data.solution) {
-          solEditor.textarea.value = data.solution;
-          (async () => {
-            await renderMarkdown(data.solution, solEditor.previewDiv, { preview: true });
-            if (!solEditor.isPreview()) solEditor.toggleBtn.click();
-          })();
-          populated.push("Musterlösung");
-        }
+      if (generateFields.title && data.title) {
+        document.querySelector('input[name="title"]').value = data.title;
+        populated.push("Titel");
+      }
 
-        if (generateFields.template && data.code_template) {
-          if (codeTemplateCM) {
-            codeTemplateCM.setValue(data.code_template);
-          } else {
-            document.getElementById("code-template-editor").value = data.code_template;
-          }
-          populated.push("Code-Vorlage");
-        }
+      if (generateFields.description && data.description) {
+        descEditor.textarea.value = data.description;
+        (async () => {
+          await renderMarkdown(data.description, descEditor.previewDiv, { preview: true });
+          if (!descEditor.isPreview()) descEditor.toggleBtn.click();
+        })();
+        populated.push("Aufgabenstellung");
+      }
 
-        // Combine public + private tests into the single test_code textarea
-        if (generateFields.publicTests && data.public_tests && generateFields.privateTests && data.private_tests) {
-          const combinedTests = data.public_tests + "\n\n" + data.private_tests;
-          if (testCodeCM) {
-            testCodeCM.setValue(combinedTests);
-          } else {
-            document.getElementById("test-code-editor").value = combinedTests;
-          }
-          populated.push("Tests (Public + Private)");
-        } else if (generateFields.publicTests && data.public_tests) {
-          const testCode = data.public_tests;
-          if (testCodeCM) {
-            testCodeCM.setValue(testCode);
-          } else {
-            document.getElementById("test-code-editor").value = testCode;
-          }
-          populated.push("Public Tests");
-        }
-        if (generateFields.privateTests && data.private_tests && !generateFields.publicTests) {
-          const testCode = data.private_tests;
-          if (testCodeCM) {
-            testCodeCM.setValue(testCode);
-          } else {
-            document.getElementById("test-code-editor").value = testCode;
-          }
-          populated.push("Private Tests");
-        }
+      if (generateFields.solution && data.model_solution) {
+        solEditor.textarea.value = data.model_solution;
+        (async () => {
+          await renderMarkdown(data.model_solution, solEditor.previewDiv, { preview: true });
+          if (!solEditor.isPreview()) solEditor.toggleBtn.click();
+        })();
+        populated.push("Musterlösung");
+      }
 
-        progressDiv.classList.add("hidden");
-        btn.disabled = false;
+      if (generateFields.template && data.code_template) {
+        if (codeTemplateCM) {
+          codeTemplateCM.setValue(data.code_template);
+        } else {
+          document.getElementById("code-template-editor").value = data.code_template;
+        }
+        populated.push("Code-Vorlage");
+      }
+
+      if (generateFields.tests && (data.public_tests || data.private_tests)) {
+        const combinedTests = [data.public_tests, data.private_tests].filter(Boolean).join("\n\n");
+        if (testCodeCM) {
+          testCodeCM.setValue(combinedTests);
+        } else {
+          document.getElementById("test-code-editor").value = combinedTests;
+        }
+        populated.push("Tests (Public + Private)");
+      }
+
+      progressDiv.classList.add("hidden");
+      btn.disabled = false;
+
+      if (populated.length) {
         showToast(`Felder generiert: ${populated.join(", ")}`, "success");
       } else {
-        // Text-Aufgabe: nur Musterlösung
-        const text = data.solution || "";
-
-        solEditor.textarea.value = text;
-        (async () => {
-          await renderMarkdown(text, solEditor.previewDiv, { preview: true });
-          if (!solEditor.isPreview()) {
-            solEditor.toggleBtn.click();
-          }
-        })();
-
-        progressDiv.classList.add("hidden");
-        btn.disabled = false;
-        showToast("Musterlösung generiert!", "success");
+        showToast("LLM hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.", "error");
       }
 
     } catch (err) {
-      clearInterval(solutionTimerInterval);
+      clearInterval(aiTimerInterval);
       showToast("Fehler: " + err.message, "error");
       progressDiv.classList.add("hidden");
       btn.disabled = false;
     }
   });
 
-  // ─── Submit Form ────────────────────────────────────────────
-  document.getElementById("task-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
 
+
+  // ─── Task speichern ─────────────────────────────────────────
+  const isUpdate = {{ "true" if task and task.id else "false" }};
+  const courseId = {{ course.id }};
+
+  // Speichert die Aufgabe (POST/PUT). Gibt die Task-ID zurueck, null bei Fehler.
+  async function saveTask() {
     syncEditorsToTextareas();
 
     const form = document.getElementById("task-form");
@@ -616,32 +503,43 @@ class PrivateTest(unittest.TestCase):
     }
 
     const maxPointsRaw = formData.get("max_points");
-    if (maxPointsRaw !== null && maxPointsRaw !== "") {
-      body.max_points = parseInt(maxPointsRaw);
+    if (maxPointsRaw === null || maxPointsRaw === "" || isNaN(parseInt(maxPointsRaw))) {
+      showToast("Max. Punkte ist erforderlich.", "error");
+      return null;
     }
+    body.max_points = parseInt(maxPointsRaw);
 
     const maxAttemptsRaw = formData.get("max_attempts");
     if (maxAttemptsRaw !== null && maxAttemptsRaw !== "") {
       body.max_attempts = parseInt(maxAttemptsRaw);
+    } else {
+      body.max_attempts = null;
     }
 
     const deadlineRaw = formData.get("deadline");
     if (deadlineRaw !== null && deadlineRaw !== "") {
       body.deadline = deadlineRaw;
+    } else {
+      body.deadline = null;
     }
 
-    const codeTemplateRaw = formData.get("code_template");
-    if (codeTemplateRaw !== null && codeTemplateRaw !== "") {
+    // Code-Vorlage & Unit-Tests: CodeMirror versteckt die Textareas (display:none),
+    // daher Werte direkt aus den Textareas lesen, nicht aus der FormData.
+    const taskTypeVal = formData.get("task_type");
+    const codeTemplateRaw = document.getElementById("code-template-editor").value;
+    const testCodeRaw = document.getElementById("test-code-editor").value;
+
+    // Leere Vorlage → null (Template wird geleert); Text-Aufgabe → Vorlage entfernen
+    if (taskTypeVal === "code") {
       body.code_template = codeTemplateRaw;
+    } else {
+      body.code_template = null;
     }
 
     // Single test_code field (with PublicTest + PrivateTest classes)
-    const testCodeRaw = formData.get("test_code");
-    if (testCodeRaw !== null && testCodeRaw.trim() !== "") {
+    if (taskTypeVal === "code") {
+      // Leerer Wert leert die Tests bewusst
       body.test_code = testCodeRaw.trim();
-    } else if (formData.get("task_type") === "code") {
-      // For code tasks, send empty string to clear tests if textarea is empty
-      body.test_code = "";
     }
 
     // Visibility - after clicking toggle, title is reversed, so we invert
@@ -656,10 +554,9 @@ class PrivateTest(unittest.TestCase):
     btn.disabled = true;
     btn.textContent = "⏳ Wird gespeichert...";
 
-    const isUpdate = {{ "true" if task and task.id else "false" }};
     const url = isUpdate
       ? `/api/tasks/{{ task.id }}`
-      : `/api/courses/{{ course.id }}/tasks`;
+      : `/api/courses/${courseId}/tasks`;
     const method = isUpdate ? "PUT" : "POST";
 
     try {
@@ -675,24 +572,45 @@ class PrivateTest(unittest.TestCase):
         showToast(data.detail || "Fehler beim Speichern", "error");
         btn.disabled = false;
         btn.textContent = isUpdate ? "Aufgabe aktualisieren" : "Aufgabe erstellen";
-        return;
+        return null;
       }
 
       showToast(data.message || "Erfolgreich gespeichert!", "success");
-      if (isUpdate) {
-        // Reload the page to refresh with saved data, staying on the same task
-        setTimeout(() => window.location.reload(), 800);
-      } else {
-        // Redirect to course task overview after creating a new task
-        setTimeout(() => window.location.href = '/courses/{{ course.id }}', 800);
-      }
-
+      return data.task.id;
     } catch (err) {
       showToast("Fehler: " + err.message, "error");
       btn.disabled = false;
       btn.textContent = isUpdate ? "Aufgabe aktualisieren" : "Aufgabe erstellen";
+      return null;
+    }
+  }
+
+  // ─── Submit Form ────────────────────────────────────────────
+  document.getElementById("task-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const id = await saveTask();
+    if (id === null) return;
+    if (isUpdate) {
+      // Reload the page to refresh with saved data, staying on the same task
+      setTimeout(() => window.location.reload(), 800);
+    } else {
+      // Redirect to course task overview after creating a new task
+      setTimeout(() => window.location.href = `/courses/${courseId}`, 800);
     }
   });
+
+  // ─── Student View: zuerst speichern, dann anzeigen ──────────
+  const studentViewLink = document.getElementById("student-view-link");
+  if (studentViewLink) {
+    studentViewLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const id = await saveTask();
+      if (id === null) return;
+      setTimeout(() => {
+        window.location.href = `/courses/${courseId}/tasks/${id}?as_student=1`;
+      }, 800);
+    });
+  }
 
   // ─── Visibility Button Toggle ─────────────────────────────
   document.getElementById("visibility-btn").addEventListener("click", function() {

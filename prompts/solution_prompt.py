@@ -1,38 +1,8 @@
 """
-Prompt-Templates für LLM-gestützte Musterlösung-Generierung.
+Prompt-Templates für LLM-gestützte Code-Aufgaben.
 
-Tutor gibt Aufgabenstellung ein → LLM generiert Musterlösung.
-"""
-
-SOLUTION_PROMPT_TEMPLATE = """\
-Du bist ein erfahrener Tutor. Schreibe eine knappe, präzise Musterlösung.
-
-AUFGABENTITEL: {{ title }}
-AUFGABENTYP: {{ task_type_description }}
-
-AUFGABENSTELLUNG:
-{{ description }}
-
-{% if code_template_section %}
-CODETEMPLATE:
-{{ code_template_section }}
-{% endif %}
-
-Gib NUR die Lösung selbst aus — keine Einleitung, kein JSON, keine Meta-Kommentare.
-Bei Code: Nur den funktionalen Code.
-Bei Text: Die direkte Antwort/Erläuterung.
-Falls es mehrere korrekte Lösungen geben kann, gehe kurz darauf ein.
-
-Verwende Markdown-Formatierung für bessere Lesbarkeit:
-- **fett** für wichtige Begriffe und Kernaussagen
-- *kursiv* für Betonungen
-- - Listen für Aufzählungen
-- $...$ für Inline-Mathematik und $$...$$ für Block-Mathematik (LaTeX) ( Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden)
-- ```code``` für kurze Code-Schnipsel
-- ```mermaid ... ``` für Mermaid
-
-Bitte gib auch Bewertungskriterien an um eine faire Bewertung zu ermöglichen. Es können maximal {{max_points}} Punkte erzielt werden.
-Die Bewertungskriterien sollten (abgesehen von standard good practice) keine Punkte enthalten, die aus der Aufgabenstellung nicht ersichtlich sind.
+Die Musterlösung wird gemeinsam mit Titel/Aufgabenstellung über das
+vereinheitlichte UNIFIED_TASK_PROMPT_TEMPLATE (creation_prompt.py) generiert.
 """
 
 
@@ -45,7 +15,7 @@ Du bist ein erfahrener Tutor und Software-Entwickler. Für die folgende Code-Auf
 bereits die korrekte Musterlösung. Jetzt sollst du daraus zwei Dinge ableiten:
 
 1. **Code-Vorlage** (code_template): Ein Gerüst/Scaffold für den Studenten. Funktionen/Classen
-   sind deklariert, aber die Bodies sind leer (z.B. nur `pass` oder `...`). Der Student ergänzt den Code. Zudem sollte die Vorlage, wenn es sich anbietet, auch schöne Visualisierungen mit matplotlib enthalten, welche die Lösung des Studenten veranschaulichen. Diese visualisierungen sollten mit plt.show() bei Aufruf des Template Scripts angezeigt werden.
+   sind deklariert, aber die Bodies sind leer (z.B. nur `pass` oder `# TODO`). Der Student ergänzt den Code oder Kommentare für Teilaufgaben, die Text benötigen. Zudem sollte die Vorlage, wenn es sich anbietet, auch schöne Visualisierungen mit matplotlib enthalten, welche die Lösung des Studenten veranschaulichen. Diese visualisierungen sollten mit plt.show() bei Aufruf des Template Scripts angezeigt werden.
 2. **Public Tests** (public_tests): Einheitstests als Python unittest-Code, die der Student sieht.
    Nutze eine Klasse `PublicTest(unittest.TestCase)`. Teste grundlegende, normale Fälle (ca. 3-5 Tests). Liefere hilfreiche assertion Hinweise für die Studenten in den assert calls.
 3. **Private Tests** (private_tests): Zusätzliche verborgene Unit-Tests als Python unittest-Code.

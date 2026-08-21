@@ -118,6 +118,14 @@ async def create_task(
     # model_solution kann None sein (optional)
     if model_solution == "":
         model_solution = None
+
+    max_points = body.get("max_points", 10)
+    try:
+        max_points = int(max_points)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Max. Punkte muss eine Zahl sein.")
+    if max_points < 0:
+        raise HTTPException(400, "Max. Punkte muss mindestens 0 sein.")
     
     task = Task(
         course_id=course_id,
@@ -126,7 +134,7 @@ async def create_task(
         task_type=TaskType(body.get("task_type", "text")),
         description=body.get("description", ""),
         model_solution=model_solution,
-        max_points=body.get("max_points", 10),
+        max_points=max_points,
         max_attempts=body.get("max_attempts"),
         deadline=body.get("deadline"),
         code_template=body.get("code_template"),
@@ -243,10 +251,22 @@ async def update_task(
         val = body["model_solution"]
         task.model_solution = None if val == "" else val
     
-    if "max_points" in body: task.max_points = body["max_points"]
-    if "max_attempts" in body: task.max_attempts = body["max_attempts"]
-    if "deadline" in body: task.deadline = body["deadline"]
-    if "code_template" in body: task.code_template = body["code_template"]
+    if "max_points" in body:
+        mp = body["max_points"]
+        try:
+            mp = int(mp)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Max. Punkte muss eine Zahl sein.")
+        if mp < 0:
+            raise HTTPException(400, "Max. Punkte muss mindestens 0 sein.")
+        task.max_points = mp
+    if "max_attempts" in body:
+        task.max_attempts = None if body["max_attempts"] in (None, "") else int(body["max_attempts"])
+    if "deadline" in body:
+        task.deadline = None if body["deadline"] in (None, "") else body["deadline"]
+    if "code_template" in body:
+        val = body["code_template"]
+        task.code_template = None if val in (None, "") else val
     if "test_code" in body: task.test_code = body["test_code"]
     if "is_visible" in body: task.is_visible = body["is_visible"]
     if "hints_enabled" in body: task.hints_enabled = body["hints_enabled"]
@@ -287,6 +307,76 @@ async def delete_task(
     session.delete(task)
     session.commit()
     return {"message": "Aufgabe '" + task.title + "' gelöscht."}
+
+
+@router.post("/tasks/{task_id}/duplicate")
+async def duplicate_task(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Aufgabe duplizieren (nur Tutor/Admin des Kurses).
+
+    Kopiert alle Daten der Aufgabe (ohne Einreichungen, Feedback und Hints)
+    und fügt die Kopie direkt hinter dem Original ein.
+    """
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+
+    # Prüfen, ob User den Kurs der Aufgabe bearbeiten darf
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == task.course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Keine Berechtigung, diese Aufgabe zu duplizieren.")
+
+    body = await request.json()
+    new_title = (body.get("title") or "").strip()
+    if not new_title:
+        raise HTTPException(400, "Titel darf nicht leer sein.")
+
+    # Kopie direkt hinter dem Original: alle Aufgaben danach um eins nach hinten schieben
+    for other in session.exec(
+        select(Task)
+        .where(Task.course_id == task.course_id)
+        .where(Task.display_order > task.display_order)
+    ).all():
+        other.display_order += 1
+        session.add(other)
+
+    new_task = Task(
+        course_id=task.course_id,
+        created_by=user.id,  # type: ignore[arg-type]
+        title=new_title,
+        task_type=task.task_type,
+        description=task.description,
+        model_solution=task.model_solution,
+        max_points=task.max_points,
+        max_attempts=task.max_attempts,
+        deadline=task.deadline,
+        code_template=task.code_template,
+        test_code=task.test_code,
+        is_visible=task.is_visible,
+        hints_enabled=task.hints_enabled,
+        display_order=task.display_order + 1,
+    )
+    session.add(new_task)
+    session.commit()
+    session.refresh(new_task)
+
+    return {
+        "message": f"Aufgabe '{new_task.title}' dupliziert.",
+        "task": {
+            "id": new_task.id,
+            "title": new_task.title,
+            "task_type": new_task.task_type.value,
+            "display_order": new_task.display_order,
+        },
+    }
 
 
 @router.patch("/tasks/{task_id}/visibility")
@@ -504,167 +594,141 @@ async def get_course_overview(
 # LLM-ASSISTED CREATION
 # ═══════════════════════════════════════════════════════════════════
 
-@router.post("/courses/{course_id}/tasks/ai-suggest")
-async def ai_suggest_task(
+@router.post("/courses/{course_id}/tasks/ai-generate")
+async def ai_generate_task(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
     user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
     """
-    LLM generiert Aufgabenvorschlag.
-    
+    LLM generiert/ändert die angeforderten Felder einer Aufgabe (einheitlich).
+
     Request:
         {
+            "task_type": "code",
             "topic": "Rekursion",
             "difficulty": "mittel",
-            "task_type": "code",
-            "context": "Studenten kennen bereits Listen und Funktionen",
-        }
-    """
-    body = await request.json()
-    
-    llm_cfg = get_effective_llm_config(session, user_and_course[1])
-    result = await llm_service.suggest_task(
-        topic=body.get("topic", ""),
-        difficulty=body.get("difficulty", "mittel"),
-        task_type=body.get("task_type", "text"),
-        title=body.get("title", ""),
-        context=body.get("context", ""),
-        config=llm_cfg,
-    )
-    
-    if not result.get("success"):
-        raise HTTPException(500, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
-
-    suggestion = result.get("data", {})
-    if not suggestion.get("title") and not suggestion.get("description"):
-        raise HTTPException(500, "LLM hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.")
-
-    return {
-        "suggestion": result.get("data", {}),
-        "latency_ms": result.get("latency_ms", 0),
-    }
-
-
-@router.post("/tasks/{task_id}/generate-solution")
-async def generate_model_solution(
-    task_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """
-    LLM generiert Musterlösung für eine Aufgabe.
-    
-    Request:
-        {
-            "course_id": 1,
-            "description": "...",
-            "task_type": "code",
             "max_points": 10,
+            "title": "...",
+            "description": "...",
+            "model_solution": "...",
             "code_template": "...",
+            "generate_fields": {
+                "title": true,
+                "description": true,
+                "solution": true,
+                "template": true,   // nur Code-Aufgaben
+                "tests": true        // nur Code-Aufgaben
+            }
         }
     """
-    # Body lesen (immer nötig, um die Felder zu erhalten)
     body = await request.json()
-
-    # Zugriff prüfen
-    if task_id > 0:
-        task = session.get(Task, task_id)
-        if not task:
-            raise HTTPException(404, "Aufgabe nicht gefunden.")
-        course_id = task.course_id
-    else:
-        # Neue Aufgabe: course_id aus body
-        course_id = body.get("course_id")
-        if not course_id:
-            raise HTTPException(400, "course_id required for new tasks.")
-
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
-    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
-        raise HTTPException(403, "Keine Berechtigung.")
 
     task_type = body.get("task_type", "text")
-    generate_fields = body.get("generate_fields", {})
+    gen = body.get("generate_fields", {}) or {}
 
-    llm_cfg = get_effective_llm_config(session, course_id)
+    gen_title = bool(gen.get("title"))
+    gen_description = bool(gen.get("description"))
+    gen_solution = bool(gen.get("solution"))
+    # Template/Tests gelten nur für Code-Aufgaben
+    gen_template = bool(gen.get("template")) and task_type == "code"
+    gen_tests = bool(gen.get("tests")) and task_type == "code"
 
-    if task_type == "code":
-        # Zwei-Schritt-Prozess für Code-Aufgaben:
-        # 1. Zuerst Musterlösung generieren
-        # 2. Dann Code-Vorlage + Tests basierend auf Musterlösung
+    if not (gen_title or gen_description or gen_solution or gen_template or gen_tests):
+        raise HTTPException(400, "Keine Felder angefordert.")
 
-        # Schritt 1: Musterlösung
-        solution_result = await llm_service.generate_model_solution(
-            description=body.get("description", ""),
-            task_type="code",
-            max_points=body.get("max_points", 10),
-            code_template=body.get("code_template", ""),
-            title=body.get("title", ""),
-            config=llm_cfg,
-        )
+    current_title = (body.get("title") or "").strip()
+    current_description = (body.get("description") or "").strip()
+    current_solution = (body.get("model_solution") or "").strip()
+    current_template = (body.get("code_template") or "").strip()
 
-        if not solution_result.get("success"):
-            raise HTTPException(500, f"LLM-Fehler (Musterlösung): {solution_result.get('error', 'Unbekannter Fehler')}")
+    # Schritt 1: Titel/Aufgabenstellung/Musterlösung — nur aktiv angeforderte Felder.
+    # Nicht angeforderte Felder werden weder im Prompt verlangt noch übernommen.
+    step1_fields: list[str] = []
+    if gen_title:
+        step1_fields.append("title")
+    if gen_description:
+        step1_fields.append("description")
+    if gen_solution:
+        step1_fields.append("model_solution")
 
-        solution_data = solution_result.get("data", {})
-        solution_text = solution_data.get("model_solution", "") if isinstance(solution_data, dict) else str(solution_data)
-        total_latency = solution_result.get("latency_ms", 0)
+    # Code-Aufgabe: Vorlage/Tests brauchen eine Musterlösung als Basis —
+    # falls die Lösung nicht aktiv angefordert und noch leer, intern ergänzen
+    # (wird aber NICHT in die Response übernommen).
+    if (gen_template or gen_tests) and not gen_solution and not current_solution:
+        step1_fields.append("model_solution")
 
-        response = {
-            "solution": solution_text,
-            "code_template": "",
-            "public_tests": "",
-            "private_tests": "",
-            "latency_ms": total_latency,
-        }
+    llm_cfg = get_effective_llm_config(session, user_and_course[1])
 
-        # Schritt 2: Code-Vorlage + Tests (nur wenn angefordert)
-        if generate_fields.get("template") or generate_fields.get("publicTests") or generate_fields.get("privateTests"):
-            template_result = await llm_service.generate_code_template_and_tests(
-                description=body.get("description", ""),
-                model_solution=solution_text,
-                config=llm_cfg,
-            )
+    response = {
+        "title": "",
+        "description": "",
+        "model_solution": "",
+        "code_template": "",
+        "public_tests": "",
+        "private_tests": "",
+    }
+    latency_ms = 0
+    internal_solution_text = ""
 
-            if template_result.get("success"):
-                template_data = template_result.get("data", {})
-                total_latency += template_result.get("latency_ms", 0)
-                response["latency_ms"] = total_latency
-
-                if generate_fields.get("template"):
-                    response["code_template"] = template_data.get("code_template", "")
-                if generate_fields.get("publicTests"):
-                    response["public_tests"] = template_data.get("public_tests", "")
-                if generate_fields.get("privateTests"):
-                    response["private_tests"] = template_data.get("private_tests", "")
-
-        return response
-
-    else:
-        # Text-Aufgaben: nur Musterlösung
-        result = await llm_service.generate_model_solution(
-            description=body.get("description", ""),
+    if step1_fields:
+        result = await llm_service.generate_task_fields(
+            topic=body.get("topic", ""),
+            difficulty=body.get("difficulty", "mittel"),
             task_type=task_type,
             max_points=body.get("max_points", 10),
-            code_template=body.get("code_template", ""),
-            title=body.get("title", ""),
+            generate_fields=step1_fields,
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_solution,
+            code_template=current_template,
             config=llm_cfg,
         )
 
         if not result.get("success"):
             raise HTTPException(500, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
 
-        solution_text = result.get("data", {}).get("model_solution", "")
-        return {
-            "solution": solution_text,
-            "latency_ms": result.get("latency_ms", 0),
-        }
+        data = result.get("data") or {}
+        latency_ms = result.get("latency_ms", 0)
+
+        # NUR angeforderte Felder aus der LLM-Antwort übernehmen.
+        if "title" in step1_fields:
+            response["title"] = (data.get("title") or "").strip()
+        if "description" in step1_fields:
+            response["description"] = (data.get("description") or "").strip()
+        if "model_solution" in step1_fields:
+            sol = (data.get("model_solution") or "").strip()
+            if gen_solution:
+                response["model_solution"] = sol
+            else:
+                internal_solution_text = sol
+
+    # Basis für Schritt 2 (Code): neue Lösung, sonst intern generierte, sonst vorhandene
+    solution_for_step2 = response["model_solution"] or internal_solution_text or current_solution
+
+    # Schritt 2: Code-Vorlage + Tests (nur Code-Aufgaben, nur angefordert)
+    if task_type == "code" and (gen_template or gen_tests):
+        template_result = await llm_service.generate_code_template_and_tests(
+            description=response["description"] or current_description,
+            model_solution=solution_for_step2,
+            config=llm_cfg,
+        )
+
+        if not template_result.get("success"):
+            raise HTTPException(500, f"LLM-Fehler (Code/Tests): {template_result.get('error', 'Unbekannter Fehler')}")
+
+        template_data = template_result.get("data") or {}
+        latency_ms = latency_ms + template_result.get("latency_ms", 0)
+
+        if gen_template:
+            response["code_template"] = template_data.get("code_template", "")
+        if gen_tests:
+            response["public_tests"] = template_data.get("public_tests", "")
+            response["private_tests"] = template_data.get("private_tests", "")
+
+    response["latency_ms"] = latency_ms
+    return response
 
 
 # ═══════════════════════════════════════════════════════════════════

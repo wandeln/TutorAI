@@ -18,7 +18,7 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 | Kurs-Rolle | Kann |
 |---|---|
 | **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
-| **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Vorschlag nutzen), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
+| **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Aufgabe generieren), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
 | **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben), vorherige/nächste Aufgabe navigieren, Name & Passwort selbst ändern |
 
 > **Hinweis:** Ein globaler Admin hat uneingeschränkten Zugriff auf alle Kurse, auch ohne Kurs-Mitgliedschaft. Ein Prof kann alle Kurs-Rollen zuweisen — nur die Ernennung zu Prof darf der Admin.
@@ -167,7 +167,7 @@ TutorAI/
 │   ├── tutor/
 │   │   ├── course_overview.html  # Aufgabenliste (Drag-and-Drop, Sichtbarkeit)
 │   │   ├── members.html     # Kurs-Mitglieder verwalten
-│   │   ├── task_detail.html # Aufgabe erstellen/bearbeiten (LLM-Vorschlag)
+│   │   ├── task_detail.html # Aufgabe erstellen/bearbeiten (LLM-Aufgabe generieren)
 │   │   ├── overview.html    # Punktübersichtstabelle + Excel-Export
 │   │   └── submission_review.html # Einzelne Einreichung bewerten
 │   └── student/

@@ -4,7 +4,7 @@ LLM-Service: Kommunikation mit OpenAI-kompatiblen Endpoints.
 Unterstützt:
 - Qwen3, Llama, Mistral, etc. (jedes OpenAI-kompatible Modell)
 - Grading (Korrektur) mit JSON-Response
-- Task-Suggestions (Aufgabenvorschläge)
+- Task-Generierung (Aufgaben neu erstellen/ändern, Musterlösung, Code-Templates)
 - Config pro Kurs (URL, Modell, Prompt)
 """
 
@@ -20,8 +20,8 @@ from openai import AsyncOpenAI
 
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
-from prompts.creation_prompt import CREATION_PROMPT_TEMPLATE
-from prompts.solution_prompt import SOLUTION_PROMPT_TEMPLATE, CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
+from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
+from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
 
@@ -119,54 +119,41 @@ class LLMService:
 
         return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
-    async def suggest_task(
+    async def generate_task_fields(
         self,
         topic: str,
         difficulty: str,
         task_type: str,
-        title: str = "",
-        context: str = "",
+        max_points: int,
+        generate_fields: list[str],
+        current_title: str = "",
+        current_description: str = "",
+        current_model_solution: str = "",
+        code_template: str = "",
         config: Optional[dict] = None,
     ):
-        """Generiert knappen Aufgabenvorschlag (nur Titel + Aufgabenstellung)."""
+        """Generiert/ändert die angeforderten Felder einer Aufgabe via LLM.
 
-        prompt = Template(CREATION_PROMPT_TEMPLATE).render(
+        generate_fields: Untermenge von ["title", "description", "model_solution"].
+        Das LLM liefert JSON mit EXAKT diesen Schlüsseln — nicht angeforderte
+        Felder werden nicht zurückgegeben.
+        """
+        task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(task_type, task_type)
+        generate_list = ", ".join(f'"{f}"' for f in generate_fields)
+
+        prompt = Template(UNIFIED_TASK_PROMPT_TEMPLATE).render(
+            task_type_description=task_type_description,
             topic=topic,
             difficulty=difficulty,
-            task_type=task_type,
-            title=title,
-            context=context,
+            max_points=max_points,
+            generate_list=generate_list,
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_model_solution,
+            code_template=code_template,
         )
 
         return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
-
-    async def generate_model_solution(
-        self,
-        description: str,
-        task_type: str,
-        max_points: int,
-        code_template: str = "",
-        title: str = "",
-        config: Optional[dict] = None,
-    ):
-        """Generiert Musterlösung als einfachen Text (kein JSON)."""
-
-        code_template_section = ""
-        if task_type == "code" and code_template:
-            code_template_section = f"CODE-TEMPLATE:\n{code_template}\n\n"
-
-        task_type_description = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(task_type, task_type)
-
-        prompt = Template(SOLUTION_PROMPT_TEMPLATE).render(
-            title=title,
-            task_type_description=task_type_description,
-            description=description,
-            task_type=task_type,
-            code_template_section=code_template_section,
-            max_points=max_points,
-        )
-
-        return await self._call_plain(prompt, config=config)
 
     async def generate_socratic_hint(
         self,

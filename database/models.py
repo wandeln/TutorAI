@@ -12,6 +12,7 @@ Das hält die API sauber und typisiert.
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
+from sqlalchemy import UniqueConstraint
 from sqlmodel import SQLModel, Field, Relationship
 
 
@@ -106,6 +107,8 @@ class Course(CourseBase, table=True):
     # Relationships
     course_members: List["UserCourse"] = Relationship(back_populates="course")
     tasks: List["Task"] = Relationship(back_populates="course")
+    materials: List["CourseMaterial"] = Relationship(back_populates="course")
+    media: List["CourseMedia"] = Relationship(back_populates="course")
     settings: Optional["CourseSettings"] = Relationship(back_populates="course")
 
 
@@ -223,6 +226,105 @@ class TaskUpdate(SQLModel):
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
     hints_enabled: Optional[bool] = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COURSE MATERIAL (Vorlesungsskript & Slides)
+# ═══════════════════════════════════════════════════════════════════
+
+class MaterialType(str, Enum):
+    SCRIPT = "script"
+    SLIDES = "slides"
+
+
+class CourseMaterialBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    title: str = Field(max_length=300)
+    material_type: MaterialType
+    content: str = Field(default="")              # Markdown (Slides: Folien mit `---` getrennt)
+    is_visible: bool = Field(default=True)        # Für Studenten sichtbar
+
+
+class CourseMaterial(CourseMaterialBase, table=True):
+    __tablename__ = "course_materials"
+    __table_args__ = (UniqueConstraint("course_id", "material_type", name="uq_material_course_type"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    # Relationships
+    course: Course = Relationship(back_populates="materials")
+
+
+class CourseMaterialCreate(SQLModel):
+    title: str
+    material_type: MaterialType
+    content: str = ""
+    is_visible: bool = True
+
+
+class CourseMaterialRead(CourseMaterialBase):
+    id: int
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COURSE MEDIA (Bilder/Applets je Kurs)
+# ═══════════════════════════════════════════════════════════════════
+
+class CourseMediaBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    title: str = Field(max_length=300)
+    file_path: str = Field(max_length=500, unique=True)  # relativ zu MEDIA_DIR: course_1/<uuid>.png
+    media_type: str = Field(default="image", max_length=50)  # image (später: applet, figure)
+    mime_type: str = Field(default="image/png", max_length=100)
+    file_size: int = Field(default=0)
+    llm_description: Optional[str] = Field(default=None, max_length=2000)  # Was zeigt das Medium? (für LLM-Pipeline)
+    is_visible: bool = Field(default=True)  # False = nur Tutor/PROF können die Datei abrufen
+
+
+class CourseMedia(CourseMediaBase, table=True):
+    __tablename__ = "course_media"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    # Relationships
+    course: Course = Relationship(back_populates="media")
+    usages: List["MediaUsage"] = Relationship(back_populates="media")
+
+
+class CourseMediaRead(CourseMediaBase):
+    id: int
+    created_by: int
+    created_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MEDIA USAGE (wo ein Medium eingebunden ist — abgeleitet aus Markdown)
+# ═══════════════════════════════════════════════════════════════════
+
+class MediaUsage(SQLModel, table=True):
+    """Ableitung aus dem Markdown-Inhalt (Single Source of Truth = Task/Material).
+
+    Wird von services.media_service.sync_media_usages() bei jeder
+    Änderung von Aufgaben/Materialien/Medien neu aufgebaut.
+    """
+    __tablename__ = "media_usages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    media_id: int = Field(foreign_key="course_media.id", index=True)
+    task_id: Optional[int] = Field(default=None, foreign_key="tasks.id", index=True)
+    material_id: Optional[int] = Field(default=None, foreign_key="course_materials.id", index=True)
+    location: str = Field(default="", max_length=500)  # z.B. "Aufgabe: Blatt3-01" / "Skript: Kapitel 2"
+
+    # Relationships
+    media: CourseMedia = Relationship(back_populates="usages")
 
 
 # ═══════════════════════════════════════════════════════════════════

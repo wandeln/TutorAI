@@ -1,0 +1,21 @@
+{# ─────────────────────────────────────────────────────────────────────
+   Tab-Leiste für Kurs-Seiten.
+
+   Erwartetes Kontext:
+     tabs: Liste von {"key", "icon", "label", "url", "active"}
+           (wird von _course_tab_context() in main.py gebaut —
+           Rollen- und Inhalts-Sichtbarkeit ist dort zentral geregelt)
+   ───────────────────────────────────────────────────────────────────── #}
+<div class="border-b border-gray-200 mb-6" style="overflow-x:auto;scrollbar-width:none">
+  <nav class="flex gap-1 min-w-max" aria-label="Kurs-Bereiche">
+    {% for tab in tabs %}
+    <a href="{{ tab.url }}"
+       class="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition
+              {% if tab.active %}border-blue-600 text-blue-700
+              {% else %}border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300
+              {% endif %}">
+      {{ tab.icon }} {{ tab.label }}
+    </a>
+    {% endfor %}
+  </nav>
+</div>

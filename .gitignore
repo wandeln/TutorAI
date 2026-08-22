@@ -22,6 +22,9 @@ env/
 data/tutor.db
 data/*.db-journal
 
+# Kurs-Medien (hochgeladene Dateien)
+data/media/
+
 # Environment (contains secrets!)
 .env
 

@@ -17,6 +17,11 @@ BASE_DIR = Path(__file__).parent.resolve()
 DB_FILE = BASE_DIR / "data" / "tutor.db"
 DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+# Kurs-Medien (Bilder/Applets): data/media/course_{id}/<uuid>.<ext>
+# Versand über authentifizierte Route GET /media/{course_id}/{filename} (kein Static-Mount!)
+MEDIA_DIR = BASE_DIR / "data" / "media"
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+
 # ─── Server ──────────────────────────────────────────────────────
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

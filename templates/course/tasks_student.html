@@ -1,14 +1,6 @@
-{% extends "base.html" %}
+{% extends "course/base.html" %}
 
-{% block content %}
-<div class="max-w-6xl mx-auto">
-
-  <!-- Header -->
-  <div class="mb-6">
-    <h1 class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
-    <p class="text-gray-500">{{ course.semester }}{% if course.description %} — {{ course.description }}{% endif %}</p>
-  </div>
-
+{% block course_content %}
   <!-- Points Summary -->
   <div id="summary-stats" class="card mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 p-5 rounded-2xl">
     <h2 class="font-semibold text-blue-800 mb-2 flex items-center gap-2">📊 Dein Punktestand <span id="tier-badge-icon"></span></h2>
@@ -62,8 +54,6 @@
     </button>
   </div>
 
-</div>
-
 <!-- Report Modal -->
 <div id="report-modal" class="hidden fixed inset-0 z-[100] flex items-start justify-center bg-black/50 overflow-y-auto" style="padding: 2rem;">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-8 flex flex-col" style="max-height: calc(100vh - 4rem);">
@@ -115,8 +105,6 @@
 
 {% block extra_scripts %}
 <script>
-  const courseId = {{ course.id }};
-
   // ─── Load Data ──────────────────────────────────────────────
   async function loadData(filterText = '', typeFilter = '') {
     const loading = document.getElementById('loading-state');

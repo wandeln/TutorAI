@@ -17,9 +17,9 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 
 | Kurs-Rolle | Kann |
 |---|---|
-| **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
-| **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Aufgabe generieren), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export |
-| **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben), vorherige/nächste Aufgabe navigieren, Name & Passwort selbst ändern |
+| **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript/Slides anlegen & löschen, Medienbibliothek (Upload/Description/Delete) |
+| **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Aufgabe generieren), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript/Slides anlegen & bearbeiten |
+| **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben), vorherige/nächste Aufgabe navigieren, Skript & Slides lesen, Name & Passwort selbst ändern |
 
 > **Hinweis:** Ein globaler Admin hat uneingeschränkten Zugriff auf alle Kurse, auch ohne Kurs-Mitgliedschaft. Ein Prof kann alle Kurs-Rollen zuweisen — nur die Ernennung zu Prof darf der Admin.
 
@@ -33,6 +33,15 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 
 - **Textaufgaben** — Freier Text mit Markdown & LaTeX-Rendering, LLM-basierte Korrektur
 - **Codeaufgaben** — Python-Code mit Unit-Tests (public/private), sandbox-basierte Ausführung, CodeMirror-Editor
+
+### Kurs-Material & Medienbibliothek
+
+- **Registerkarten je Kurs:** Skript, Slides, Aufgaben, Übersicht (Tutor+), Medien (PROF+), Mitglieder (PROF+)
+- **Vorlesungsskript** — Markdown (LaTeX, Mermaid), pro Kurs maximal ein Skript, Sichtbarkeit umschaltbar
+- **Vorlesungs-Slides** — ein Markdown-Dokument, Folien durch `---` getrennt (reveal.js-Rendering folgt in einem späteren Schritt)
+- **Medienbibliothek je Kurs** (`data/media/course_{id}/`) — Bilder (PNG/JPG/WebP/GIF, max. 5 MB, UUID-Namen) mit LLM-Beschreibung pro Medium
+- **Medien-Versand** nur über authentifizierte Route (Kurs-Membership erforderlich; versteckte Medien nur für Tutor/PROF)
+- **Einbindung & Verwendungs-Tracking:** Medien werden per Markdown-Snippet eingebunden (`![Titel](/media/{course_id}/{datei})`); die Verwendungs-Orte (Skript/Slides/Aufgabe) werden automatisch aus dem Content abgeleitet (`media_usages`), doppelte Referenzen werden markiert
 
 ### LLM-Integration
 
@@ -148,13 +157,16 @@ TutorAI/
 │   ├── grading_service.py   # Grading-Orchestrierung
 │   ├── sandbox_runner.py    # Sichere Code-Ausführung
 │   ├── settings_resolver.py # Settings-Auflösung (global → Kurs)
-│   └── export_service.py    # Excel-Export (.xlsx)
+│   ├── export_service.py    # Excel-Export (.xlsx)
+│   └── media_service.py     # Medien-Speicher + MediaUsage-Reconciliation
 ├── api/
 │   ├── auth.py              # Login/Logout/Register
 │   ├── admin.py             # Kurs + User + globale Settings (Admin)
 │   ├── course_members.py    # Kurs-Mitglieder + Einladungen (Prof/Admin)
 │   ├── tutor.py             # Aufgaben + Korrektur + Übersicht
 │   ├── student.py           # Aufgaben + Einreichung + Feedback
+│   ├── media.py             # Medienbibliothek: Upload/Liste/Edit/Delete (PROF)
+│   ├── materials.py         # Skript & Slides (Markdown, je Kurs max. 1 pro Typ)
 │   └── user_settings.py     # Eigene Einstellungen bearbeiten
 ├── templates/
 │   ├── base.html            # Master-Layout (Nav, Toast, Markdown/LaTeX)
@@ -164,22 +176,30 @@ TutorAI/
 │   ├── user_settings.html   # Eigene Einstellungen
 │   ├── admin/
 │   │   └── dashboard.html   # Admin-Konsole (Kurse, User, Settings)
+│   ├── course/              # Kurs-Tab-Seiten (Tab-Leiste + Rollensichtbarkeit)
+│   │   ├── base.html        # Parent: Kurs-Header, Tabs, Kurs-Edit-Modal
+│   │   ├── _tabs.html       # Tab-Leiste-Partial (Skript/Slides/Aufgaben/Übersicht/Medien/Mitglieder)
+│   │   ├── material.html    # Tab 'Skript' & 'Slides' (Markdown, Editor für Tutor/PROF)
+│   │   ├── media.html       # Tab 'Medien': Upload, Verwendungs-Orte (PROF/Admin)
+│   │   ├── tasks_student.html  # Tab 'Aufgaben': Punktestand + Filter (Student)
+│   │   ├── tasks_tutor.html    # Tab 'Aufgaben': Drag-and-Drop, Sichtbarkeit (Tutor/PROF)
+│   │   ├── overview.html      # Tab 'Übersicht': Punktübersicht + Excel-Export
+│   │   └── members.html       # Tab 'Mitglieder': Rollen, Einladungen (PROF/Admin)
 │   ├── tutor/
-│   │   ├── course_overview.html  # Aufgabenliste (Drag-and-Drop, Sichtbarkeit)
-│   │   ├── members.html     # Kurs-Mitglieder verwalten
 │   │   ├── task_detail.html # Aufgabe erstellen/bearbeiten (LLM-Aufgabe generieren)
-│   │   ├── overview.html    # Punktübersichtstabelle + Excel-Export
 │   │   └── submission_review.html # Einzelne Einreichung bewerten
 │   └── student/
-│       ├── course_overview.html  # Kurs-Übersicht + Punktestand
-│       └── task_solve.html      # Aufgabe lösen (Editor + Markdown/LaTeX)
+│       └── task_solve.html  # Aufgabe lösen (Editor + Markdown/LaTeX)
 ├── static/
 │   ├── css/main.css         # Custom Styles
 │   └── js/markdown-renderer.js # Markdown + LaTeX Rendering
-└── prompts/
-    ├── grading_prompt.py    # LLM-Grading-Prompt-Templates
-    ├── creation_prompt.py   # LLM-Task-Creation-Prompt-Templates
-    └── solution_prompt.py   # LLM-Solution-Hint-Prompt-Templates
+├── prompts/
+│   ├── grading_prompt.py    # LLM-Grading-Prompt-Templates
+│   ├── creation_prompt.py   # LLM-Task-Creation-Prompt-Templates
+│   └── solution_prompt.py   # LLM-Solution-Hint-Prompt-Templates
+└── data/
+    ├── tutor.db             # SQLite-Datenbank (dev)
+    └── media/course_{id}/   # Kurs-Medien (UUID-Namen, per Upload)
 ```
 
 ## 🎓 LLM-Setup

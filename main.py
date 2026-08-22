@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any, Sequence
 import logging
 import os
+import re
 from pathlib import Path
 
 # Logging konfigurieren
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 import hashlib
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -35,18 +36,22 @@ from database.base import create_db_and_tables, engine, get_session, migrate_sch
 from database.models import (
     Course,
     CourseInvite,
+    CourseMaterial,
+    CourseMedia,
     CourseRole,
     FeedbackSource,
     GlobalUserRole,
     HintExchange,
+    MaterialType,
     Task,
     User,
     UserCourse,
     Submission,
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
+from services import media_service
 
-from api import admin, auth, student, tutor, user_settings, course_members
+from api import admin, auth, media as media_api, materials as materials_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -160,6 +165,8 @@ app.include_router(admin.router)
 app.include_router(tutor.router)
 app.include_router(course_members.router)
 app.include_router(student.router)
+app.include_router(media_api.router)
+app.include_router(materials_api.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -202,6 +209,128 @@ def _get_user_courses(user: User, session: Session) -> list[dict[str, Any]]:
                 "role_in_course": m.role_in_course.value,
             })
     return courses
+
+
+def _course_tab_context(
+    session: Session,
+    user: User,
+    request: Request,
+    course_id: int,
+    active_tab: str,
+    page_title: str | None = None,
+) -> tuple[UserCourse | None, dict[str, Any]]:
+    """Gemeinsamer Template-Kontext für alle Kurs-Tab-Seiten.
+
+    Lädt Kurs + Membership, bestimmt die Rollen und baut die Tab-Leiste
+    (Rollen-Sichtbarkeit zentral geregelt — später um Skript/Slides/Medien
+    erweiterbar). Die Zugriffskontrolle (wer darf welche Seite öffnen)
+    bleibt Aufgabe der Route: `membership` kann None sein (z. B. Admin
+    ohne Membership auf der Mitglieder-Seite).
+    """
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+
+    is_admin = user.role == GlobalUserRole.ADMIN
+    role = membership.role_in_course if membership else None
+    is_tutor = role in (CourseRole.PROF, CourseRole.TUTOR)
+    is_prof = role == CourseRole.PROF
+
+    # Kurs-Materialien (Skript/Slides): für Studenten nur, wenn vorhanden & sichtbar;
+    # für Tutor/PROF/Admin immer (ggf. mit Empty-State + Anlegen-CTA)
+    materials = session.exec(
+        select(CourseMaterial).where(CourseMaterial.course_id == course_id)
+    ).all()
+
+    tabs: list[dict[str, Any]] = []
+    for mtype, key, icon, label in (
+        (MaterialType.SCRIPT, "script", "📖", "Skript"),
+        (MaterialType.SLIDES, "slides", "📽️", "Slides"),
+    ):
+        mat = next((m for m in materials if m.material_type == mtype), None)
+        if is_tutor or is_admin or (mat is not None and mat.is_visible):
+            tabs.append(
+                {
+                    "key": key,
+                    "icon": icon,
+                    "label": label,
+                    "url": f"/courses/{course_id}/{key}",
+                    "active": active_tab == key,
+                }
+            )
+
+    tabs.append(
+        {
+            "key": "tasks",
+            "icon": "📋",
+            "label": "Aufgaben",
+            "url": f"/courses/{course_id}",
+            "active": active_tab == "tasks",
+        }
+    )
+    if is_tutor:
+        tabs.append(
+            {
+                "key": "overview",
+                "icon": "📊",
+                "label": "Übersicht",
+                "url": f"/courses/{course_id}/overview",
+                "active": active_tab == "overview",
+            }
+        )
+    if is_prof or is_admin:
+        tabs.append(
+            {
+                "key": "media",
+                "icon": "🖼️",
+                "label": "Medien",
+                "url": f"/courses/{course_id}/media",
+                "active": active_tab == "media",
+            }
+        )
+    if is_prof or is_admin:
+        tabs.append(
+            {
+                "key": "members",
+                "icon": "👥",
+                "label": "Mitglieder",
+                "url": f"/courses/{course_id}/members",
+                "active": active_tab == "members",
+            }
+        )
+
+    ctx = {
+        "request": request,
+        "page_title": page_title or course.name,
+        "current_user": {
+            "id": user.id,
+            "username": user.username,
+            "name": user.name,
+            "role": role.value if role else "ADMIN",
+        },
+        "courses": _get_user_courses(user, session),
+        "selected_course_id": course_id,
+        "is_admin": is_admin,
+        "course": {
+            "id": course.id,
+            "name": course.name,
+            "description": course.description,
+            "semester": course.semester,
+        },
+        "is_tutor": is_tutor,
+        "is_prof": is_prof,
+        "tabs": tabs,
+        "active_tab": active_tab,
+        # für _material_page_context() (Skript/Slides-Tabs)
+        "materials": {m.material_type: m for m in materials},
+    }
+    return membership, ctx
 
 
 @app.get("/")
@@ -431,17 +560,10 @@ async def course_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Kurs-Übersicht: Aufgaben-Liste."""
-    course = session.get(Course, course_id)
-    if not course:
-        raise HTTPException(404, "Kurs nicht gefunden.")
-
-    # Rolle im Kurs
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
+    """Kurs-Tab 'Aufgaben': Aufgaben-Liste (Student- bzw. Tutor-Ansicht)."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="tasks"
+    )
 
     if not membership:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
@@ -453,11 +575,9 @@ async def course_page(
         .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
     ).all()
 
-    courses = _get_user_courses(user, session)
-
     # Template je nach Rolle
     is_tutor = membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
-    template = "tutor/course_overview.html" if is_tutor else "student/course_overview.html"
+    template = "course/tasks_tutor.html" if is_tutor else "course/tasks_student.html"
 
     # Für Studenten: nur sichtbare Aufgaben, my_points und has_feedback pro Aufgabe berechnen
     if not is_tutor:
@@ -518,31 +638,126 @@ async def course_page(
             for t in tasks
         ]
 
-    return templates.TemplateResponse(
-        template,
+    ctx["tasks"] = task_list
+    return templates.TemplateResponse(template, ctx)
+
+
+def _material_page_context(ctx: dict, mtype: MaterialType) -> dict:
+    """Skript-/Slides-Tab: Material aus ctx laden + Rollen-Sichtbarkeit.
+
+    Studenten: nur sichtbares Material, sonst 404.
+    Tutor/PROF/Admin: immer (leerer Kurs → Empty-State zum Anlegen).
+    """
+    label = "Skript" if mtype == MaterialType.SCRIPT else "Slides"
+    material = ctx["materials"].get(mtype)
+    can_view_all = ctx["is_tutor"] or ctx["is_admin"]
+
+    if material is None and not can_view_all:
+        raise HTTPException(404, f"Kein {label} für diesen Kurs vorhanden.")
+    if material and not material.is_visible and not can_view_all:
+        raise HTTPException(404, f"Kein {label} für diesen Kurs vorhanden.")
+
+    ctx["material"] = (
         {
-            "request": request,
-            "page_title": course.name,
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": membership.role_in_course.value,
-            },
-            "courses": courses,
-            "selected_course_id": course_id,
-            "is_admin": user.role == GlobalUserRole.ADMIN,
-            "course": {
-                "id": course.id,
-                "name": course.name,
-                "description": course.description,
-                "semester": course.semester,
-            },
-            "tasks": task_list,
-            "is_tutor": is_tutor,
-            "is_prof": membership.role_in_course == CourseRole.PROF,
-        },
+            "id": material.id,
+            "title": material.title,
+            "material_type": material.material_type.value,
+            "is_visible": material.is_visible,
+        }
+        if material
+        else None
     )
+    ctx["material_kind"] = mtype.value
+    ctx["material_label"] = label
+    ctx["page_title"] = f"{label} — {ctx['course']['name']}"
+    return ctx
+
+
+@app.get("/courses/{course_id}/script")
+async def script_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Skript': Vorlesungsskript (Markdown)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="script")
+    if not membership and user.role != GlobalUserRole.ADMIN:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+    _material_page_context(ctx, MaterialType.SCRIPT)
+    return templates.TemplateResponse("course/material.html", ctx)
+
+
+@app.get("/courses/{course_id}/slides")
+async def slides_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Slides': Vorlesungs-Slides (Markdown, Folien mit `---` getrennt)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="slides")
+    if not membership and user.role != GlobalUserRole.ADMIN:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+    _material_page_context(ctx, MaterialType.SLIDES)
+    return templates.TemplateResponse("course/material.html", ctx)
+
+
+@app.get("/courses/{course_id}/media")
+async def media_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Medien': Medienbibliothek (nur PROF/Admin)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="media")
+    if not (ctx["is_prof"] or ctx["is_admin"]):
+        raise HTTPException(403, "Nur PROFs und Administratoren dürfen die Medien verwalten.")
+    ctx["page_title"] = f"Medien — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/media.html", ctx)
+
+
+@app.get("/media/{course_id}/{filename}")
+async def serve_media(
+    course_id: int,
+    filename: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Authentifizierter Medien-Versand (kein Static-Mount!).
+
+    Zugriff nur für Kurs-Mitglieder; versteckte Medien (is_visible=False)
+    zusätzlich nur für Tutor/PROF/Admin.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9._\-]+", filename):
+        raise HTTPException(404, "Medium nicht gefunden.")
+
+    media = session.exec(
+        select(CourseMedia).where(CourseMedia.file_path == f"course_{course_id}/{filename}")
+    ).first()
+    if not media:
+        raise HTTPException(404, "Medium nicht gefunden.")
+
+    is_admin = user.role == GlobalUserRole.ADMIN
+    membership = None
+    if not is_admin:
+        membership = session.exec(
+            select(UserCourse)
+            .where(UserCourse.user_id == user.id)
+            .where(UserCourse.course_id == course_id)
+        ).first()
+        if not membership:
+            raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+    is_tutor = is_admin or membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)  # type: ignore[union-attr]
+    if not media.is_visible and not is_tutor:
+        raise HTTPException(403, "Dieses Medium ist nicht sichtbar.")
+
+    path = media_service.resolve_media_path(course_id, filename)
+    if not path:
+        raise HTTPException(404, "Datei nicht gefunden.")
+    return FileResponse(path, media_type=media.mime_type)
 
 
 @app.get("/courses/{course_id}/members")
@@ -552,26 +767,17 @@ async def members_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Mitglieder-Verwaltung: Für PROFs und Admins."""
-    course = session.get(Course, course_id)
-    if not course:
-        raise HTTPException(404, "Kurs nicht gefunden.")
+    """Kurs-Tab 'Mitglieder': Für PROFs und Admins."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="members"
+    )
+    ctx["page_title"] = f"Mitglieder — {ctx['course']['name']}"
 
     is_admin = user.role == GlobalUserRole.ADMIN
 
     # Admin: darf alles — auch ohne Membership
-    if not is_admin:
-        membership = session.exec(
-            select(UserCourse)
-            .where(UserCourse.user_id == user.id)
-            .where(UserCourse.course_id == course_id)
-        ).first()
-
-        if not membership or membership.role_in_course != CourseRole.PROF:
-            raise HTTPException(403, "Nur PROFs und Administratoren können die Mitglieder verwalten.")
-    else:
-        # Für Admin ohne Membership: Dummy für die current_user-Display
-        membership = None
+    if not is_admin and (not membership or membership.role_in_course != CourseRole.PROF):
+        raise HTTPException(403, "Nur PROFs und Administratoren können die Mitglieder verwalten.")
 
     # Alle Mitglieder mit User-Info laden
     user_courses = session.exec(
@@ -589,31 +795,8 @@ async def members_page(
         for uc in user_courses
     ]
 
-    courses = _get_user_courses(user, session)
-
-    return templates.TemplateResponse(
-        "tutor/members.html",
-        {
-            "request": request,
-            "page_title": f"Mitglieder — {course.name}",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": membership.role_in_course.value if membership else "ADMIN",
-            },
-            "courses": courses,
-            "selected_course_id": course_id,
-            "is_admin": is_admin,
-            "course": {
-                "id": course.id,
-                "name": course.name,
-                "description": course.description,
-                "semester": course.semester,
-            },
-            "members": members,
-        },
-    )
+    ctx["members"] = members
+    return templates.TemplateResponse("course/members.html", ctx)
 
 
 @app.get("/join/{token}")
@@ -985,42 +1168,15 @@ async def overview_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Tutor: Übersichtstabelle mit Excel-Export."""
-    course = session.get(Course, course_id)
-    if not course:
-        raise HTTPException(404, "Kurs nicht gefunden.")
-
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
-
+    """Kurs-Tab 'Übersicht': Punkte-Tabelle mit Excel-Export (PROF/Tutor)."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="overview"
+    )
     if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Nur für PROF/Tutor.")
 
-    courses = _get_user_courses(user, session)
-
-    return templates.TemplateResponse(
-        "tutor/overview.html",
-        {
-            "request": request,
-            "page_title": f"Übersicht — {course.name}",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": membership.role_in_course.value,
-            },
-            "courses": courses,
-            "is_admin": user.role == GlobalUserRole.ADMIN,
-            "selected_course_id": course_id,
-            "course": {
-                "id": course.id,
-                "name": course.name,
-            },
-        },
-    )
+    ctx["page_title"] = f"Übersicht — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/overview.html", ctx)
 
 
 @app.get("/courses/{course_id}/tasks/{task_id}/students/{student_id}/review")

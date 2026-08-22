@@ -1,0 +1,260 @@
+{% extends "course/base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tabs "Skript" & "Slides" (gemeinsames Template).
+
+   Kontext (von _course_tab_context + _material_page_context):
+     material: null oder {id, title, material_type, is_visible}
+     material_kind: "script" | "slides"
+     material_label: "Skript" | "Slides"
+
+   Der Markdown-Content wird per API geladen
+   (GET /api/courses/{id}/materials/{material_id}), damit keine
+   JSON-Escape-Probleme im Template entstehen.
+   Slides: Folien werden durch eine eigene Zeile "---" getrennt.
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block course_content %}
+
+{% if material %}
+
+  <!-- Header -->
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h2 class="text-xl font-bold text-gray-800">{{ material.title }}</h2>
+      {% if is_tutor or is_admin %}
+      <p class="text-sm text-gray-500 mt-1">
+        {% if material.is_visible %}👁️ Für alle Kursteilnehmenden sichtbar{% else %}🙈 Versteckt (nur Tutor/PROF){% endif %}
+      </p>
+      {% endif %}
+    </div>
+    {% if is_tutor or is_admin %}
+    <div class="flex gap-2 shrink-0">
+      <button onclick="toggleVisibility()"
+              class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-600 hover:bg-gray-50 transition">
+        {% if material.is_visible %}🙈 Verstecken{% else %}👁️ Einblenden{% endif %}
+      </button>
+      <button onclick="openEditor()"
+              class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50 transition font-medium">
+        ✏️ Bearbeiten
+      </button>
+      <button onclick="deleteMaterial()"
+              class="text-sm border border-red-200 rounded-lg px-3 py-1.5 text-red-600 hover:bg-red-50 transition">
+        🗑️
+      </button>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Ansicht -->
+  <div id="material-view" class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 min-h-[300px]"></div>
+
+{% else %}
+
+  <!-- Empty-State (nur Tutor/PROF sehen diese Seite ohne Material) -->
+  <div class="bg-white rounded-xl border-2 border-dashed border-gray-300 p-10 text-center">
+    <div class="text-5xl mb-4">{{ "📖" if material_kind == "script" else "📽️" }}</div>
+    <h2 class="text-lg font-semibold text-gray-700">Noch kein {{ material_label | lower }} vorhanden</h2>
+    <p class="text-gray-500 text-sm mt-2 max-w-xl mx-auto">
+      Erstelle hier {{ "das Skript" if material_kind == "script" else "die Slides" }} für diesen Kurs.
+      Format ist Markdown (mit LaTeX <code>$...$</code> und Mermaid).
+      {% if material_kind == "slides" %}
+      Trenne einzelne Folien durch eine eigene Zeile <code>---</code>.
+      {% endif %}
+      Medien aus der Medienbibliothek bindet du so ein:
+      <code>![Titel]({{ "/media/" + course.id|string + "/datei.png" }})</code>
+    </p>
+    <button onclick="openEditor()"
+            class="mt-5 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+      + {{ material_label }} erstellen
+    </button>
+  </div>
+
+{% endif %}
+
+<!-- Editor (Anlegen & Bearbeiten, nur Tutor/PROF) -->
+<div id="material-editor" class="hidden">
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+    <div class="mb-3">
+      <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+      <input id="material-title-input" type="text" maxlength="300"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+    </div>
+    <div id="material-editor-container">
+      <textarea id="material-textarea" rows="24"
+                placeholder="Markdown-Inhalt{% if material_kind == 'slides' %} — Folien mit einer Zeile '---' trennen{% endif %}"
+                class="w-full font-mono text-sm border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+    </div>
+    <div id="material-preview-anchor" class="flex items-center justify-end gap-2 mt-3">
+      <button onclick="closeEditor()"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+        Abbrechen
+      </button>
+      <button onclick="saveMaterial()"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+        Speichern
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  const kind = {{ material_kind | tojson }};        // "script" | "slides"
+  const label = {{ material_label | tojson }};      // "Skript" | "Slides"
+  const material = {{ material | tojson }};         // null oder {id, title, is_visible, ...}
+  const isTutor = {{ "true" if (is_tutor or is_admin) else "false" }};
+
+  let editor = null;
+  let currentVisible = material ? material.is_visible : true;
+
+  // ─── Laden & Rendern ──────────────────────────────────────────
+
+  async function loadAndRender() {
+    if (!material) return;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${material.id}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Nicht geladen");
+      const data = await res.json();
+      await renderContent(data.content || "");
+    } catch (e) {
+      const view = document.getElementById("material-view");
+      if (view) view.innerHTML = '<p class="text-red-500 text-sm">Fehler beim Laden des Inhalts.</p>';
+    }
+  }
+
+  async function renderContent(content) {
+    const view = document.getElementById("material-view");
+    if (!view) return;
+    view.innerHTML = "";
+
+    if (kind === "slides") {
+      const slides = (content || "").split(/\r?\n---\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (slides.length === 0) {
+        view.innerHTML = '<p class="text-gray-400">Noch kein Inhalt. Trenne Folien durch eine eigene Zeile <code>---</code>.</p>';
+        return;
+      }
+      for (let i = 0; i < slides.length; i++) {
+        const card = document.createElement("div");
+        card.className = "bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-4";
+        const head = document.createElement("div");
+        head.className = "text-xs font-semibold text-gray-400 mb-3";
+        head.textContent = `Folie ${i + 1} von ${slides.length}`;
+        const body = document.createElement("div");
+        body.className = "markdown-preview";
+        card.appendChild(head);
+        card.appendChild(body);
+        view.appendChild(card);
+        await renderMarkdown(slides[i], body);
+      }
+    } else {
+      await renderMarkdown(content, view);
+    }
+  }
+
+  // ─── Editor ───────────────────────────────────────────────────
+
+  function openEditor() {
+    document.getElementById("material-editor").classList.remove("hidden");
+    document.getElementById("material-title-input").value = material ? material.title : "";
+    const textarea = document.getElementById("material-textarea");
+    textarea.value = "";
+
+    if (!editor) {
+      editor = createMarkdownEditor("material-editor-container", {
+        buttonAnchor: "material-preview-anchor",
+        textareaId: "material-textarea",
+      });
+    }
+
+    if (material) {
+      document.getElementById("material-view").classList.add("hidden");
+      fetch(`/api/courses/${courseId}/materials/${material.id}`, { credentials: "same-origin" })
+        .then(r => { if (!r.ok) throw new Error("Nicht geladen"); return r.json(); })
+        .then(data => { textarea.value = data.content || ""; })
+        .catch(() => showToast("Fehler beim Laden des Inhalts.", "error"));
+    }
+    document.getElementById("material-editor").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function closeEditor() {
+    document.getElementById("material-editor").classList.add("hidden");
+    if (material) document.getElementById("material-view").classList.remove("hidden");
+  }
+
+  async function saveMaterial() {
+    const title = document.getElementById("material-title-input").value.trim();
+    const content = document.getElementById("material-textarea").value;
+    if (!title) {
+      showToast("Titel darf nicht leer sein.", "error");
+      return;
+    }
+
+    const payload = { title, content, is_visible: currentVisible };
+    if (!material) payload.material_type = kind;
+
+    const url = material
+      ? `/api/courses/${courseId}/materials/${material.id}`
+      : `/api/courses/${courseId}/materials`;
+    const method = material ? "PUT" : "POST";
+
+    try {
+      const res = await fetch(url, {
+        method,
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Speichern.", "error");
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  }
+
+  async function toggleVisibility() {
+    if (!material) return;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${material.id}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_visible: !currentVisible }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler.", "error");
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  }
+
+  function deleteMaterial() {
+    if (!material) return;
+    if (!confirm(`"${material.title}" wirklich löschen?`)) return;
+    fetch(`/api/courses/${courseId}/materials/${material.id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) throw new Error(d.detail || "Fehler beim Löschen.");
+        window.location.reload();
+      })
+      .catch(err => showToast(err.message, "error"));
+  }
+
+  loadAndRender();
+})();
+</script>
+{% endblock %}

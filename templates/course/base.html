@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Parent-Template für alle Kurs-Tab-Seiten (Aufgaben, Übersicht,
+   Mitglieder, später Skript/Slides/Medien).
+
+   Erwartete Kontext-Variablen (werden von _course_tab_context() in
+   main.py geliefert):
+     course, current_user, courses, selected_course_id, is_admin,
+     is_tutor, is_prof, tabs, active_tab, page_title
+
+   Children erweitern dieses Template und füllen course_content:
+     {% extends "course/base.html" %}
+     {% block course_content %} ... {% endblock %}
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+
+  <!-- Course Header -->
+  <div class="mb-4">
+    <div class="flex items-start justify-between">
+      <div>
+        <h1 id="course-name" class="text-2xl font-bold text-gray-800">{{ course.name }}</h1>
+        <p id="course-subtitle" class="text-gray-500">{{ course.semester }}{% if course.description %} — {{ course.description }}{% endif %}</p>
+      </div>
+      {% if is_prof or is_admin %}
+      <button onclick="showEditCourseModal()"
+              class="text-gray-400 hover:text-blue-600 transition text-lg" title="Kurs bearbeiten">
+        ✏️
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Tab-Leiste -->
+  {% include "course/_tabs.html" %}
+
+  <!-- Tab-Inhalt -->
+  {% block course_content %}{% endblock %}
+
+</div>
+
+<script>
+  // Kurs-ID für alle Kurs-Seiten (auch von Child-Scripts genutzt)
+  const courseId = {{ course.id }};
+</script>
+
+{% if is_prof or is_admin %}
+
+<!-- ═══ Kurs-Bearbeiten-Modal (auf jeder Kurs-Seite verfügbar) ═══ -->
+<div id="edit-course-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4">
+    <h2 class="text-xl font-bold text-gray-800 mb-4">Kurs bearbeiten</h2>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+        <input id="edit-course-name" type="text"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+               value="{{ course.name }}" maxlength="200">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
+        <input id="edit-course-semester" type="text"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+               value="{{ course.semester }}" maxlength="50">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+        <textarea id="edit-course-description" rows="3"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  maxlength="2000">{{ course.description }}</textarea>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeEditCourseModal()"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+        Abbrechen
+      </button>
+      <button onclick="saveCourseChanges()"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+        Speichern
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showEditCourseModal() {
+    document.getElementById('edit-course-modal').classList.remove('hidden');
+  }
+
+  function closeEditCourseModal() {
+    document.getElementById('edit-course-modal').classList.add('hidden');
+  }
+
+  async function saveCourseChanges() {
+    const name = document.getElementById('edit-course-name').value.trim();
+    const semester = document.getElementById('edit-course-semester').value.trim();
+    const description = document.getElementById('edit-course-description').value.trim();
+
+    if (!name) {
+      showToast('Titel darf nicht leer sein.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/courses/' + courseId + '/name', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          semester: semester,
+          description: description,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Speichern.', 'error');
+        return;
+      }
+
+      // Header im DOM aktualisieren
+      const h1El = document.getElementById('course-name');
+      const pEl = document.getElementById('course-subtitle');
+      if (h1El) h1El.textContent = name;
+      if (pEl) pEl.textContent = semester + (description ? ' — ' + description : '');
+
+      closeEditCourseModal();
+      showToast(data.message || 'Kurs aktualisiert.', 'success');
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+</script>
+
+{% endif %}
+{% endblock %}

@@ -1,0 +1,323 @@
+{% extends "course/base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tab "Medien": Medienbibliothek (nur PROF/Admin).
+
+   Upload → POST /api/courses/{id}/media (multipart)
+   Liste  → GET  /api/courses/{id}/media  (inkl. Verwendungs-Orten)
+   Versand der Dateien läuft über GET /media/{course_id}/{filename}
+   (authentifiziert, keine statische Map).
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block course_content %}
+
+<div class="grid gap-6 lg:grid-cols-3">
+
+  <!-- Upload -->
+  <div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 class="font-bold text-gray-800 mb-3">🖼️ Medium hochladen</h2>
+      <form id="media-upload-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Datei</label>
+          <input type="file" id="media-file" accept=".png,.jpg,.jpeg,.webp,.gif" required
+                 class="block w-full text-sm text-gray-600
+                        file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0
+                        file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700
+                        hover:file:bg-blue-100">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+          <input type="text" id="media-title" maxlength="300" placeholder="z. B. Entropie-Beispiel"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+          <textarea id="media-description" rows="3" maxlength="2000"
+                    placeholder="Was zeigt das Medium? (wird von der LLM-Pipeline genutzt, um es korrekt in Skript/Slides/Aufgaben einzubinden)"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        </div>
+        <button type="submit" id="media-upload-btn"
+                class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+          Hochladen
+        </button>
+        <p class="text-xs text-gray-400">Erlaubt: PNG, JPG, WebP, GIF — max. 5 MB</p>
+      </form>
+    </div>
+
+    <!-- Hinweis: Einbinden -->
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-4 text-xs text-blue-900 leading-relaxed">
+      <strong>Einbinden:</strong> Kopiere das Markdown-Snippet eines Mediums in Aufgaben,
+      Skript oder Slides. Die Verwendungs-Orte werden automatisch erkannt und hier
+      aktualisiert. Jede Abbildung sollte idealerweise nur <em>einmal</em> pro
+      Skript/Slides vorkommen (doppelte Referenzen werden markiert).
+    </div>
+  </div>
+
+  <!-- Medien-Grid -->
+  <div class="lg:col-span-2">
+    <div id="media-grid" class="grid gap-4 sm:grid-cols-2">
+      <p class="text-gray-400 text-sm col-span-2">Wird geladen…</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Edit-Modal -->
+<div id="media-edit-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4">
+    <h2 class="text-xl font-bold text-gray-800 mb-4">Medium bearbeiten</h2>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+        <input id="edit-media-title" type="text" maxlength="300"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+        <textarea id="edit-media-description" rows="4" maxlength="2000"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-gray-700">
+        <input type="checkbox" id="edit-media-visible" class="rounded">
+        Für Kursteilnehmende sichtbar
+      </label>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeMediaModal()"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+        Abbrechen
+      </button>
+      <button onclick="saveMediaEdit()"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+        Speichern
+      </button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  let mediaList = [];
+  let editingId = null;
+
+  // ─── Laden ────────────────────────────────────────────────────
+
+  async function loadMedia() {
+    const grid = document.getElementById("media-grid");
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media`, { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        grid.innerHTML = `<p class="text-red-500 text-sm col-span-2">${escapeHtml(data.detail || "Fehler beim Laden.")}</p>`;
+        return;
+      }
+      mediaList = data;
+      renderGrid();
+    } catch (err) {
+      grid.innerHTML = '<p class="text-red-500 text-sm col-span-2">Fehler beim Laden.</p>';
+    }
+  }
+
+  function renderGrid() {
+    const grid = document.getElementById("media-grid");
+    if (mediaList.length === 0) {
+      grid.innerHTML = '<p class="text-gray-400 text-sm col-span-2">Noch keine Medien. Lade links ein Bild hoch.</p>';
+      return;
+    }
+    grid.innerHTML = "";
+    mediaList.forEach(m => grid.appendChild(mediaCard(m)));
+  }
+
+  function mediaCard(m) {
+    const card = document.createElement("div");
+    card.className = "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col";
+
+    const img = document.createElement("img");
+    img.src = m.url;
+    img.alt = m.title;
+    img.className = "w-full h-36 object-cover bg-gray-100";
+
+    const body = document.createElement("div");
+    body.className = "p-4 flex-1 flex flex-col gap-2";
+
+    const usagesHtml = m.usages.length
+      ? m.usages.map(u => `<div class="truncate">📍 ${escapeHtml(u.location)}</div>`).join("")
+      : '<div class="italic text-orange-500">Noch nicht eingebunden</div>';
+
+    const dupHtml = (m.duplicate_in && m.duplicate_in.length)
+      ? `<div class="text-xs text-red-600">⚠️ Mehrfach in: ${m.duplicate_in.map(escapeHtml).join(", ")}</div>`
+      : "";
+
+    body.innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <h3 class="font-semibold text-gray-800 text-sm break-words">${escapeHtml(m.title)}</h3>
+        ${m.is_visible
+          ? '<span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full shrink-0">sichtbar</span>'
+          : '<span class="text-xs bg-yellow-50 text-yellow-700 px-2 py-0.5 rounded-full shrink-0">versteckt</span>'}
+      </div>
+      <p class="text-xs text-gray-500">${m.llm_description ? escapeHtml(m.llm_description) : '<span class="italic text-gray-400">Keine Beschreibung</span>'}</p>
+      <div class="text-xs text-gray-600 space-y-0.5">${usagesHtml}${dupHtml}</div>
+      <div class="mt-auto">
+        <div class="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1.5">
+          <code class="text-xs flex-1 overflow-hidden text-ellipsis whitespace-nowrap">![${escapeHtml(m.title)}](${m.url})</code>
+          <button type="button" class="text-xs text-blue-600 hover:underline shrink-0"
+                  data-copy="${escapeHtml(`![${m.title}](${m.url})`)}" title="Markdown-Snippet kopieren">
+            Kopieren
+          </button>
+        </div>
+      </div>`;
+
+    const actions = document.createElement("div");
+    actions.className = "flex gap-2 px-4 pb-3";
+    actions.innerHTML = `
+      <button type="button" class="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-gray-600 hover:bg-gray-50 transition"
+              data-edit="${m.id}">✏️ Bearbeiten</button>
+      <button type="button" class="text-xs border border-red-200 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 transition"
+              data-del="${m.id}">🗑️</button>`;
+
+    card.appendChild(img);
+    card.appendChild(body);
+    card.appendChild(actions);
+    return card;
+  }
+
+  // ─── Aktionen (Event-Delegation) ──────────────────────────────
+
+  document.getElementById("media-grid").addEventListener("click", (e) => {
+    const target = e.target.closest("button[data-copy], button[data-edit], button[data-del]");
+    if (!target) return;
+
+    if (target.dataset.copy) {
+      navigator.clipboard.writeText(target.dataset.copy)
+        .then(() => showToast("Markdown-Snippet kopiert.", "success"))
+        .catch(() => showToast("Kopieren fehlgeschlagen.", "error"));
+      return;
+    }
+    if (target.dataset.edit) {
+      openMediaModal(parseInt(target.dataset.edit));
+      return;
+    }
+    if (target.dataset.del) {
+      deleteMedia(parseInt(target.dataset.del));
+    }
+  });
+
+  // ─── Edit-Modal ───────────────────────────────────────────────
+
+  function openMediaModal(id) {
+    const m = mediaList.find(x => x.id === id);
+    if (!m) return;
+    editingId = id;
+    document.getElementById("edit-media-title").value = m.title;
+    document.getElementById("edit-media-description").value = m.llm_description || "";
+    document.getElementById("edit-media-visible").checked = m.is_visible;
+    document.getElementById("media-edit-modal").classList.remove("hidden");
+  }
+
+  function closeMediaModal() {
+    editingId = null;
+    document.getElementById("media-edit-modal").classList.add("hidden");
+  }
+
+  async function saveMediaEdit() {
+    if (editingId === null) return;
+    const payload = {
+      title: document.getElementById("edit-media-title").value,
+      llm_description: document.getElementById("edit-media-description").value,
+      is_visible: document.getElementById("edit-media-visible").checked,
+    };
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media/${editingId}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Speichern.", "error");
+        return;
+      }
+      closeMediaModal();
+      showToast(data.message || "Medium aktualisiert.", "success");
+      loadMedia();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  }
+
+  // ─── Löschen ──────────────────────────────────────────────────
+
+  function deleteMedia(id) {
+    const m = mediaList.find(x => x.id === id);
+    if (!m) return;
+    const used = m.usages.length > 0;
+    const msg = used
+      ? `"${m.title}" wird in ${m.usages.length} Stelle(n) verwendet: ${m.usages.map(u => u.location).join(", ")}. Trotzdem löschen?`
+      : `"${m.title}" wirklich löschen?`;
+    if (!confirm(msg)) return;
+
+    fetch(`/api/courses/${courseId}/media/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) throw new Error(d.detail || "Fehler beim Löschen.");
+        showToast(d.message || "Medium gelöscht.", "success");
+        loadMedia();
+      })
+      .catch(err => showToast(err.message, "error"));
+  }
+
+  // ─── Upload ───────────────────────────────────────────────────
+
+  document.getElementById("media-upload-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById("media-file");
+    if (!fileInput.files.length) {
+      showToast("Bitte eine Datei wählen.", "error");
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append("file", fileInput.files[0]);
+    fd.append("title", document.getElementById("media-title").value);
+    fd.append("llm_description", document.getElementById("media-description").value);
+
+    const btn = document.getElementById("media-upload-btn");
+    btn.disabled = true;
+    btn.textContent = "Lädt…";
+
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media`, {
+        method: "POST",
+        credentials: "same-origin",
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Upload fehlgeschlagen.", "error");
+        return;
+      }
+      showToast(data.message || "Medium hochgeladen.", "success");
+      e.target.reset();
+      loadMedia();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Hochladen";
+    }
+  });
+
+  loadMedia();
+})();
+</script>
+{% endblock %}

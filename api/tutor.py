@@ -32,6 +32,7 @@ from services.auth_service import get_current_user, require_course_access
 from services.export_service import ExportService
 from services.grading_service import GradingService
 from services.llm_service import LLMService
+from services.media_service import sync_media_usages
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Tutor"])
@@ -146,7 +147,8 @@ async def create_task(
     session.add(task)
     session.commit()
     session.refresh(task)
-    
+    sync_media_usages(session, course_id)
+
     return {
         "message": f"Aufgabe '{task.title}' erstellt.",
         "task": {
@@ -275,7 +277,8 @@ async def update_task(
     session.add(task)
     session.commit()
     session.refresh(task)
-    
+    sync_media_usages(session, task.course_id)
+
     return {"message": "Aufgabe aktualisiert.", "task": {"id": task.id, "title": task.title}}
 
 
@@ -298,14 +301,16 @@ async def delete_task(
     ).first()
     if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Keine Berechtigung, diese Aufgabe zu löschen.")
-    
+
+    task_course_id = task.course_id
     for sub in task.submissions:
         for fb in sub.feedback_list:
             session.delete(fb)
         session.delete(sub)
-    
+
     session.delete(task)
     session.commit()
+    sync_media_usages(session, task_course_id)
     return {"message": "Aufgabe '" + task.title + "' gelöscht."}
 
 
@@ -367,6 +372,7 @@ async def duplicate_task(
     session.add(new_task)
     session.commit()
     session.refresh(new_task)
+    sync_media_usages(session, task.course_id)
 
     return {
         "message": f"Aufgabe '{new_task.title}' dupliziert.",

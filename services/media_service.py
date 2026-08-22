@@ -88,6 +88,32 @@ def save_upload(course_id: int, filename: str, data: bytes) -> tuple[str, str, i
     return f"course_{course_id}/{stored_name}", ALLOWED_MEDIA[ext], len(data)
 
 
+def replace_file(rel_path: str, filename: str, data: bytes) -> tuple[str, str, int]:
+    """Überschreibt eine bestehende Medium-Datei am selben Pfad.
+
+    Der Dateiname (UUID + Extension) bleibt unverändert, damit Markdown-Referenzen
+    und gespeicherte URLs weiter funktionieren — nur Inhalt, MIME-Type und Größe
+    werden aktualisiert.
+
+    Returns: (relativer file_path, mime_type, size)
+    Raises:  400/404/413 bei ungültigem Upload.
+    """
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_MEDIA:
+        allowed = ", ".join(sorted(ALLOWED_MEDIA))
+        raise HTTPException(400, f"Dateityp nicht erlaubt. Erlaubt: {allowed}")
+    if not data:
+        raise HTTPException(400, "Datei ist leer.")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"Datei zu groß (max. {MAX_UPLOAD_BYTES // (1024 * 1024)} MB).")
+
+    p = (MEDIA_DIR / rel_path).resolve()
+    if not p.is_relative_to(MEDIA_DIR.resolve()) or not p.is_file():
+        raise HTTPException(404, "Bestehende Datei nicht gefunden.")
+    p.write_bytes(data)
+    return rel_path, ALLOWED_MEDIA[ext], len(data)
+
+
 def resolve_media_path(course_id: int, filename: str) -> Path | None:
     """Löst einen Dateinamen auf eine sichere Datei unter MEDIA_DIR/course_{id}.
 

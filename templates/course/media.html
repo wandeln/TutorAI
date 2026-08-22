@@ -17,32 +17,33 @@
   <div>
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
       <h2 class="font-bold text-gray-800 mb-3">🖼️ Medium hochladen</h2>
-      <form id="media-upload-form" class="space-y-3">
+      <div class="space-y-3">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">Datei</label>
-          <input type="file" id="media-file" accept=".png,.jpg,.jpeg,.webp,.gif" required
+          <input type="file" id="media-file" accept=".png,.jpg,.jpeg,.webp,.gif"
                  class="block w-full text-sm text-gray-600
                         file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0
                         file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700
                         hover:file:bg-blue-100">
+          <p class="text-xs text-gray-400 mt-1">
+            PNG, JPG, WebP, GIF — max. 5 MB.<br>
+            Upload & LLM-Beschreibung starten automatisch nach der Dateiauswahl
+            (Titel/Beschreibung können später im Modal geändert werden).
+          </p>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
-          <input type="text" id="media-title" maxlength="300" placeholder="z. B. Entropie-Beispiel"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+
+        <div id="upload-preview" class="hidden">
+          <img id="upload-preview-img" alt="Vorschau"
+               class="w-full max-h-44 object-contain bg-gray-100 rounded-lg border border-gray-200">
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
-          <textarea id="media-description" rows="3" maxlength="2000"
-                    placeholder="Was zeigt das Medium? (wird von der LLM-Pipeline genutzt, um es korrekt in Skript/Slides/Aufgaben einzubinden)"
-                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+
+        <div id="upload-progress" class="hidden space-y-1.5">
+          <div id="upload-status" class="text-xs text-gray-600"></div>
+          <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-150" style="width: 0%"></div>
+          </div>
         </div>
-        <button type="submit" id="media-upload-btn"
-                class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-          Hochladen
-        </button>
-        <p class="text-xs text-gray-400">Erlaubt: PNG, JPG, WebP, GIF — max. 5 MB</p>
-      </form>
+      </div>
     </div>
 
     <!-- Hinweis: Einbinden -->
@@ -56,6 +57,27 @@
 
   <!-- Medien-Grid -->
   <div class="lg:col-span-2">
+    <div class="flex flex-wrap items-center gap-2 mb-3">
+      <input type="search" id="media-search" placeholder="Suche (Titel/Beschreibung)…"
+             class="flex-1 min-w-40 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white
+                    focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      <select id="media-filter" title="Filtern"
+              class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white
+                     focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        <option value="all">Alle</option>
+        <option value="visible">Sichtbar</option>
+        <option value="hidden">Versteckt</option>
+        <option value="unused">Noch nicht eingebunden</option>
+      </select>
+      <select id="media-sort" title="Sortieren"
+              class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white
+                     focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        <option value="newest" selected>Neueste zuerst</option>
+        <option value="oldest">Älteste zuerst</option>
+        <option value="title-asc">Titel A–Z</option>
+        <option value="title-desc">Titel Z–A</option>
+      </select>
+    </div>
     <div id="media-grid" class="grid gap-4 sm:grid-cols-2">
       <p class="text-gray-400 text-sm col-span-2">Wird geladen…</p>
     </div>
@@ -65,10 +87,21 @@
 
 <!-- Edit-Modal -->
 <div id="media-edit-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 mx-4">
     <h2 class="text-xl font-bold text-gray-800 mb-4">Medium bearbeiten</h2>
 
     <div class="space-y-4">
+      <img id="edit-preview-img" alt="Vorschau" title="Klicken, um die Datei zu ersetzen"
+           class="w-full max-h-48 object-contain bg-gray-100 rounded-lg border border-gray-200 cursor-pointer hover:opacity-90">
+
+
+      <div id="edit-progress" class="hidden space-y-1.5">
+        <div id="edit-status" class="text-xs text-gray-600"></div>
+        <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+          <div id="edit-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-150" style="width: 0%"></div>
+        </div>
+      </div>
+
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
         <input id="edit-media-title" type="text" maxlength="300"
@@ -79,21 +112,28 @@
         <textarea id="edit-media-description" rows="4" maxlength="2000"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
       </div>
+    </div>
+
+    <button id="edit-modal-generate" type="button"
+            class="text-sm text-purple-700 border border-purple-200 bg-purple-50 hover:bg-purple-100 rounded-lg px-3 py-2 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed mt-2">
+      🤖 Titel &amp; Beschreibung generieren
+    </button>
+
+    <div class="flex items-center justify-between flex-wrap gap-3 mt-2">
       <label class="flex items-center gap-2 text-sm text-gray-700">
         <input type="checkbox" id="edit-media-visible" class="rounded">
         Für Kursteilnehmende sichtbar
       </label>
-    </div>
-
-    <div class="flex justify-end gap-3 mt-6">
-      <button onclick="closeMediaModal()"
-              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
-        Abbrechen
-      </button>
-      <button onclick="saveMediaEdit()"
-              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-        Speichern
-      </button>
+      <div class="flex gap-3 shrink-0">
+        <button id="edit-modal-cancel" type="button"
+                class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+          Abbrechen
+        </button>
+        <button id="edit-modal-save" type="button"
+                class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+          Speichern
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -124,23 +164,64 @@
     }
   }
 
+  // Suchen, Filtern und Sortieren (client-seitig, Liste ist pro Kurs klein)
+  function getVisibleMedia() {
+    const q = (document.getElementById("media-search").value || "").trim().toLowerCase();
+    const filter = document.getElementById("media-filter").value;
+    const sort = document.getElementById("media-sort").value;
+
+    const list = mediaList.filter(m => {
+      if (q && !(m.title + " " + (m.llm_description || "")).toLowerCase().includes(q)) return false;
+      if (filter === "visible" && !m.is_visible) return false;
+      if (filter === "hidden" && m.is_visible) return false;
+      if (filter === "unused" && m.usages.length > 0) return false;
+      return true;
+    });
+
+    const t = m => (m.created_at ? Date.parse(m.created_at) : 0);
+    list.sort((a, b) => {
+      switch (sort) {
+        case "oldest":
+          return t(a) - t(b);
+        case "title-asc":
+          return a.title.localeCompare(b.title, "de", { sensitivity: "base" });
+        case "title-desc":
+          return b.title.localeCompare(a.title, "de", { sensitivity: "base" });
+        case "newest":
+        default:
+          return t(b) - t(a);
+      }
+    });
+    return list;
+  }
+
   function renderGrid() {
     const grid = document.getElementById("media-grid");
     if (mediaList.length === 0) {
       grid.innerHTML = '<p class="text-gray-400 text-sm col-span-2">Noch keine Medien. Lade links ein Bild hoch.</p>';
       return;
     }
+    const list = getVisibleMedia();
+    if (list.length === 0) {
+      grid.innerHTML = '<p class="text-gray-400 text-sm col-span-2">Keine Medien für die aktuelle Filterung/Suche.</p>';
+      return;
+    }
     grid.innerHTML = "";
-    mediaList.forEach(m => grid.appendChild(mediaCard(m)));
+    // Cache-Buster: nach Datei-Ersatz soll sofort die neue Version geladen werden
+    const ts = Date.now();
+    list.forEach(m => grid.appendChild(mediaCard(m, ts)));
   }
 
-  function mediaCard(m) {
+  function mediaCard(m, ts) {
     const card = document.createElement("div");
     card.className = "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col";
 
     const img = document.createElement("img");
-    img.src = m.url;
+    img.src = m.url + "?t=" + ts;
     img.alt = m.title;
+    img.title = "Klick zum Vergrößern";
+    img.style.cursor = "pointer";
+    img.onclick = () => openImageOverlay(m.url + "?t=" + Date.now(), m.title);
     img.className = "w-full h-36 object-cover bg-gray-100";
 
     const body = document.createElement("div");
@@ -187,6 +268,19 @@
     return card;
   }
 
+  // Vorschau im Vollbild (gleiches Pattern wie bei den Plots in task_solve.html)
+  function openImageOverlay(url, alt) {
+    const overlay = document.createElement("div");
+    overlay.className = "fixed inset-0 z-50 bg-black bg-opacity-75 flex items-center justify-center p-4";
+    overlay.onclick = () => overlay.remove();
+    const bigImg = document.createElement("img");
+    bigImg.src = url;
+    bigImg.alt = alt;
+    bigImg.className = "max-w-full max-h-full rounded-lg shadow-xl";
+    overlay.appendChild(bigImg);
+    document.body.appendChild(overlay);
+  }
+
   // ─── Aktionen (Event-Delegation) ──────────────────────────────
 
   document.getElementById("media-grid").addEventListener("click", (e) => {
@@ -217,6 +311,7 @@
     document.getElementById("edit-media-title").value = m.title;
     document.getElementById("edit-media-description").value = m.llm_description || "";
     document.getElementById("edit-media-visible").checked = m.is_visible;
+    document.getElementById("edit-preview-img").src = m.url + "?t=" + Date.now();
     document.getElementById("media-edit-modal").classList.remove("hidden");
   }
 
@@ -252,6 +347,218 @@
     }
   }
 
+  // ─── LLM-Generierung (Edit-Modal) ─────────────────────────────
+
+  async function generateEditMetadata(btn) {
+    if (editingId === null) return;
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Generiere…";
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media/${editingId}/generate-metadata`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(data.detail || "LLM-Generierung fehlgeschlagen.", "error");
+        return;
+      }
+      document.getElementById("edit-media-title").value = data.media.title;
+      document.getElementById("edit-media-description").value = data.media.llm_description || "";
+      showToast("Titel & Beschreibung generiert.", "success");
+      loadMedia();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  // Modal-Buttons per addEventListener verdrahten (inline onclick ginge nicht —
+  // die Funktionen liegen im IIFE-Scope und sind nicht global sichtbar)
+  document.getElementById("edit-modal-cancel").addEventListener("click", closeMediaModal);
+  document.getElementById("edit-modal-save").addEventListener("click", saveMediaEdit);
+  document.getElementById("edit-modal-generate").addEventListener("click", (e) => generateEditMetadata(e.currentTarget));
+
+  // ─── Upload + LLM-Generierung (gemeinsam) ─────────────────────
+
+  const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+  const MAX_SIZE = 5 * 1024 * 1024;
+  let objectUrl = null;
+
+  const uploadUI = {
+    preview: document.getElementById("upload-preview"),
+    previewImg: document.getElementById("upload-preview-img"),
+    progress: document.getElementById("upload-progress"),
+    bar: document.getElementById("upload-bar"),
+    status: document.getElementById("upload-status"),
+  };
+  const editUI = {
+    preview: null,
+    previewImg: document.getElementById("edit-preview-img"),
+    progress: document.getElementById("edit-progress"),
+    bar: document.getElementById("edit-bar"),
+    status: document.getElementById("edit-status"),
+  };
+
+  let stageTimer = null;
+
+  function clearStageTimer() {
+    if (stageTimer) { clearInterval(stageTimer); stageTimer = null; }
+  }
+
+  function setBar(ui, ratio) {
+    ui.bar.style.width = Math.round(Math.min(Math.max(ratio, 0), 1) * 100) + "%";
+  }
+
+  function showStage(ui, ratio, text, animate = false) {
+    ui.progress.classList.remove("hidden");
+    ui.status.textContent = text;
+    clearStageTimer();
+    setBar(ui, ratio);
+    if (animate) {
+      // LLM-Dauer unbekannt: Bar läuft sanft auf ~95 % zu und wird beim
+      // Fertigstellen auf 100 % gesetzt (finishStage).
+      stageTimer = setInterval(() => {
+        const cur = parseFloat(ui.bar.style.width) / 100 || ratio;
+        setBar(ui, cur + (0.95 - cur) * 0.05);
+      }, 250);
+    }
+  }
+
+  function finishStage(ui) {
+    clearStageTimer();
+    setBar(ui, 1);
+  }
+
+  function hideStage(ui) {
+    clearStageTimer();
+    ui.progress.classList.add("hidden");
+    setBar(ui, 0);
+  }
+
+  function validateFile(file) {
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      return "Dateityp nicht erlaubt. Erlaubt: PNG, JPG, WebP, GIF.";
+    }
+    if (file.size > MAX_SIZE) {
+      return "Datei zu groß (max. 5 MB).";
+    }
+    return null;
+  }
+
+  function xhrUpload(method, url, formData, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+      xhr.onload = () => {
+        let body = {};
+        try { body = JSON.parse(xhr.responseText || "{}"); } catch { /* leer */ }
+        resolve({ status: xhr.status, body });
+      };
+      xhr.onerror = () => reject(new Error("Netzwerkfehler beim Upload."));
+      xhr.send(formData);
+    });
+  }
+
+  // Datei hochladen (mediaId=null) bzw. ersetzen (mediaId).
+  // Bei regenerate=true wird danach zusätzlich Titel & Beschreibung per LLM
+  // generiert (nur bei neuem Upload). Beim Ersatz bleiben Titel & Beschreibung
+  // erhalten — optional per „🤖 Titel & Beschreibung generieren" im Modal aktualisierbar.
+  async function uploadAndGenerate(file, mediaId, ui, regenerate) {
+    // Upload-Phase: 0–60 % der Bar (wenn danach noch die LLM-Phase folgt)
+    // bzw. 0–100 % (bei Ersatz ohne LLM-Phase).
+    const uploadMax = regenerate ? 0.6 : 1.0;
+
+    if (objectUrl) URL.revokeObjectURL(objectUrl);
+    objectUrl = URL.createObjectURL(file);
+    ui.previewImg.src = objectUrl;
+    if (ui.preview) ui.preview.classList.remove("hidden");
+    showStage(ui, 0, "Lade Datei hoch…");
+
+    const fd = new FormData();
+    fd.append("file", file);
+
+    let res;
+    try {
+      res = mediaId !== null
+        ? await xhrUpload("PUT", `/api/courses/${courseId}/media/${mediaId}/file`, fd,
+            (p) => showStage(ui, p * uploadMax, "Lade Datei hoch…"))
+        : await xhrUpload("POST", `/api/courses/${courseId}/media`, fd,
+            (p) => showStage(ui, p * uploadMax, "Lade Datei hoch…"));
+    } catch (err) {
+      hideStage(ui);
+      if (ui.preview) ui.preview.classList.add("hidden");
+      showToast(err.message, "error");
+      return;
+    }
+
+    if (res.status < 200 || res.status >= 300 || !res.body.media) {
+      hideStage(ui);
+      if (ui.preview) ui.preview.classList.add("hidden");
+      const detail = res.body && res.body.detail;
+      const msg = detail && detail !== "Not Found"
+        ? detail
+        : `Upload/Ersatz fehlgeschlagen (HTTP ${res.status}) — ggf. Server neu starten.`;
+      showToast(msg, "error");
+      return;
+    }
+
+    if (regenerate) {
+      showStage(ui, 0.6, "Erzeuge Titel & Beschreibung (LLM)…", true);
+      try {
+        const r = await fetch(`/api/courses/${courseId}/media/${res.body.media.id}/generate-metadata`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          showToast(d.detail || "LLM-Generierung fehlgeschlagen — Titel/Beschreibung manuell ergänzen.", "warning");
+        }
+      } catch {
+        showToast("LLM-Generierung fehlgeschlagen — Titel/Beschreibung manuell ergänzen.", "warning");
+      }
+    }
+
+    // Beim Ersatz: Vorschau im Modal aktualisieren (Cache-Buster, da URL gleich bleibt)
+    if (mediaId !== null) {
+      ui.previewImg.src = res.body.media.url + "?t=" + Date.now();
+    }
+
+    finishStage(ui);
+    if (ui.preview) ui.preview.classList.add("hidden");
+    showToast(mediaId !== null ? "Datei ersetzt." : "Medium hochgeladen.", "success");
+    loadMedia();
+    setTimeout(() => hideStage(ui), 400);
+  }
+
+  // Datei-Ersatz im Edit-Modal: Der (unsichtbare) File-Input wird per JS erzeugt,
+  // damit das Template schlank bleibt. Klick auf die Vorschau ruft .click() auf.
+  const editFileInput = document.createElement("input");
+  editFileInput.type = "file";
+  editFileInput.accept = ".png,.jpg,.jpeg,.webp,.gif";
+  editFileInput.className = "hidden";
+  document.body.appendChild(editFileInput);
+  editFileInput.addEventListener("change", async () => {
+    const file = editFileInput.files[0];
+    editFileInput.value = "";
+    if (!file || editingId === null) return;
+    const err = validateFile(file);
+    if (err) { showToast(err, "error"); return; }
+    if (!confirm("Aktuelle Datei ersetzen? Die bisherige Datei wird überschrieben.")) return;
+    await uploadAndGenerate(file, editingId, editUI, false);
+  });
+
+  // Klick auf die Modal-Vorschau öffnet ebenfalls den Datei-Dialog
+  document.getElementById("edit-preview-img").addEventListener("click", () => {
+    if (editingId !== null) editFileInput.click();
+  });
+
   // ─── Löschen ──────────────────────────────────────────────────
 
   function deleteMedia(id) {
@@ -276,46 +583,23 @@
       .catch(err => showToast(err.message, "error"));
   }
 
-  // ─── Upload ───────────────────────────────────────────────────
+  // ─── Upload (automatisch nach Dateiauswahl) ───────────────────
 
-  document.getElementById("media-upload-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fileInput = document.getElementById("media-file");
-    if (!fileInput.files.length) {
-      showToast("Bitte eine Datei wählen.", "error");
-      return;
-    }
-
-    const fd = new FormData();
-    fd.append("file", fileInput.files[0]);
-    fd.append("title", document.getElementById("media-title").value);
-    fd.append("llm_description", document.getElementById("media-description").value);
-
-    const btn = document.getElementById("media-upload-btn");
-    btn.disabled = true;
-    btn.textContent = "Lädt…";
-
-    try {
-      const res = await fetch(`/api/courses/${courseId}/media`, {
-        method: "POST",
-        credentials: "same-origin",
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        showToast(data.detail || "Upload fehlgeschlagen.", "error");
-        return;
-      }
-      showToast(data.message || "Medium hochgeladen.", "success");
-      e.target.reset();
-      loadMedia();
-    } catch (err) {
-      showToast("Fehler: " + err.message, "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Hochladen";
-    }
+  const fileInput = document.getElementById("media-file");
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    const err = validateFile(file);
+    if (err) { showToast(err, "error"); return; }
+    await uploadAndGenerate(file, null, uploadUI, true);
   });
+
+  // ─── Filter & Sortierung ────────────────────────────────
+
+  document.getElementById("media-search").addEventListener("input", renderGrid);
+  document.getElementById("media-filter").addEventListener("change", renderGrid);
+  document.getElementById("media-sort").addEventListener("change", renderGrid);
 
   loadMedia();
 })();

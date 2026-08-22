@@ -1,7 +1,6 @@
 {% extends "course/base.html" %}
 
 {% block course_content %}
-  <p class="text-sm text-gray-500 mb-4">Klicke auf eine Punktezahl, um die Einreichung zu bewerten.</p>
 
   <!-- Summary Stats -->
   <div id="summary-stats" class="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -33,12 +32,7 @@
     </div>
   </div>
 
-  <!-- Legend -->
-  <div class="flex items-center gap-4 mb-4 text-sm text-gray-500">
-    <span>🖊️ = Tutor-Bewertung (Überschreibung)</span>
-    <span>·</span>
-    <span>Grün ≥ 80% · Gelb ≥ 50% · Rot < 50%</span>
-  </div>
+  <p class="text-sm text-gray-500 mb-2">Klicke auf eine Punktezahl, um die Einreichung zu bewerten.</p>
 
   <!-- Loading State -->
   <div id="loading-state" class="hidden text-center py-12">
@@ -58,6 +52,13 @@
         <!-- Wird dynamisch per JS gefüllt -->
       </tbody>
     </table>
+  </div>
+
+  <!-- Legend -->
+  <div class="flex items-center gap-4 mt-2 text-sm text-gray-500">
+    <span>🖊️ = Tutor-Bewertung (Überschreibung)</span>
+    <span>·</span>
+    <span>Grün ≥ 80% · Gelb ≥ 50% · Rot < 50%</span>
   </div>
 
   <!-- Action Buttons (unter der Tabelle) -->
@@ -240,7 +241,7 @@
     avgPoints = students.length > 0 ? avgPoints / students.length : 0;
     minPoints = minPoints === Infinity ? 0 : minPoints;
 
-    statsDiv.innerHTML = 
+    statsDiv.innerHTML =
       '<div class="text-center p-3 rounded-lg bg-blue-50">' +
         '<div class="text-2xl font-bold text-blue-600">' + students.length + '</div>' +
         '<div class="text-sm text-gray-500">Studenten</div>' +

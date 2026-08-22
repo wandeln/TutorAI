@@ -17,7 +17,7 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 
 | Kurs-Rolle | Kann |
 |---|---|
-| **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript/Slides anlegen & löschen, Medienbibliothek (Upload/Description/Delete) |
+| **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript/Slides anlegen & löschen, Medienbibliothek (Auto-Upload + LLM-Beschreibung, Datei-Ersatz, Delete) |
 | **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Aufgabe generieren), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript/Slides anlegen & bearbeiten |
 | **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben), vorherige/nächste Aufgabe navigieren, Skript & Slides lesen, Name & Passwort selbst ändern |
 
@@ -39,7 +39,7 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 - **Registerkarten je Kurs:** Skript, Slides, Aufgaben, Übersicht (Tutor+), Medien (PROF+), Mitglieder (PROF+)
 - **Vorlesungsskript** — Markdown (LaTeX, Mermaid), pro Kurs maximal ein Skript, Sichtbarkeit umschaltbar
 - **Vorlesungs-Slides** — ein Markdown-Dokument, Folien durch `---` getrennt (reveal.js-Rendering folgt in einem späteren Schritt)
-- **Medienbibliothek je Kurs** (`data/media/course_{id}/`) — Bilder (PNG/JPG/WebP/GIF, max. 5 MB, UUID-Namen) mit LLM-Beschreibung pro Medium
+- **Medienbibliothek je Kurs** (`data/media/course_{id}/`) — Bilder (PNG/JPG/WebP/GIF, max. 5 MB, UUID-Namen); Upload startet automatisch bei Dateiauswahl (Vorschau + Progress), LLM erzeugt Titel & Beschreibung (Vision-Modell erforderlich); Datei kann später ersetzt werden (gleicher Pfad → Markdown-Referenzen bleiben gültig)
 - **Medien-Versand** nur über authentifizierte Route (Kurs-Membership erforderlich; versteckte Medien nur für Tutor/PROF)
 - **Einbindung & Verwendungs-Tracking:** Medien werden per Markdown-Snippet eingebunden (`![Titel](/media/{course_id}/{datei})`); die Verwendungs-Orte (Skript/Slides/Aufgabe) werden automatisch aus dem Content abgeleitet (`media_usages`), doppelte Referenzen werden markiert
 
@@ -165,7 +165,7 @@ TutorAI/
 │   ├── course_members.py    # Kurs-Mitglieder + Einladungen (Prof/Admin)
 │   ├── tutor.py             # Aufgaben + Korrektur + Übersicht
 │   ├── student.py           # Aufgaben + Einreichung + Feedback
-│   ├── media.py             # Medienbibliothek: Upload/Liste/Edit/Delete (PROF)
+│   ├── media.py             # Medienbibliothek: Upload/Ersatz/Liste/Edit/LLM-Beschreibung (PROF)
 │   ├── materials.py         # Skript & Slides (Markdown, je Kurs max. 1 pro Typ)
 │   └── user_settings.py     # Eigene Einstellungen bearbeiten
 ├── templates/

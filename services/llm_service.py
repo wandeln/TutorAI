@@ -327,6 +327,135 @@ class LLMService:
             "raw_response": "",
         }
 
+    async def describe_media_image(
+        self,
+        image_base64: str,
+        mime_type: str = "image/png",
+        config: Optional[dict] = None,
+    ):
+        """Erstellt per LLM einen Titel und eine kurze Beschreibung für ein Kurs-Medium.
+
+        Nutzt die multimodalen Faehigkeiten des LLM, um das Bild zu analysieren.
+
+        Returns JSON mit:
+            title, description
+        """
+        client = self._get_client(config)
+        model = config.get("model", self.model) if config else self.model
+        timeout = config.get("timeout", self.timeout) if config else self.timeout
+        is_temp = config is not None
+
+        max_retries = 2
+        last_error = None
+
+        system_prompt = (
+            "Du bist ein Experte fuer die Beschreibung von Kurs-Medien (Abbildungen, Diagramme, "
+            "Plots, Fotos) in Lehrmaterialien. Analysiere das Bild und erstelle "
+            "(1) einen kurzen, aussagekraeftigen Titel (max. 8 Woerter, kein voelliger Satz) und "
+            "(2) eine praezise Beschreibung (2-4 Saetze), die erklaert, was das Medium zeigt und "
+            "welchen Lehrinhalt es illustriert. "
+            'Antworte NUR mit einem JSON-Objekt der Form {"title": "...", "description": "..."} '
+            "ohne Code-Bloecke oder Erklaerungen."
+        )
+
+        deadline = time.monotonic() + timeout
+
+        for attempt in range(max_retries):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
+                logger.warning("describe_media_image total timeout")
+                break
+
+            try:
+                start = time.time()
+
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt,
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:{mime_type};base64,{image_base64}"
+                                        },
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": (
+                                            "Beschreibe dieses Medium fuer eine Kurs-Medienbibliothek. "
+                                            "Der Titel wird in Markdown-Referenzen verwendet, die "
+                                            "Beschreibung hilft, das Medium korrekt in Skript, "
+                                            "Slides oder Aufgaben einzubinden."
+                                        ),
+                                    },
+                                ],
+                            },
+                        ],
+                        temperature=0.0,
+                    ),
+                    timeout=remaining,
+                )
+
+                elapsed = time.time() - start
+                content = response.choices[0].message.content or ""
+
+                result = None
+                if content:
+                    try:
+                        result = json.loads(content)
+                    except json.JSONDecodeError:
+                        result = self._extract_json(content)
+                if result is None or not isinstance(result.get("description"), str):
+                    last_error = "LLM hat kein gultiges JSON geliefert"
+                    logger.warning(f"describe_media_image JSON extraction failed (attempt {attempt+1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(1 * (attempt + 1))
+                    continue
+
+                if is_temp:
+                    await client.close()
+
+                return {
+                    "success": True,
+                    "data": {
+                        "title": (result.get("title") or "").strip(),
+                        "description": (result.get("description") or "").strip(),
+                    },
+                    "latency_ms": round(elapsed * 1000),
+                    "raw_response": content,
+                }
+
+            except asyncio.TimeoutError:
+                last_error = f"LLM-Timeout: Antwort nicht innerhalb von {timeout}s erhalten"
+                logger.warning(f"describe_media_image timeout (attempt {attempt+1}/{max_retries})")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"describe_media_image error: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(1 * (attempt + 1))
+
+        if is_temp:
+            await client.close()
+
+        return {
+            "success": False,
+            "error": last_error,
+            "data": {"title": "", "description": ""},
+            "latency_ms": 0,
+            "raw_response": "",
+        }
+
     async def generate_course_report(
         self,
         course_name: str,

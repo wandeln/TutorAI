@@ -251,7 +251,7 @@ def _course_tab_context(
     tabs: list[dict[str, Any]] = []
     for mtype, key, icon, label in (
         (MaterialType.SCRIPT, "script", "📖", "Skript"),
-        (MaterialType.SLIDES, "slides", "📽️", "Slides"),
+        # (MaterialType.SLIDES, "slides", "📽️", "Slides"),  # Tab vorerst deaktiviert (reveal.js folgt)
     ):
         mat = next((m for m in materials if m.material_type == mtype), None)
         if is_tutor or is_admin or (mat is not None and mat.is_visible):
@@ -757,7 +757,8 @@ async def serve_media(
     path = media_service.resolve_media_path(course_id, filename)
     if not path:
         raise HTTPException(404, "Datei nicht gefunden.")
-    return FileResponse(path, media_type=media.mime_type)
+    # no-cache: Browser müssen nach Datei-Ersatz revalidieren (304 = kein Datentransfer)
+    return FileResponse(path, media_type=media.mime_type, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/courses/{course_id}/members")

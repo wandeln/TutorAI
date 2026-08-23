@@ -62,7 +62,16 @@ Regeln:
 - Der Inhalt ist Markdown für ein Vorlesungsskript: lehrbuchartige, präzise und strukturierte Darstellung (Definitionen, Sätze, Beweisskizzen, Beispiele, Übungshinweise) auf dem Niveau einer Universität.
 - Beginne den Inhalt NICHT mit einer H1-Überschrift (der Kapiteltitel wird separat angezeigt); verwende ## für Abschnitte und ### für Unterabschnitte.
 - Verwende $...$ für Inline-Math und $$...$$ für Display-Math.
-- Medien: Bereits vorhandene /media/-Referenzen im bestehenden Inhalt unbedingt beibehalten. Zusätzlich DARFST du Medien aus der obigen Liste „noch nicht verwendet“ einbinden, wenn sie inhaltlich wirklich zum Kapitel passen (max. 1-2 pro Kapitel) — verwende dafür exakt das angegebene Snippet. Erfinde KEINE anderen Medien-Pfade.
+- Medien: Bereits vorhandene /media/-Referenzen im bestehenden Inhalt unbedingt beibehalten. Zusätzlich DARFST du Medien aus der obigen Liste „noch nicht verwendet“ einbinden, wenn sie inhaltlich wirklich zum Kapitel passen (max. 1-2 pro Kapitel) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
+- Nummerierung & Querverweise (wie in LaTeX):
+{% raw %}
+  - Abbildung, auf die du im Text Bezug nehmen möchtest: Snippet um ein Label ergänzen, z.B.
+    ![Entropieverteilung](/media/1/abc.png){#fig:entropie}  →  wird als „Abb. N: Entropieverteilung“ gerendert.
+  - Formel, auf die du Bezug nehmen möchtest: Label direkt nach dem Display-Math, z.B.
+    $$H(X) = -\\sum_i p_i \\log_2 p_i$$ {#eq:shannon}  →  wird als „(N)“ neben der Formel gerendert.
+  - Bezugnahme im Fließtext: @fig:entropie bzw. @eq:shannon → wird durch die klickbare Referenz („Abb. N“ bzw. „Gl. N“) ersetzt.
+{% endraw %}
+  - Beschrifte NUR Objekte, auf die du im Text tatsächlich Bezug nimmst; Labels klein, snake_case, eindeutig innerhalb des Kapitels.
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
   Wichtig: Knotentexte mit Sonderzeichen (z.B. runde Klammern oder <, > in Formeln) MÜSSEN in doppelte
   Anführungszeichen gesetzt werden: z.B. C["H(X) = log2(n)"] (NICHT C[H(X) = log2(n)]).

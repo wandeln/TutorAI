@@ -273,9 +273,9 @@ class PrivateTest(unittest.TestCase):
 
   // ─── Initialize Markdown Editors ─────────────────────────────
   // Description editor (immer)
-  const descEditor = createMarkdownEditor('description-editor-container', { buttonAnchor: 'description-preview-anchor', textareaId: 'description-textarea' });
+  const descEditor = createMarkdownEditor('description-editor-container', { buttonAnchor: 'description-preview-anchor', textareaId: 'description-textarea', startInPreview: true });
   // Model solution — immer als Markdown Editor (auch bei Code-Aufgaben)
-  const solEditor = createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'solution-preview-anchor' });
+  const solEditor = createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'solution-preview-anchor', startInPreview: true });
 
   // ─── Toggle Code Section based on Task Type ─────────────────
   document.getElementById("task_type_select").addEventListener("change", (e) => {

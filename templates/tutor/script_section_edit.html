@@ -149,22 +149,18 @@
   const sectionId = {{ section.id if section else "null" }};
 
   // ─── Markdown-Editor (Vorschau-Button wird per Anchor injiziert) ─
-  createMarkdownEditor('content-editor-container', {
+  const contentEditor = createMarkdownEditor('content-editor-container', {
     buttonAnchor: 'content-preview-anchor',
     textareaId: 'content-textarea',
+    startInPreview: true,
   });
 
   // Zusammenfassung: eigener Preview-Button (Markdown + LaTeX)
   const summaryEditor = createMarkdownEditor('summary-editor-container', {
     buttonAnchor: 'summary-preview-anchor',
     textareaId: 'section-summary',
+    startInPreview: true,
   });
-  function refreshSummaryPreview() {
-    if (summaryEditor.isPreview()) {
-      const summary = document.getElementById('section-summary').value;
-      renderMarkdown(summary, summaryEditor.previewDiv, { preview: true }).catch(() => {});
-    }
-  }
 
   // ─── LLM-Generierung ──────────────────────────────────────────
   let aiTimer = null;
@@ -220,12 +216,21 @@
       if (generateFields.title && data.title) {
         document.getElementById('section-title').value = data.title;
       }
+      // Preview sofort aktualisieren (analog task_detail.html):
+      // neu rendern und ggf. in den Preview-Modus wechseln.
       if (generateFields.content && data.content) {
-        document.getElementById('content-textarea').value = data.content;
+        contentEditor.textarea.value = data.content;
+        (async () => {
+          await renderMarkdown(data.content, contentEditor.previewDiv, { preview: true });
+          if (!contentEditor.isPreview()) contentEditor.toggleBtn.click();
+        })();
       }
       if (generateFields.summary && data.summary) {
-        document.getElementById('section-summary').value = data.summary;
-        refreshSummaryPreview();
+        summaryEditor.textarea.value = data.summary;
+        (async () => {
+          await renderMarkdown(data.summary, summaryEditor.previewDiv, { preview: true });
+          if (!summaryEditor.isPreview()) summaryEditor.toggleBtn.click();
+        })();
       }
       showToast('LLM-Inhalt generiert — bitte prüfen und speichern.', 'success');
     } catch (err) {

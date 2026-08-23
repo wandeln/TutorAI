@@ -7,10 +7,14 @@
  * - Mermaid.js (MIT) für Diagramme (flowchart, sequence, class, state, etc.)
  * - highlight.js (BSD-3) für Python-Syntax-Highlighting
  *
- * Inline-Latex:  $...$        → Inline
- * Display-Latex: $$...$$      → Block
- * Mermaid:       ```mermaid   → SVG-Diagramm
- * Escaped dollar: \$          → literal $ (no LaTeX)
+ * Inline-Latex:  $...$                            → Inline
+ * Display-Latex: $$...$$                          → Block
+ * Mermaid:       ```mermaid                       → SVG-Diagramm
+ * Escaped dollar: \$                              → literal $ (no LaTeX)
+ * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
+ * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
+ * Querverweise:       @fig:label / @eq:label      → klickbares "Abb. N" bzw. "Gl. N" (❓ wenn unbekannt)
+ * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
  *
@@ -61,22 +65,56 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%IC${inlineCodeSpans.length - 1}%%`;
   });
 
-  // 1d. Handle escaped dollar signs: \$ → placeholder
+  // 1d. Extract labeled figures: ![caption](src){#fig:label}
+  //     → nummerierte Abbildung ("Abb. N") mit Anker, latex-artig verlinkbar.
+  //     Bilder ohne {#fig:…} bleiben unverändert (abwärtskompatibel).
+  const figures = [];
+  const figLabelNumbers = {};
+  processed = processed.replace(
+    /!\[([^\]]*)\]\(([^)\s]+)\)\s*\{#fig:([\p{L}0-9_-]+)\}/gu,
+    (match, alt, src, label) => {
+      const num = figures.length + 1;
+      if (!(label in figLabelNumbers)) figLabelNumbers[label] = num;
+      figures.push({ alt, src, label, num: figLabelNumbers[label] });
+      return `%%FIG_${figures.length - 1}%%`;
+    }
+  );
+
+  // 1e. Handle escaped dollar signs: \$ → placeholder
   const escapedDollar = '%%ED%%';
   processed = processed.replace(/\\\$/g, escapedDollar);
 
-  // 1e. Extract $$...$$ display blocks
+  // 1f. Extract $$...$$ display blocks (optional trailing {#eq:label}
+  //     → nummerierte Gleichung "(N)" mit Anker, latex-artig verlinkbar)
   const latexBlocks = [];
-  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (match, latex) => {
-    latexBlocks.push(latex.trim());
-    return `%%LATEX_BLOCK_${latexBlocks.length - 1}%%`;
-  });
+  const latexLabels = [];
+  const eqLabelNumbers = {};
+  let eqCount = 0;
+  processed = processed.replace(
+    /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?/gu,
+    (match, latex, label) => {
+      latexBlocks.push(latex.trim());
+      if (label) {
+        eqCount += 1;
+        if (!(label in eqLabelNumbers)) eqLabelNumbers[label] = eqCount;
+      }
+      latexLabels.push(label || null);
+      return `%%LATEX_BLOCK_${latexBlocks.length - 1}%%`;
+    }
+  );
 
-  // 1f. Extract $...$ inline math (no newlines allowed)
+  // 1g. Extract $...$ inline math (no newlines allowed)
   const latexInlines = [];
   processed = processed.replace(/\$([^$\n]+?)\$/g, (match, latex) => {
     latexInlines.push(latex.trim());
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
+  });
+
+  // 1h. Extract cross-references: @fig:label / @eq:label
+  const xrefs = [];
+  processed = processed.replace(/@(fig|eq):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+    xrefs.push({ kind, label });
+    return `%%XREF_${xrefs.length - 1}%%`;
   });
 
   // 2. Render Markdown (marked)
@@ -111,14 +149,46 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%IC${idx}%%`, `<code>${escaped}</code>`);
   });
 
-  // 5. Restore LaTeX blocks
+  // 5. Restore LaTeX blocks (labeled ones as numbered equation "(N)")
   latexBlocks.forEach((latex, idx) => {
-    html = html.replace(`%%LATEX_BLOCK_${idx}%%`, renderLatexBlock(latex));
+    const rendered = renderLatexBlock(latex);
+    const label = latexLabels[idx];
+    if (label) {
+      const wrapped =
+        `<div id="eq:${label}" class="tutorai-equation">${rendered}` +
+        `<span class="tutorai-eq-num">(${eqLabelNumbers[label]})</span></div>`;
+      html = html.replace(`%%LATEX_BLOCK_${idx}%%`, wrapped.replace(/\$/g, '$$$$'));
+    } else {
+      html = html.replace(`%%LATEX_BLOCK_${idx}%%`, rendered.replace(/\$/g, '$$$$'));
+    }
   });
 
   // 6. Restore inline LaTeX
   latexInlines.forEach((latex, idx) => {
     html = html.replace(`%%LATEX_INLINE_${idx}%%`, renderLatexInline(latex));
+  });
+
+  // 6a. Restore numbered figures
+  figures.forEach((f, idx) => {
+    const safeAlt = escapeHtml(f.alt);
+    const figHtml =
+      `<figure id="fig:${f.label}" class="tutorai-figure">` +
+      `<img src="${escapeHtml(f.src)}" alt="${safeAlt}">` +
+      `<figcaption>Abb. ${f.num}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
+    html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
+  });
+
+  // 6b. Restore cross-references (@fig:label / @eq:label)
+  xrefs.forEach((x, idx) => {
+    let refHtml;
+    if (x.kind === 'fig' && figLabelNumbers[x.label]) {
+      refHtml = `<a href="#fig:${x.label}" class="tutorai-xref">Abb. ${figLabelNumbers[x.label]}</a>`;
+    } else if (x.kind === 'eq' && eqLabelNumbers[x.label]) {
+      refHtml = `<a href="#eq:${x.label}" class="tutorai-xref">Gl. ${eqLabelNumbers[x.label]}</a>`;
+    } else {
+      refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehörige Abbildung/Gleichung fehlt">❓ ${x.kind}:${x.label}</span>`;
+    }
+    html = html.replace(`%%XREF_${idx}%%`, refHtml);
   });
 
   // 7. Decode escaped dollar signs back to literal $
@@ -355,6 +425,11 @@ function createMarkdownEditor(containerId, options = {}) {
       options.onValueChange(textarea.value);
     }
   });
+
+  // Optional: direkt im Preview-Modus starten (z.B. für LLM-generierte Inhalte)
+  if (options.startInPreview) {
+    toggleBtn.click();
+  }
 
   return { textarea, previewDiv, toggleBtn, isPreview: () => isPreview };
 }

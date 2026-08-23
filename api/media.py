@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from sqlmodel import Session, select
 
 from database.base import get_session
-from database.models import CourseMedia, CourseRole, MediaUsage, User
+from database.models import CourseMedia, CourseRole, MediaUsage, ScriptSection, User
 from services.auth_service import require_course_access
 from services.llm_service import LLMService
 from services.settings_resolver import get_effective_llm_config
@@ -39,9 +39,25 @@ def _media_to_dict(
     m: CourseMedia,
     usages: list[MediaUsage],
     counts: dict[str, RefInfo],
+    section_ids: dict[str, int] | None = None,
 ) -> dict:
     fname = m.file_path.rsplit("/", 1)[-1]
     c = counts.get(fname, {"total": 0, "duplicates": []})
+    section_ids = section_ids or {}
+
+    def usage_dict(u: MediaUsage) -> dict:
+        # Skript-Kapitel: Ort ist als "Skript: <Titel>" gespeichert —
+        # Kapitel-ID wird per Titel aufgelöst (keine DB-Spalte nötig).
+        section_id = None
+        if u.location.startswith("Skript: "):
+            section_id = section_ids.get(u.location.removeprefix("Skript: "))
+        return {
+            "location": u.location,
+            "task_id": u.task_id,
+            "material_id": u.material_id,
+            "section_id": section_id,
+        }
+
     return {
         "id": m.id,
         "title": m.title,
@@ -50,10 +66,7 @@ def _media_to_dict(
         "mime_type": m.mime_type,
         "file_size": m.file_size,
         "llm_description": m.llm_description,
-        "usages": [
-            {"location": u.location, "task_id": u.task_id, "material_id": u.material_id}
-            for u in usages
-        ],
+        "usages": [usage_dict(u) for u in usages],
         "ref_count": c["total"],
         "duplicate_in": c["duplicates"],
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -72,8 +85,15 @@ def _load_media_payload(session: Session, course_id: int) -> list[dict]:
         select(MediaUsage).where(MediaUsage.media_id.in_([m.id for m in media_list]))  # type: ignore[attr-defined]
     ).all()
     counts = media_service.reference_counts(session, course_id)
+    # Titel → Kapitel-ID, um "Skript: <Titel>"-Vorkommen zu verlinken.
+    section_ids = {
+        s.title: s.id
+        for s in session.exec(
+            select(ScriptSection).where(ScriptSection.course_id == course_id)
+        ).all()
+    }
     return [
-        _media_to_dict(m, [u for u in usages if u.media_id == m.id], counts)
+        _media_to_dict(m, [u for u in usages if u.media_id == m.id], counts, section_ids)
         for m in media_list
     ]
 

@@ -269,6 +269,8 @@
 .markdown-preview img {
   max-width: 100% !important;
   height: auto !important;
+  max-height: 40vh !important;
+  place-self: center;
   border-radius: 0.375rem !important;
 }
 

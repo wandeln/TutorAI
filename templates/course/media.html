@@ -217,8 +217,21 @@
     const body = document.createElement("div");
     body.className = "p-4 flex-1 flex flex-col gap-2";
 
+    // Pins sind Deep Links zu den Vorkommnissen (Aufgabe / Skript-Kapitel / Slides).
+    const usageHref = u => {
+      if (u.task_id) return `/courses/${courseId}/tasks/${u.task_id}`;
+      if (u.section_id) return `/courses/${courseId}/script/${u.section_id}`; // direkt zur Kapitel-Bearbeitung
+      if (u.material_id) return `/courses/${courseId}/slides`;
+      return null;
+    };
     const usagesHtml = m.usages.length
-      ? m.usages.map(u => `<div class="truncate">📍 ${escapeHtml(u.location)}</div>`).join("")
+      ? m.usages.map(u => {
+          const label = `📍 ${escapeHtml(u.location)}`;
+          const href = usageHref(u);
+          return href
+            ? `<a href="${href}" class="block truncate text-blue-600 hover:underline" title="Öffnen">${label}</a>`
+            : `<div class="truncate">${label}</div>`;
+        }).join("")
       : '<div class="italic text-orange-500">Noch nicht eingebunden</div>';
 
     const dupHtml = (m.duplicate_in && m.duplicate_in.length)

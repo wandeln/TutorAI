@@ -1,0 +1,297 @@
+{% extends "base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Skript-Kapitel: Anlegen & Bearbeiten (PROF/TUTOR).
+
+   Kontext:
+     section: null oder {id, title, content, is_visible, updated_at}
+     course: {id, name}
+
+   LLM-Generierung: POST /api/courses/{id}/script-sections/ai-generate
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <!-- Breadcrumb + Title -->
+  <div class="mb-6">
+    <div class="flex items-center gap-3 mb-2">
+      <a href="/courses/{{ course.id }}/script" class="text-blue-600 hover:underline text-sm">
+        ← Skript — {{ course.name }}
+      </a>
+      {% if section %}
+      <span class="text-gray-400">/</span>
+      <span class="text-sm text-gray-500">{{ section.title }}</span>
+      {% endif %}
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900">
+      {% if section %}{{ section.title }} — Bearbeiten{% else %}Neues Skript-Kapitel erstellen{% endif %}
+    </h1>
+  </div>
+
+  <form id="section-form" class="space-y-6" onsubmit="return false;">
+    {% if section %}
+    <input type="hidden" id="section-id" value="{{ section.id }}">
+    {% endif %}
+
+    <!-- ─── LLM-Kapitel-Generierung ──────────────────────────── -->
+    <div class="bg-purple-50 border-2 border-purple-300 rounded-xl p-6">
+      <h2 class="font-semibold text-gray-800 mb-4">🤖 LLM-Kapitel generieren</h2>
+
+      <div class="flex flex-wrap gap-x-4 gap-y-2 mb-4">
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" id="field-title" checked class="rounded text-purple-600">
+          Titel
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+          <input type="checkbox" id="field-content" checked class="rounded text-purple-600">
+          Inhalt
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer" title="Interne Zusammenfassung für die LLM-Konsistenz zwischen Kapiteln (nicht für Studenten sichtbar)">
+          <input type="checkbox" id="field-summary" checked class="rounded text-purple-600">
+          Zusammenfassung (intern)
+        </label>
+      </div>
+
+      <label class="block text-sm font-medium text-gray-700 mb-1" for="ai-topic">Thema / Änderungswunsch</label>
+      <textarea id="ai-topic" rows="3"
+                placeholder="Thema des Kapitels (z.B. Rekursion) — oder konkrete Änderungswünsche an das bestehende Kapitel (z.B. „Ein Beispiel mit Baumdiagramm (Mermaid) ergänzen“, „kürzer fassen“). Leer lassen, wenn das LLM frei überarbeiten soll."
+                class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm"></textarea>
+
+      <div id="ai-generate-progress" class="hidden mt-4">
+        <div class="flex items-center gap-2 text-sm text-purple-700">
+          <span id="ai-generate-status">⏳ LLM generiert/ändert Kapitel…</span>
+          <span id="ai-generate-timer" class="font-mono">0s</span>
+        </div>
+        <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
+          <div id="ai-generate-progress-bar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+        </div>
+        <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
+      </div>
+
+      <div class="flex items-center justify-end mt-4">
+        <button type="button" id="ai-generate-btn"
+                class="bg-purple-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-medium">
+          Generieren / Ändern
+        </button>
+      </div>
+    </div>
+
+    <!-- Titel, Inhalt & Zusammenfassung -->
+    <div class="card p-5 space-y-5">
+      <!-- Titel -->
+      <div>
+        <h2 class="font-semibold text-gray-800 mb-2">Titel <span class="text-red-500">*</span></h2>
+        <input type="text" id="section-title" maxlength="300"
+               value="{{ section.title if section else '' }}"
+               placeholder="z.B. Kapitel 1: Grundlagen"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+
+      <!-- Inhalt -->
+      <div id="content-editor-container">
+        <h2 class="font-semibold text-gray-800 mb-2">Inhalt</h2>
+
+        <textarea id="content-textarea" rows="24"
+                  placeholder="Markdown-Inhalt des Kapitels…&#10;&#10;**fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$, ```mermaid```"
+                  class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">{{ section.content if section else '' }}</textarea>
+
+        <div class="flex items-center justify-between mt-2">
+          <p class="text-xs text-gray-400">💡 Markdown und LaTeX werden unterstützt. Medien aus der Bibliothek:
+            <code>![Titel]({{ "/media/" + course.id|string + "/datei.png" }})</code></p>
+          <div id="content-preview-anchor"></div>
+        </div>
+      </div>
+
+      <!-- Zusammenfassung (intern, nicht für Studenten) -->
+      <div id="summary-editor-container">
+        <h2 class="font-semibold text-gray-800 mb-2">Zusammenfassung</h2>
+
+        <textarea id="section-summary" rows="4"
+                  placeholder="Wird vom LLM erstellt (3-6 Sätze): zentrale Begriffe, Notation, wichtige Definitionen/Sätze."
+                  class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">{{ section.summary if section else '' }}</textarea>
+
+        <div class="flex items-center justify-between mt-2">
+          <span class="text-xs text-gray-400">(intern — für die LLM-Konsistenz zwischen Kapiteln, nicht für Studenten)</span>
+          <div id="summary-preview-anchor"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Actions ────────────────────────────────────────────── -->
+    <div class="flex items-center justify-between">
+      <a href="/courses/{{ course.id }}/script" class="text-gray-600 hover:text-gray-800 text-sm">
+        ← Zurück
+      </a>
+      <div class="flex items-center gap-3">
+        <button type="button" id="visibility-btn"
+                class="text-gray-400 hover:text-blue-600 transition text-lg p-1.5 rounded hover:bg-gray-100"
+                title="{% if section %}{{ 'Kapitel verstecken' if section.is_visible else 'Kapitel freischalten' }}{% else %}Kapitel freischalten{% endif %}">
+          {% if section and section.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </button>
+        <button type="button" id="save-btn"
+                class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+          {% if section %}Kapitel aktualisieren{% else %}Kapitel erstellen{% endif %}
+        </button>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  const sectionId = {{ section.id if section else "null" }};
+
+  // ─── Markdown-Editor (Vorschau-Button wird per Anchor injiziert) ─
+  createMarkdownEditor('content-editor-container', {
+    buttonAnchor: 'content-preview-anchor',
+    textareaId: 'content-textarea',
+  });
+
+  // Zusammenfassung: eigener Preview-Button (Markdown + LaTeX)
+  const summaryEditor = createMarkdownEditor('summary-editor-container', {
+    buttonAnchor: 'summary-preview-anchor',
+    textareaId: 'section-summary',
+  });
+  function refreshSummaryPreview() {
+    if (summaryEditor.isPreview()) {
+      const summary = document.getElementById('section-summary').value;
+      renderMarkdown(summary, summaryEditor.previewDiv, { preview: true }).catch(() => {});
+    }
+  }
+
+  // ─── LLM-Generierung ──────────────────────────────────────────
+  let aiTimer = null;
+  let aiBarTimer = null;
+
+  document.getElementById('ai-generate-btn').addEventListener('click', async () => {
+    const generateFields = {
+      title: document.getElementById('field-title').checked,
+      content: document.getElementById('field-content').checked,
+      summary: document.getElementById('field-summary').checked,
+    };
+    if (!generateFields.title && !generateFields.content && !generateFields.summary) {
+      showToast('Wähle mindestens ein Feld aus.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('ai-generate-btn');
+    const progressDiv = document.getElementById('ai-generate-progress');
+    const timerSpan = document.getElementById('ai-generate-timer');
+    const progressBar = document.getElementById('ai-generate-progress-bar');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Generiere…';
+    progressDiv.classList.remove('hidden');
+
+    // Timer + animierte Progressbar (asymptotisch bis ~95 %, dann 100 % bei Fertig)
+    let seconds = 0;
+    timerSpan.textContent = '0s';
+    aiTimer = setInterval(() => { seconds++; timerSpan.textContent = seconds + 's'; }, 1000);
+    let bar = 5;
+    progressBar.style.width = bar + '%';
+    aiBarTimer = setInterval(() => {
+      bar = bar + (95 - bar) * 0.04;
+      progressBar.style.width = bar + '%';
+    }, 300);
+
+    try {
+      const res = await fetch(`/api/courses/{{ course.id }}/script-sections/ai-generate`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: document.getElementById('ai-topic').value.trim() || "allgemein",
+          section_id: sectionId,
+          current_title: document.getElementById('section-title').value,
+          current_content: document.getElementById('content-textarea').value,
+          generate_fields: generateFields,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'LLM-Generierung fehlgeschlagen.');
+
+      if (generateFields.title && data.title) {
+        document.getElementById('section-title').value = data.title;
+      }
+      if (generateFields.content && data.content) {
+        document.getElementById('content-textarea').value = data.content;
+      }
+      if (generateFields.summary && data.summary) {
+        document.getElementById('section-summary').value = data.summary;
+        refreshSummaryPreview();
+      }
+      showToast('LLM-Inhalt generiert — bitte prüfen und speichern.', 'success');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      clearInterval(aiTimer);
+      clearInterval(aiBarTimer);
+      progressBar.style.width = '100%';
+      btn.disabled = false;
+      btn.textContent = 'Generieren / Ändern';
+      setTimeout(() => progressDiv.classList.add('hidden'), 500);
+    }
+  });
+
+  // ─── Speichern ────────────────────────────────────────────────
+  document.getElementById('save-btn').addEventListener('click', async () => {
+    const title = document.getElementById('section-title').value.trim();
+    if (!title) {
+      showToast('Titel darf nicht leer sein.', 'error');
+      return;
+    }
+
+    // Visibility - nach Klick auf den Toggle ist der title umgekehrt, daher invertieren
+    const visBtn = document.getElementById('visibility-btn');
+    const payload = {
+      title,
+      content: document.getElementById('content-textarea').value,
+      summary: document.getElementById('section-summary').value,
+      is_visible: !visBtn.title.includes('freischalten'),
+    };
+
+    const url = sectionId !== null
+      ? `/api/script-sections/${sectionId}`
+      : `/api/courses/{{ course.id }}/script-sections`;
+    const method = sectionId !== null ? 'PUT' : 'POST';
+
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true;
+    try {
+      const res = await fetch(url, {
+        method,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Fehler beim Speichern.');
+      window.location.href = `/courses/{{ course.id }}/script`;
+    } catch (err) {
+      showToast(err.message, 'error');
+      btn.disabled = false;
+    }
+  });
+
+
+  // ─── Visibility Button Toggle ─────────────────────────────
+  document.getElementById('visibility-btn').addEventListener('click', function() {
+    const btn = this;
+    const isCurrentlyVisible = !btn.title.includes('freischalten');
+    const isNowVisible = !isCurrentlyVisible;
+    const icon = isNowVisible
+      ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+      : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+    btn.innerHTML = icon;
+    btn.title = isNowVisible ? 'Kapitel verstecken' : 'Kapitel freischalten';
+  });
+})();
+</script>
+{% endblock %}

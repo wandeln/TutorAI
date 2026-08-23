@@ -50,7 +50,6 @@ def _media_to_dict(
         "mime_type": m.mime_type,
         "file_size": m.file_size,
         "llm_description": m.llm_description,
-        "is_visible": m.is_visible,
         "usages": [
             {"location": u.location, "task_id": u.task_id, "material_id": u.material_id}
             for u in usages
@@ -197,7 +196,7 @@ async def update_media(
     session: Session = Depends(get_session),
     _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
 ):
-    """Titel / Beschreibung / Sichtbarkeit ändern."""
+    """Titel / Beschreibung ändern."""
     media = _get_media(session, course_id, media_id)
     body = await request.json()
 
@@ -209,8 +208,6 @@ async def update_media(
     if "llm_description" in body:
         val = body.get("llm_description")
         media.llm_description = (val or "").strip() or None
-    if "is_visible" in body:
-        media.is_visible = bool(body["is_visible"])
 
     session.add(media)
     session.commit()

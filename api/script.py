@@ -1,0 +1,351 @@
+"""
+Skript-Kapitel: Vorlesungsskript aus mehreren Markdown-Dateien.
+
+Regeln (analog zu den Übungsaufgaben):
+- Reihenfolge per display_order (Drag-and-Drop → PATCH .../reorder).
+- is_visible = für Studenten freigeschaltet (Default: aus).
+- Anlegen/Bearbeiten/Reihenfolge/Sichtbarkeit/Löschen: PROF/TUTOR.
+- LLM-Generierung: POST .../ai-generate (Titel/Inhalt).
+- Nach jeder Content-Änderung: sync_media_usages() (Medien-Einbindung).
+"""
+
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlmodel import Session, select
+
+from database.base import get_session
+from database.models import Course, CourseRole, GlobalUserRole, ScriptSection, User, UserCourse
+from services.auth_service import get_current_user, require_course_access
+from services.llm_service import LLMService
+from services import media_service
+from services.media_service import sync_media_usages
+from services.settings_resolver import get_effective_llm_config
+
+router = APIRouter(prefix="/api", tags=["Skript"])
+llm_service = LLMService()
+
+
+def _section_to_dict(s: ScriptSection, include_content: bool = False, include_summary: bool = False) -> dict:
+    d = {
+        "id": s.id,
+        "title": s.title,
+        "is_visible": s.is_visible,
+        "display_order": s.display_order,
+        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+    }
+    if include_content:
+        d["content"] = s.content
+    if include_summary:  # nur für Tutor/PROF/Admin — Studenten sehen sie nicht
+        d["summary"] = s.summary or ""
+    return d
+
+
+def _get_membership(session: Session, user: User, course_id: int) -> Optional[UserCourse]:
+    if user.role == GlobalUserRole.ADMIN:
+        return None  # Admin braucht keine Membership
+    return session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+
+
+def _check_member(user: User, session: Session, course_id: int) -> None:
+    """Jedes Kurs-Mitglied (oder Admin) darf lesen."""
+    if user.role == GlobalUserRole.ADMIN:
+        return
+    if not _get_membership(session, user, course_id):
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+
+
+def _next_order(session: Session, course_id: int) -> int:
+    rows = session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .order_by(ScriptSection.display_order.desc())  # type: ignore[attr-defined]
+    ).all()
+    return rows[0].display_order + 1 if rows else 0
+
+
+def _check_course_tutor(user: User, course_id: int, session: Session) -> None:
+    """PROF/TUTOR-Check für Routen ohne course_id im Path. Admin darf immer."""
+    if user.role == GlobalUserRole.ADMIN:
+        return
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
+        raise HTTPException(403, "Keine Berechtigung, dieses Kapitel zu bearbeiten.")
+
+
+# ─── Lesen ────────────────────────────────────────────────────────
+
+@router.get("/courses/{course_id}/script-sections")
+async def list_sections(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kapitel des Skripts (Studenten nur freigeschaltene, optional mit Content)."""
+    _check_member(user, session, course_id)
+    is_tutor = user.role == GlobalUserRole.ADMIN or (
+        (m := _get_membership(session, user, course_id))
+        is not None
+        and m.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
+    )
+
+    q = select(ScriptSection).where(ScriptSection.course_id == course_id)
+    if not is_tutor:
+        q = q.where(ScriptSection.is_visible == True)  # noqa: E712
+    sections = session.exec(q.order_by(ScriptSection.display_order.asc())).all()  # type: ignore[attr-defined]
+
+    include_content = request.query_params.get("include_content") in ("1", "true")
+    return [
+        _section_to_dict(s, include_content=include_content, include_summary=is_tutor)
+        for s in sections
+    ]
+
+
+@router.get("/script-sections/{section_id}")
+async def get_section(
+    section_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Einzelnes Kapitel inkl. Markdown-Content."""
+    section = session.get(ScriptSection, section_id)
+    if not section:
+        raise HTTPException(404, "Kapitel nicht gefunden.")
+    _check_member(user, session, section.course_id)
+
+    is_tutor = user.role == GlobalUserRole.ADMIN or (
+        (m := _get_membership(session, user, section.course_id))
+        is not None
+        and m.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
+    )
+    if not is_tutor and not section.is_visible:
+        raise HTTPException(404, "Kapitel nicht gefunden oder noch nicht freigeschaltet.")
+
+    return _section_to_dict(section, include_content=True, include_summary=is_tutor)
+
+
+# ─── Schreiben (PROF/TUTOR) ───────────────────────────────────────
+
+@router.post("/courses/{course_id}/script-sections")
+async def create_section(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Neues Skript-Kapitel anlegen (am Ende der Reihenfolge)."""
+    user, _ = user_and_course
+    body = await request.json()
+
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "Titel darf nicht leer sein.")
+
+    section = ScriptSection(
+        course_id=course_id,
+        title=title,
+        content=body.get("content") or "",
+        is_visible=bool(body.get("is_visible", False)),
+        display_order=_next_order(session, course_id),
+        summary=body.get("summary") or "",
+        created_by=user.id,  # type: ignore[arg-type]
+    )
+    session.add(section)
+    session.commit()
+    session.refresh(section)
+    sync_media_usages(session, course_id)
+
+    return {
+        "message": f"Kapitel '{section.title}' erstellt.",
+        "section": _section_to_dict(section),
+    }
+
+
+@router.put("/script-sections/{section_id}")
+async def update_section(
+    section_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kapitel aktualisieren (Titel, Content, Sichtbarkeit)."""
+    section = session.get(ScriptSection, section_id)
+    if not section:
+        raise HTTPException(404, "Kapitel nicht gefunden.")
+    _check_course_tutor(user, section.course_id, session)
+    body = await request.json()
+
+    if "title" in body:
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "Titel darf nicht leer sein.")
+        section.title = title
+    if "content" in body:
+        section.content = body.get("content") or ""
+    if "is_visible" in body:
+        section.is_visible = bool(body.get("is_visible"))
+    if "summary" in body:
+        section.summary = body.get("summary") or ""
+
+    section.updated_at = datetime.now(timezone.utc)
+    session.add(section)
+    session.commit()
+    session.refresh(section)
+    sync_media_usages(session, section.course_id)
+
+    return {"message": "Kapitel aktualisiert.", "section": _section_to_dict(section)}
+
+
+@router.patch("/script-sections/{section_id}/visibility")
+async def toggle_section_visibility(
+    section_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kapitel für Studenten freischalten/verstecken."""
+    section = session.get(ScriptSection, section_id)
+    if not section:
+        raise HTTPException(404, "Kapitel nicht gefunden.")
+    _check_course_tutor(user, section.course_id, session)
+    body = await request.json()
+
+    section.is_visible = bool(body.get("is_visible", not section.is_visible))
+    section.updated_at = datetime.now(timezone.utc)
+    session.add(section)
+    session.commit()
+    session.refresh(section)
+
+    return {"message": "Sichtbarkeit aktualisiert.", "is_visible": section.is_visible}
+
+
+@router.delete("/script-sections/{section_id}")
+async def delete_section(
+    section_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kapitel löschen (nur PROF/TUTOR)."""
+    section = session.get(ScriptSection, section_id)
+    if not section:
+        raise HTTPException(404, "Kapitel nicht gefunden.")
+    _check_course_tutor(user, section.course_id, session)
+
+    section_course_id = section.course_id
+    section_title = section.title
+    session.delete(section)
+    session.commit()
+    sync_media_usages(session, section_course_id)
+
+    return {"message": f"Kapitel '{section_title}' gelöscht."}
+
+
+@router.patch("/courses/{course_id}/script-sections/reorder")
+async def reorder_sections(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Reihenfolge der Kapitel ändern (nur PROF/TUTOR)."""
+    body = await request.json()
+    section_ids = body.get("section_ids")
+    if not isinstance(section_ids, list) or not section_ids:
+        raise HTTPException(400, "section_ids muss eine nicht-leere Liste sein.")
+
+    sections = session.exec(
+        select(ScriptSection).where(ScriptSection.course_id == course_id)
+    ).all()
+    by_id = {s.id: s for s in sections}
+
+    for idx, sid in enumerate(section_ids):
+        s = by_id.get(sid)
+        if not s:
+            raise HTTPException(404, f"Kapitel {sid} nicht gefunden.")
+        s.display_order = idx
+        session.add(s)
+    session.commit()
+
+    return {"message": "Reihenfolge aktualisiert."}
+
+
+@router.post("/courses/{course_id}/script-sections/ai-generate")
+async def ai_generate_section(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """
+    LLM generiert/ändert die angeforderten Felder eines Skript-Kapitels.
+
+    Request:
+        {
+            "topic": "Rekursion / Füge ein Beispiel mit Baumdiagramm hinzu",
+            "section_id": 3,            // optional: aktuell bearbeitetes Kapitel
+            "current_title": "...",
+            "current_content": "...",
+            "generate_fields": {"title": true, "content": true, "summary": true}
+        }
+    """
+    body = await request.json()
+    gen = body.get("generate_fields", {}) or {}
+    generate_fields = [f for f in ("title", "content", "summary") if gen.get(f)]
+    if not generate_fields:
+        raise HTTPException(400, "Keine Felder angefordert.")
+
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    # Andere Kapitel (Titel + interne Zusammenfassung) — für Notations-Konsistenz.
+    # Das aktuell bearbeitete Kapitel wird ausgeschlossen.
+    section_id = body.get("section_id")
+    other_chapters = [
+        {"title": s.title, "summary": (s.summary or "").strip()}
+        for s in session.exec(
+            select(ScriptSection)
+            .where(ScriptSection.course_id == course_id)
+            .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
+        ).all()
+        if s.id != section_id
+    ][:20]
+
+    # Noch nicht im Skript verwendete (sichtbare) Medien — ggf. einbindbar.
+    unused_media = media_service.unused_media_for_script(session, course_id)[:15]
+
+    llm_cfg = get_effective_llm_config(session, course_id)
+    result = await llm_service.generate_script_section(
+        course_name=course.name,
+        topic=(body.get("topic") or "").strip(),
+        generate_fields=generate_fields,
+        current_title=(body.get("current_title") or "").strip(),
+        current_content=(body.get("current_content") or "").strip(),
+        other_chapters=other_chapters,
+        unused_media=unused_media,
+        config=llm_cfg,
+    )
+    if not result.get("success"):
+        raise HTTPException(502, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
+
+    data = result.get("data") or {}
+    response = {"title": "", "content": "", "summary": ""}
+    if "title" in generate_fields:
+        response["title"] = (data.get("title") or "").strip()
+    if "content" in generate_fields:
+        response["content"] = (data.get("content") or "").strip()
+    if "summary" in generate_fields:
+        response["summary"] = (data.get("summary") or "").strip()
+    response["latency_ms"] = result.get("latency_ms", 0)
+    return response

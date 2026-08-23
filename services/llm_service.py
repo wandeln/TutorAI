@@ -21,6 +21,7 @@ from openai import AsyncOpenAI
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
+from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
 from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
@@ -154,6 +155,46 @@ class LLMService:
             current_description=current_description,
             current_model_solution=current_model_solution,
             code_template=code_template,
+        )
+
+        return await self._call_with_json(
+            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
+
+    async def generate_script_section(
+        self,
+        course_name: str,
+        topic: str,
+        generate_fields: list[str],
+        current_title: str = "",
+        current_content: str = "",
+        other_chapters: Optional[list[dict]] = None,
+        unused_media: Optional[list[dict]] = None,
+        config: Optional[dict] = None,
+    ):
+        """Generiert/ändert die angeforderten Felder eines Skript-Kapitels via LLM.
+
+        topic: Vereinheitlichtes Feld aus der UI (Thema des Kapitels und/oder
+        konkrete Änderungswünsche).
+        generate_fields: Untermenge von ["title", "content", "summary"].
+        other_chapters: [{title, summary}] der anderen Kapitel (Konsistenz).
+        unused_media: [{title, description, url}] — noch nicht im Skript
+        verwendete Medien (ggf. einbindbar).
+        Das LLM liefert JSON mit EXAKT den angeforderten Schlüsseln.
+
+        Enthält keine sensitive Studentendaten — nutzt daher den Public
+        Endpoint, falls konfiguriert.
+        """
+        generate_list = ", ".join(f'"{f}"' for f in generate_fields)
+
+        prompt = Template(SCRIPT_SECTION_PROMPT_TEMPLATE).render(
+            course_name=course_name,
+            topic=topic or "(Kein Thema angegeben — überarbeite das Kapitel sinnvoll.)",
+            generate_list=generate_list,
+            other_chapters=other_chapters or [],
+            unused_media=unused_media or [],
+            current_title=current_title,
+            current_content=current_content,
         )
 
         return await self._call_with_json(

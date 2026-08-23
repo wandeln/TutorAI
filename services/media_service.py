@@ -25,6 +25,7 @@ from database.models import (
     CourseMedia,
     MaterialType,
     MediaUsage,
+    ScriptSection,
     Task,
 )
 
@@ -154,7 +155,9 @@ def _scan_references(session: Session, course_id: int) -> dict[str, list[RefEntr
 
     def add(fname: str, task_id: Optional[int], material_id: Optional[int], location: str) -> None:
         bucket = refs.setdefault(fname, {})
-        key = f"task:{task_id}" if task_id else f"material:{material_id}"
+        # Skript-Kapitel haben kein material_id — der Location-String
+        # ("Skript: <Titel>") unterscheidet sie voneinander.
+        key = f"task:{task_id}" if task_id else f"material:{material_id}|{location}"
         if key in bucket:
             bucket[key]["count"] += 1
         else:
@@ -175,6 +178,12 @@ def _scan_references(session: Session, course_id: int) -> dict[str, list[RefEntr
         kind = "Skript" if mat.material_type == MaterialType.SCRIPT else "Slides"
         for fname in pattern.findall(mat.content or ""):
             add(fname, None, mat.id, f"{kind}: {mat.title}")
+
+    for s in session.exec(
+        select(ScriptSection).where(ScriptSection.course_id == course_id)
+    ).all():
+        for fname in pattern.findall(s.content or ""):
+            add(fname, None, None, f"Skript: {s.title}")
 
     return {fname: list(bucket.values()) for fname, bucket in refs.items()}
 
@@ -221,4 +230,32 @@ def reference_counts(session: Session, course_id: int) -> dict[str, RefInfo]:
         total = sum(e["count"] for e in entries)
         duplicates = [e["location"] for e in entries if e["count"] > 1]
         result[fname] = {"total": total, "duplicates": duplicates}
+    return result
+
+
+def unused_media_for_script(session: Session, course_id: int) -> list[dict]:
+    """Sichtbare Medien, die in keinem Skript-Kapitel referenziert sind.
+
+    Für den LLM-Prompt, damit das LLM passende Medien einbinden kann.
+    Returns: [{"title", "description", "url"}]
+    """
+    pattern = _reference_pattern(course_id)
+    used: set[str] = set()
+    for s in session.exec(
+        select(ScriptSection).where(ScriptSection.course_id == course_id)
+    ).all():
+        used.update(pattern.findall(s.content or ""))
+
+    result = []
+    for m in session.exec(
+        select(CourseMedia).where(CourseMedia.course_id == course_id)
+    ).all():
+        fname = m.file_path.rsplit("/", 1)[-1]
+        if fname in used:
+            continue
+        result.append({
+            "title": m.title,
+            "description": (m.llm_description or "").strip(),
+            "url": media_url(m),
+        })
     return result

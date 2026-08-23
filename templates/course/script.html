@@ -1,0 +1,314 @@
+{% extends "course/base.html" %}
+
+{% block extra_head %}
+<!-- SortableJS (MIT) — Drag-and-Drop -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+{% endblock %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tab "Skript": Vorlesungsskript aus mehreren Markdown-Kapiteln.
+
+   Tutor/PROF/Admin: Listenansicht (analog Aufgaben) mit Drag-and-Drop,
+   Freischalten (Sichtbarkeit), Bearbeiten (separate Seite) und Löschen.
+   Student: freigeschaltete Kapitel als Liste — Inhalt klappt per Klick
+   auf die Überschrift auf (lazy geladen).
+   ───────────────────────────────────────────────────────────── #}
+
+{% block course_content %}
+
+{% if is_tutor or is_admin %}
+
+  <!-- Action Bar -->
+  <div class="flex justify-between items-center mb-6">
+    <div class="flex gap-2">
+      <a href="/courses/{{ course.id }}/script/new"
+         class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
+        ✏️ Neues Kapitel
+      </a>
+    </div>
+  </div>
+
+  <div class="text-sm text-gray-500 mb-3" id="section-count">
+    {{ sections|length }} Kapitel
+  </div>
+
+  <!-- Kapitel-Liste -->
+  <div id="section-list" class="space-y-4">
+    {% for s in sections %}
+    <div class="card flex items-center justify-between" id="section-row-{{ s.id }}" data-section-id="{{ s.id }}">
+      <div class="flex items-center gap-3">
+        <!-- Drag Handle -->
+        <div class="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-2"
+             title="Ziehen zur Reihenfolge ändern">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="6" r="1.5"/>
+            <circle cx="15" cy="6" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/>
+            <circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="18" r="1.5"/>
+            <circle cx="15" cy="18" r="1.5"/>
+          </svg>
+        </div>
+        <div class="flex-1">
+          <a href="/courses/{{ course.id }}/script/{{ s.id }}"
+             class="text-lg font-semibold text-blue-600 hover:underline">
+            {{ s.title }}
+          </a>
+          <div class="text-sm text-gray-500 mt-1">
+            Aktualisiert: {{ s.updated_at[:16].replace("T", " ") if s.updated_at else "–" }}
+          </div>
+        </div>
+      </div>
+      <div class="flex items-center gap-4">
+        <button type="button"
+                onclick="toggleVisibility({{ s.id }}, this)"
+                class="text-gray-400 hover:text-blue-600 transition text-lg p-1 rounded hover:bg-gray-100"
+                title="{% if s.is_visible %}Kapitel verstecken{% else %}Kapitel freischalten{% endif %}">
+          {% if s.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </button>
+        <button type="button"
+                onclick="confirmDeleteSection(this)"
+                data-section-title="{{ s.title | e }}"
+                class="text-red-500 hover:text-red-700 transition text-sm font-medium"
+                title="Kapitel löschen">
+          🗑️
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if not sections %}
+  <div class="bg-white rounded-xl border-2 border-dashed border-gray-300 p-10 text-center">
+    <div class="text-5xl mb-4">📖</div>
+    <h2 class="text-lg font-semibold text-gray-700">Noch keine Kapitel vorhanden</h2>
+    <p class="text-gray-500 text-sm mt-2 max-w-xl mx-auto">
+      Erstelle hier die Kapitel des Vorlesungsskripts (Markdown, mit LaTeX <code>$...$</code> und Mermaid).
+      Jedes Kapitel kann einzeln per LLM bearbeitet und für die Studenten freigeschaltet werden.
+    </p>
+    <a href="/courses/{{ course.id }}/script/new"
+       class="mt-5 inline-block bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+      + Neues Kapitel
+    </a>
+  </div>
+  {% endif %}
+
+{% else %}
+
+  <!-- Student: freigeschaltete Kapitel (Überschriften, Inhalt per Klick ausklappbar) -->
+  <div id="script-reading" class="space-y-6">
+    <p class="text-gray-400 text-sm">Wird geladen…</p>
+  </div>
+
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+{% if is_tutor or is_admin %}
+
+  function decodeHtml(text) {
+    return text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  }
+
+  // ─── Drag-and-Drop Reihenfolge ────────────────────────────────
+  document.addEventListener('DOMContentLoaded', () => {
+    const sectionList = document.getElementById('section-list');
+    if (!sectionList || !sectionList.children.length) return;
+
+    Sortable.create(sectionList, {
+      handle: '.cursor-grab',
+      animation: 150,
+      ghostClass: 'bg-blue-50',
+      chosenClass: 'shadow-lg',
+      dragClass: 'shadow-xl',
+      onEnd: async function() {
+        const newOrder = [];
+        sectionList.querySelectorAll('[data-section-id]').forEach((row, idx) => {
+          newOrder.push({
+            id: parseInt(row.getAttribute('data-section-id')),
+            order: idx,
+          });
+        });
+
+        try {
+          const res = await fetch('/api/courses/' + courseId + '/script-sections/reorder', {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ section_ids: newOrder.map(t => t.id) }),
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            showToast(data.detail || 'Fehler beim Verschieben.', 'error');
+            location.reload(); // Reihenfolge zuruecksetzen bei Fehler
+            return;
+          }
+
+          showToast('Reihenfolge aktualisiert.', 'success');
+        } catch (err) {
+          showToast('Fehler: ' + err.message, 'error');
+          location.reload();
+        }
+      }
+    });
+  });
+
+  // ─── Sichtbarkeit (freischalten/verstecken) ───────────────────
+  async function toggleVisibility(sectionId, button) {
+    try {
+      const res = await fetch('/api/script-sections/' + sectionId + '/visibility', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_visible: button.title.includes('freischalten') }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Umschalten.', 'error');
+        return;
+      }
+
+      // Icon + Badge aktualisieren
+      const isNowVisible = data.is_visible;
+      const icon = isNowVisible
+        ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
+        : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+      button.innerHTML = icon;
+      button.title = isNowVisible ? 'Kapitel verstecken' : 'Kapitel freischalten';
+
+      showToast(data.message || 'Sichtbarkeit aktualisiert.', 'success');
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Löschen ──────────────────────────────────────────────────
+  async function confirmDeleteSection(btn) {
+    const row = btn.closest('[data-section-id]');
+    const sectionId = row.getAttribute('data-section-id');
+    const title = decodeHtml(btn.getAttribute('data-section-title') || '');
+
+    const msg = 'Möchtest du "' + title + '" wirklich löschen?\n\nDer Markdown-Inhalt dieses Kapitels wird endgültig entfernt.';
+    if (!confirm(msg)) return;
+
+    try {
+      const res = await fetch('/api/script-sections/' + sectionId, {
+        method: 'DELETE',
+        credentials: 'same-origin',
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Löschen.', 'error');
+        return;
+      }
+
+      showToast(data.message || 'Kapitel gelöscht.', 'success');
+
+      // Eintrag mit Fade-Out entfernen
+      row.style.opacity = '0';
+      row.style.transition = 'opacity 0.3s';
+      setTimeout(() => row.remove(), 300);
+
+      // Zähler aktualisieren
+      const countEl = document.getElementById('section-count');
+      if (countEl) {
+        const parts = countEl.textContent.trim().split(' ');
+        if (parts.length >= 2) {
+          const count = parseInt(parts[0]) - 1;
+          countEl.textContent = count + ' Kapitel';
+        }
+      }
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  {% else %}
+
+  // ─── Student: Kapitel-Liste (Inhalt per Klick ausklappbar) ────
+  async function loadScript() {
+    const container = document.getElementById('script-reading');
+    try {
+      const res = await fetch(`/api/courses/${courseId}/script-sections`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Nicht geladen");
+      const sections = await res.json();
+      container.innerHTML = "";
+
+      if (!sections.length) {
+        container.innerHTML = '<p class="text-gray-400 text-sm">Noch keine Kapitel freigeschaltet.</p>';
+        return;
+      }
+
+      const svgNS = "http://www.w3.org/2000/svg";
+      for (const s of sections) {
+        const card = document.createElement("div");
+        card.className = "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden";
+
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className = "w-full flex items-center justify-between gap-3 px-6 py-4 text-left hover:bg-gray-50 transition";
+
+        const title = document.createElement("span");
+        title.className = "text-lg font-semibold text-blue-600";
+        title.textContent = s.title;
+
+        const chevron = document.createElementNS(svgNS, "svg");
+        chevron.setAttribute("viewBox", "0 0 24 24");
+        chevron.setAttribute("fill", "none");
+        chevron.setAttribute("stroke", "currentColor");
+        chevron.setAttribute("stroke-width", "2");
+        chevron.setAttribute("stroke-linecap", "round");
+        chevron.setAttribute("stroke-linejoin", "round");
+        chevron.setAttribute("class", "h-5 w-5 text-gray-400 flex-shrink-0 transition-transform");
+        chevron.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
+
+        header.appendChild(title);
+        header.appendChild(chevron);
+
+        const body = document.createElement("div");
+        body.className = "hidden px-6 pt-4 pb-6 border-t border-gray-100";
+        const md = document.createElement("div");
+        md.className = "markdown-preview";
+        md.textContent = "Wird geladen…";
+        body.appendChild(md);
+
+        let loaded = false;
+        header.addEventListener("click", async () => {
+          const nowHidden = body.classList.toggle("hidden");
+          chevron.style.transform = nowHidden ? "" : "rotate(180deg)";
+          if (!nowHidden && !loaded) {
+            try {
+              const r = await fetch(`/api/script-sections/${s.id}`, { credentials: "same-origin" });
+              if (!r.ok) throw new Error("Nicht geladen");
+              const data = await r.json();
+              await renderMarkdown(data.content || "", md);
+              loaded = true;
+            } catch (e) {
+              md.textContent = "Fehler beim Laden des Kapitels.";
+            }
+          }
+        });
+
+        card.appendChild(header);
+        card.appendChild(body);
+        container.appendChild(card);
+      }
+    } catch (e) {
+      container.innerHTML = '<p class="text-red-500 text-sm">Fehler beim Laden des Skripts.</p>';
+    }
+  }
+
+  loadScript();
+
+{% endif %}
+</script>
+{% endblock %}

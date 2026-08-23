@@ -238,12 +238,33 @@ function decodeTextEntities(html) {
   }).join('');
 }
 
-// ─── Mermaid Diagram Rendering ──────────────────────────────────────
+// ─── Mermaid Diagram Rendering ──────────────────────────────────────────
+
+/**
+ * Mermaid-Flowcharts: Knotentext mit Sonderzeichen (z.B. `C[H(X) = log2(n)]`)
+ * ist ohne Anführungszeichen nicht parsebar. Für Flowcharts werden
+ * unquoted [..]/{..}-Labels automatisch angeführt: C["H(X) = log2(n)"].
+ * Bereits angeführte Labels sowie andere Diagrammtypen
+ * (Sequence, Class, ER, …) bleiben unverändert.
+ */
+function sanitizeFlowchartLabels(text) {
+  const firstLine = text.split('\n').map(l => l.trim()).find(l => l && !l.startsWith('%%')) || '';
+  if (!/^(graph|flowchart)\b/i.test(firstLine)) return text;
+  return text
+    .replace(/\b([A-Za-z0-9_][A-Za-z0-9_-]*)\[([^\[\]"]*)\]/g, (m, id, label) => {
+      return /[(){}<>]/.test(label) ? `${id}["${label}"]` : m;
+    })
+    .replace(/\b([A-Za-z0-9_][A-Za-z0-9_-]*)\{([^\{\}"]*)\}/g, (m, id, label) => {
+      return /[(){}<>]/.test(label) ? `${id}{"${label}"}` : m;
+    });
+}
 
 async function renderMermaid(diagramText) {
   if (typeof mermaid === 'undefined') {
     return `<pre class="text-orange-500 bg-orange-50 p-2 rounded">Mermaid not loaded</pre>`;
   }
+
+  diagramText = sanitizeFlowchartLabels(diagramText);
 
   try {
     const { svg } = await mermaid.render(`mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, diagramText);

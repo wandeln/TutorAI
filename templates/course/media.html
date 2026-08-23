@@ -65,8 +65,6 @@
               class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 bg-white
                      focus:ring-2 focus:ring-blue-500 focus:outline-none">
         <option value="all">Alle</option>
-        <option value="visible">Sichtbar</option>
-        <option value="hidden">Versteckt</option>
         <option value="unused">Noch nicht eingebunden</option>
       </select>
       <select id="media-sort" title="Sortieren"
@@ -119,21 +117,15 @@
       🤖 Titel &amp; Beschreibung generieren
     </button>
 
-    <div class="flex items-center justify-between flex-wrap gap-3 mt-2">
-      <label class="flex items-center gap-2 text-sm text-gray-700">
-        <input type="checkbox" id="edit-media-visible" class="rounded">
-        Für Kursteilnehmende sichtbar
-      </label>
-      <div class="flex gap-3 shrink-0">
-        <button id="edit-modal-cancel" type="button"
-                class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
-          Abbrechen
-        </button>
-        <button id="edit-modal-save" type="button"
-                class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-          Speichern
-        </button>
-      </div>
+    <div class="flex items-center justify-end gap-3 mt-2">
+      <button id="edit-modal-cancel" type="button"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+        Abbrechen
+      </button>
+      <button id="edit-modal-save" type="button"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+        Speichern
+      </button>
     </div>
   </div>
 </div>
@@ -172,8 +164,6 @@
 
     const list = mediaList.filter(m => {
       if (q && !(m.title + " " + (m.llm_description || "")).toLowerCase().includes(q)) return false;
-      if (filter === "visible" && !m.is_visible) return false;
-      if (filter === "hidden" && m.is_visible) return false;
       if (filter === "unused" && m.usages.length > 0) return false;
       return true;
     });
@@ -236,12 +226,7 @@
       : "";
 
     body.innerHTML = `
-      <div class="flex items-start justify-between gap-2">
-        <h3 class="font-semibold text-gray-800 text-sm break-words">${escapeHtml(m.title)}</h3>
-        ${m.is_visible
-          ? '<span class="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded-full shrink-0">sichtbar</span>'
-          : '<span class="text-xs bg-yellow-50 text-yellow-700 px-2 py-0.5 rounded-full shrink-0">versteckt</span>'}
-      </div>
+      <h3 class="font-semibold text-gray-800 text-sm break-words">${escapeHtml(m.title)}</h3>
       <p class="text-xs text-gray-500">${m.llm_description ? escapeHtml(m.llm_description) : '<span class="italic text-gray-400">Keine Beschreibung</span>'}</p>
       <div class="text-xs text-gray-600 space-y-0.5">${usagesHtml}${dupHtml}</div>
       <div class="mt-auto">
@@ -310,7 +295,6 @@
     editingId = id;
     document.getElementById("edit-media-title").value = m.title;
     document.getElementById("edit-media-description").value = m.llm_description || "";
-    document.getElementById("edit-media-visible").checked = m.is_visible;
     document.getElementById("edit-preview-img").src = m.url + "?t=" + Date.now();
     document.getElementById("media-edit-modal").classList.remove("hidden");
   }
@@ -325,7 +309,6 @@
     const payload = {
       title: document.getElementById("edit-media-title").value,
       llm_description: document.getElementById("edit-media-description").value,
-      is_visible: document.getElementById("edit-media-visible").checked,
     };
     try {
       const res = await fetch(`/api/courses/${courseId}/media/${editingId}`, {

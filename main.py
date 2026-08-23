@@ -43,6 +43,7 @@ from database.models import (
     GlobalUserRole,
     HintExchange,
     MaterialType,
+    ScriptSection,
     Task,
     User,
     UserCourse,
@@ -51,7 +52,7 @@ from database.models import (
 from services.auth_service import get_current_user, hash_password, require_course_access
 from services import media_service
 
-from api import admin, auth, media as media_api, materials as materials_api, student, tutor, user_settings, course_members
+from api import admin, auth, media as media_api, materials as materials_api, script as script_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -88,6 +89,7 @@ async def lifespan(app: FastAPI):
     """App-Start: DB-Tabellen erstellen + Schema-Migration + Admin-User bei leerer DB."""
     create_db_and_tables()
     migrate_schema()
+    migrate_script_sections()
 
     # Admin-User anlegen, wenn DB leer
     with Session(engine) as session:
@@ -113,6 +115,38 @@ def _create_admin(session: Session):
     session.add(admin)
     session.commit()
     logger.info("Admin-User 'admin' erstellt (Passwort: admin). Bitte aendern!")
+
+
+def migrate_script_sections():
+    """Migration: altes einzelnes Skript-Material → Skript-Kapitel.
+
+    Das Skript besteht seitdem aus mehreren Markdown-Kapiteln (ScriptSection).
+    Idempotent: ohne verbleibende script-Materialien ein no-op.
+    """
+    with Session(engine) as session:
+        script_materials = session.exec(
+            select(CourseMaterial).where(CourseMaterial.material_type == MaterialType.SCRIPT)
+        ).all()
+        for mat in script_materials:
+            existing = session.exec(
+                select(ScriptSection).where(ScriptSection.course_id == mat.course_id)
+            ).first()
+            if existing is None:
+                session.add(
+                    ScriptSection(
+                        course_id=mat.course_id,
+                        title=mat.title,
+                        content=mat.content or "",
+                        is_visible=mat.is_visible,
+                        display_order=0,
+                        created_by=mat.created_by,
+                    )
+                )
+                session.commit()
+            session.delete(mat)
+            session.commit()
+            media_service.sync_media_usages(session, mat.course_id)
+            logger.info(f"Skript-Material '{mat.title}' (Kurs {mat.course_id}) in Kapitel umgewandelt.")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -167,6 +201,7 @@ app.include_router(course_members.router)
 app.include_router(student.router)
 app.include_router(media_api.router)
 app.include_router(materials_api.router)
+app.include_router(script_api.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -242,28 +277,35 @@ def _course_tab_context(
     is_tutor = role in (CourseRole.PROF, CourseRole.TUTOR)
     is_prof = role == CourseRole.PROF
 
-    # Kurs-Materialien (Skript/Slides): für Studenten nur, wenn vorhanden & sichtbar;
+    # Kurs-Materialien (Slides): für Studenten nur, wenn vorhanden & sichtbar;
     # für Tutor/PROF/Admin immer (ggf. mit Empty-State + Anlegen-CTA)
     materials = session.exec(
         select(CourseMaterial).where(CourseMaterial.course_id == course_id)
     ).all()
 
+    # Skript-Kapitel: für Studenten erst, wenn mindestens eines freigeschaltet ist
+    visible_sections = session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .where(ScriptSection.is_visible == True)  # noqa: E712
+    ).all()
+
     tabs: list[dict[str, Any]] = []
-    for mtype, key, icon, label in (
-        (MaterialType.SCRIPT, "script", "📖", "Skript"),
-        # (MaterialType.SLIDES, "slides", "📽️", "Slides"),  # Tab vorerst deaktiviert (reveal.js folgt)
-    ):
-        mat = next((m for m in materials if m.material_type == mtype), None)
-        if is_tutor or is_admin or (mat is not None and mat.is_visible):
-            tabs.append(
-                {
-                    "key": key,
-                    "icon": icon,
-                    "label": label,
-                    "url": f"/courses/{course_id}/{key}",
-                    "active": active_tab == key,
-                }
-            )
+    if is_tutor or is_admin or visible_sections:
+        tabs.append(
+            {
+                "key": "script",
+                "icon": "📖",
+                "label": "Skript",
+                "url": f"/courses/{course_id}/script",
+                "active": active_tab == "script",
+            }
+        )
+    # Slides-Tab vorerst deaktiviert (reveal.js folgt):
+    # slides_mat = next((m for m in materials if m.material_type == MaterialType.SLIDES), None)
+    # if is_tutor or is_admin or (slides_mat is not None and slides_mat.is_visible):
+    #     tabs.append({"key": "slides", "icon": "📽️", "label": "Slides",
+    #                  "url": f"/courses/{course_id}/slides", "active": active_tab == "slides"})
 
     tabs.append(
         {
@@ -680,12 +722,140 @@ async def script_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Kurs-Tab 'Skript': Vorlesungsskript (Markdown)."""
+    """Kurs-Tab 'Skript': mehrere Markdown-Kapitel (Tutor: Liste, Student: Lesefluss)."""
     membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="script")
     if not membership and user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
-    _material_page_context(ctx, MaterialType.SCRIPT)
-    return templates.TemplateResponse("course/material.html", ctx)
+
+    is_tutor = ctx["is_tutor"] or ctx["is_admin"]
+    q = select(ScriptSection).where(ScriptSection.course_id == course_id)
+    if not is_tutor:
+        q = q.where(ScriptSection.is_visible == True)  # noqa: E712
+    sections = session.exec(q.order_by(ScriptSection.display_order.asc())).all()  # type: ignore[attr-defined]
+    if not is_tutor and not sections:
+        raise HTTPException(404, "Kein Skript für diesen Kurs vorhanden.")
+
+    ctx["sections"] = [
+        {
+            "id": s.id,
+            "title": s.title,
+            "is_visible": s.is_visible,
+            "display_order": s.display_order,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        }
+        for s in sections
+    ]
+    ctx["page_title"] = f"Skript — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/script.html", ctx)
+
+
+@app.get("/courses/{course_id}/script/new")
+async def new_script_section_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Neues Skript-Kapitel erstellen."""
+    user, _ = user_and_course
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    course_role = membership.role_in_course.value if membership else "TUTOR"
+    if user.role == GlobalUserRole.ADMIN:
+        course_role = "PROF"
+
+    return templates.TemplateResponse(
+        "tutor/script_section_edit.html",
+        {
+            "request": request,
+            "page_title": "Neues Skript-Kapitel",
+            "current_user": {
+                "id": user.id,
+                "username": user.username,
+                "name": user.name,
+                "role": course_role,
+            },
+            "courses": _get_user_courses(user, session),
+            "selected_course_id": course_id,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
+            "course": {
+                "id": course.id,
+                "name": course.name,
+            },
+            "section": None,
+            "LLM_TIMEOUT": LLM_TIMEOUT,
+        },
+    )
+
+
+@app.get("/courses/{course_id}/script/{section_id}")
+async def script_section_page(
+    course_id: int,
+    section_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Skript-Kapitel bearbeiten (nur PROF/TUTOR)."""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+
+    section = session.get(ScriptSection, section_id)
+    if not section or section.course_id != course_id:
+        raise HTTPException(404, "Kapitel nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    is_tutor = user.role == GlobalUserRole.ADMIN or (
+        membership is not None and membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
+    )
+    if not membership and user.role != GlobalUserRole.ADMIN:
+        raise HTTPException(403, "Kein Zugriff.")
+    if not is_tutor:
+        raise HTTPException(404, "Kapitel nicht gefunden oder noch nicht freigeschaltet.")
+
+    course_role = membership.role_in_course.value if membership else "PROF"
+
+    return templates.TemplateResponse(
+        "tutor/script_section_edit.html",
+        {
+            "request": request,
+            "page_title": f"{section.title} — Bearbeiten",
+            "current_user": {
+                "id": user.id,
+                "username": user.username,
+                "name": user.name,
+                "role": course_role,
+            },
+            "courses": _get_user_courses(user, session),
+            "selected_course_id": course_id,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
+            "course": {
+                "id": course.id,
+                "name": course.name,
+            },
+            "section": {
+                "id": section.id,
+                "title": section.title,
+                "content": section.content,
+                "is_visible": section.is_visible,
+                "summary": section.summary or "",
+                "updated_at": section.updated_at.isoformat() if section.updated_at else None,
+            },
+            "LLM_TIMEOUT": LLM_TIMEOUT,
+        },
+    )
 
 
 @app.get("/courses/{course_id}/slides")
@@ -727,8 +897,8 @@ async def serve_media(
 ):
     """Authentifizierter Medien-Versand (kein Static-Mount!).
 
-    Zugriff nur für Kurs-Mitglieder; versteckte Medien (is_visible=False)
-    zusätzlich nur für Tutor/PROF/Admin.
+    Zugriff für alle Kurs-Mitglieder. Wer ein Medium sehen darf, steuert
+    die Sichtbarkeit des einbindenden Inhalts (Aufgabe/Skript/Slides).
     """
     if not re.fullmatch(r"[A-Za-z0-9._\-]+", filename):
         raise HTTPException(404, "Medium nicht gefunden.")
@@ -739,9 +909,7 @@ async def serve_media(
     if not media:
         raise HTTPException(404, "Medium nicht gefunden.")
 
-    is_admin = user.role == GlobalUserRole.ADMIN
-    membership = None
-    if not is_admin:
+    if user.role != GlobalUserRole.ADMIN:
         membership = session.exec(
             select(UserCourse)
             .where(UserCourse.user_id == user.id)
@@ -749,10 +917,6 @@ async def serve_media(
         ).first()
         if not membership:
             raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
-
-    is_tutor = is_admin or membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)  # type: ignore[union-attr]
-    if not media.is_visible and not is_tutor:
-        raise HTTPException(403, "Dieses Medium ist nicht sichtbar.")
 
     path = media_service.resolve_media_path(course_id, filename)
     if not path:

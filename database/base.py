@@ -5,6 +5,8 @@ Provides SQLModel-compatible engine and session factory for dependency injection
 Supports both SQLite (dev) and PostgreSQL (production).
 """
 
+import re
+
 from sqlmodel import SQLModel, create_engine, Session
 from config import DATABASE_URL
 
@@ -30,34 +32,116 @@ def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
 
 
+def _sqlite_drop_column(conn, table: str, column: str) -> None:
+    """Entfernt eine Spalte (SQLite).
+
+    SQLite >= 3.35: ALTER TABLE ... DROP COLUMN; ältere Versionen:
+    Tabellen-Rebuild (neue Tabelle anlegen, Daten kopieren, alte löschen).
+    """
+    try:
+        conn.exec_driver_sql(f"ALTER TABLE {table} DROP COLUMN {column}")
+        return
+    except Exception:
+        pass  # SQLite < 3.35 → Rebuild
+
+    cols = [
+        row[1]
+        for row in conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+        if row[1] != column
+    ]
+    create_sql = conn.exec_driver_sql(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()[0]
+    # Die Spalten-Definition aus dem CREATE-TABLE-DDL entfernen. Zwei Fälle:
+    # 1) eigene Zeile (so legt SQLAlchemy die Tabelle an)
+    new_create = re.sub(
+        rf"^[ \t]*{re.escape(column)}[ \t]+[^\n]*\n",
+        "",
+        create_sql,
+        count=1,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    # 2) an die vorherige Zeile angehängt (so schreibt SQLite das DDL nach
+    #    ALTER TABLE ... ADD COLUMN um)
+    if re.search(rf"\b{re.escape(column)}\b", new_create, flags=re.IGNORECASE):
+        new_create = re.sub(
+            rf",\s*{re.escape(column)}[ \t]+[A-Za-z0-9_()+'\" ]*",
+            "",
+            new_create,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    if re.search(rf"\b{re.escape(column)}\b", new_create, flags=re.IGNORECASE):
+        raise RuntimeError(
+            f"Migration: Spalte {table}.{column} konnte nicht aus dem CREATE-TABLE-DDL entfernt werden."
+        )
+    new_create = new_create.replace(",\n)", "\n)")
+    new_table = f"{table}_migration_tmp"
+    new_create = (
+        new_create.replace(f'CREATE TABLE "{table}"', f'CREATE TABLE "{new_table}"', 1)
+        .replace(f"CREATE TABLE {table}", f"CREATE TABLE {new_table}", 1)
+    )
+    quoted = ", ".join(f'"{c}"' for c in cols)
+    conn.exec_driver_sql(new_create)
+    conn.exec_driver_sql(f"INSERT INTO {new_table} ({quoted}) SELECT {quoted} FROM {table}")
+    conn.exec_driver_sql(f"DROP TABLE {table}")
+    conn.exec_driver_sql(f"ALTER TABLE {new_table} RENAME TO {table}")
+
+
 def migrate_schema():
-    """Fügt fehlende Spalten an bestehenden Tabellen hinzu.
+    """Migriert Schema-Änderungen an bestehenden Datenbanken.
 
     create_all() legt nur fehlende Tabellen an, ergänzt aber keine neuen
-    Spalten. Hier werden fehlende Spalten nachgezogen (SQLite + PostgreSQL).
+    Spalten bzw. entfernt keine entfallene. Hier werden fehlende Spalten
+    nachgezogen und obsolete Spalten entfernt (SQLite + PostgreSQL).
     """
-    new_global_settings_columns = {
-        "llm_api_url_public": "VARCHAR",
-        "llm_api_key_public": "VARCHAR",
-        "llm_model_public": "VARCHAR",
+    column_migrations = {
+        "global_settings": {
+            "llm_api_url_public": "VARCHAR",
+            "llm_api_key_public": "VARCHAR",
+            "llm_model_public": "VARCHAR",
+        },
+        "course_script_sections": {
+            "summary": "TEXT",  # Interne LLM-Zusammenfassung (nicht für Studenten)
+        },
     }
+    column_drops = {
+        "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt
+    }
+    is_sqlite = "sqlite" in DATABASE_URL
 
     with engine.begin() as conn:
-        if "sqlite" in DATABASE_URL:
-            rows = conn.exec_driver_sql("PRAGMA table_info(global_settings)").fetchall()
-            if not rows:
-                return
-            existing = {row[1] for row in rows}
-            for col, col_type in new_global_settings_columns.items():
-                if col not in existing:
+        for table, new_columns in column_migrations.items():
+            if is_sqlite:
+                rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+                if not rows:
+                    continue
+                existing = {row[1] for row in rows}
+                for col, col_type in new_columns.items():
+                    if col not in existing:
+                        conn.exec_driver_sql(
+                            f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"
+                        )
+            else:
+                for col, col_type in new_columns.items():
                     conn.exec_driver_sql(
-                        f"ALTER TABLE global_settings ADD COLUMN {col} {col_type}"
+                        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type}"
                     )
-        else:
-            for col, col_type in new_global_settings_columns.items():
-                conn.exec_driver_sql(
-                    f"ALTER TABLE global_settings ADD COLUMN IF NOT EXISTS {col} {col_type}"
-                )
+
+        for table, dropped in column_drops.items():
+            if is_sqlite:
+                rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+                if not rows:
+                    continue
+                existing = {row[1] for row in rows}
+                for col in dropped:
+                    if col in existing:
+                        _sqlite_drop_column(conn, table, col)
+            else:
+                for col in dropped:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE {table} DROP COLUMN IF EXISTS {col}"
+                    )
 
 
 def get_session():

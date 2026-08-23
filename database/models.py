@@ -108,6 +108,7 @@ class Course(CourseBase, table=True):
     course_members: List["UserCourse"] = Relationship(back_populates="course")
     tasks: List["Task"] = Relationship(back_populates="course")
     materials: List["CourseMaterial"] = Relationship(back_populates="course")
+    script_sections: List["ScriptSection"] = Relationship(back_populates="course")
     media: List["CourseMedia"] = Relationship(back_populates="course")
     settings: Optional["CourseSettings"] = Relationship(back_populates="course")
 
@@ -273,6 +274,31 @@ class CourseMaterialRead(CourseMaterialBase):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SCRIPT SECTIONS (Vorlesungsskript als mehrere Markdown-Kapitel)
+# ═══════════════════════════════════════════════════════════════════
+
+class ScriptSectionBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    title: str = Field(max_length=300)         # z.B. "Kapitel 2: Rekursion"
+    content: str = Field(default="")           # Markdown (mit LaTeX/Mermaid)
+    is_visible: bool = Field(default=False)    # für Studenten freigeschaltet
+    display_order: int = Field(default=0)      # Reihenfolge im Skript
+    summary: str = Field(default="")           # Interne LLM-Zusammenfassung (NICHT für Studenten; Konsistenz zwischen Kapiteln)
+
+
+class ScriptSection(ScriptSectionBase, table=True):
+    __tablename__ = "course_script_sections"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    # Relationships
+    course: Course = Relationship(back_populates="script_sections")
+
+
+# ═══════════════════════════════════════════════════════════════════
 # COURSE MEDIA (Bilder/Applets je Kurs)
 # ═══════════════════════════════════════════════════════════════════
 
@@ -284,7 +310,6 @@ class CourseMediaBase(SQLModel):
     mime_type: str = Field(default="image/png", max_length=100)
     file_size: int = Field(default=0)
     llm_description: Optional[str] = Field(default=None, max_length=2000)  # Was zeigt das Medium? (für LLM-Pipeline)
-    is_visible: bool = Field(default=True)  # False = nur Tutor/PROF können die Datei abrufen
 
 
 class CourseMedia(CourseMediaBase, table=True):

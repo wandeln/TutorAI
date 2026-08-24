@@ -17,7 +17,17 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from database.base import get_session
-from database.models import Course, CourseRole, GlobalUserRole, ScriptSection, User, UserCourse
+from database.models import (
+    Course,
+    CourseRole,
+    FeedbackSource,
+    GlobalUserRole,
+    ScriptSection,
+    Submission,
+    Task,
+    User,
+    UserCourse,
+)
 from services.auth_service import get_current_user, require_course_access
 from services.llm_service import LLMService
 from services import media_service
@@ -172,6 +182,9 @@ async def script_refmap(
         courseId: Kurs-ID
         chapters: {id: {title, maxFig, maxEq}}  # Preview-Fallback (neue, ungespeicherte Labels)
         labels:   {label: {kind, sectionId, num}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt
+        tasks:    {id: {id, title, taskType, maxPoints, myPoints, attemptsUsed, maxAttempts, deadline}}
+                  # für @task:{id}-Referenzen. Student: nur freigeschaltete Aufgaben +
+                  # eigene Punkte (analog Aufgabenübersicht); PROF/TUTOR/Admin: alle.
     """
     _check_member(user, session, course_id)
     is_tutor = user.role == GlobalUserRole.ADMIN or (
@@ -205,11 +218,52 @@ async def script_refmap(
             max_eq = max(max_eq, eq_running)
         chapters[str(s.id)] = {"title": s.title, "maxFig": max_fig, "maxEq": max_eq}
 
+    # Aufgaben für @task:{id}-Referenzen (Datenquelle der Aufgaben-Box).
+    tasks_map: dict[str, dict] = {}
+    tq = select(Task).where(Task.course_id == course_id)
+    if not is_tutor:
+        tq = tq.where(Task.is_visible == True)  # noqa: E712
+    for task in session.exec(tq.order_by(Task.display_order.asc())).all():  # type: ignore[attr-defined]
+        my_points = 0.0
+        attempts_used = 0
+        if not is_tutor and task.id is not None:
+            # Eigene Punkte: wie in der Aufgabenübersicht (my-points-Endpoint) —
+            # letzte Abgabe, menschliche Bewertung schlägt LLM-Bewertung.
+            subs = session.exec(
+                select(Submission)
+                .where(Submission.task_id == task.id)
+                .where(Submission.student_id == user.id)
+                .order_by(Submission.submitted_at.desc())  # type: ignore[attr-defined]
+            ).all()
+            attempts_used = len(subs)
+            if subs:
+                human_points = 0.0
+                llm_points = 0.0
+                override_exists = False
+                for fb in subs[0].feedback_list:
+                    if fb.source == FeedbackSource.HUMAN:
+                        human_points = max(human_points, fb.points_earned)
+                        override_exists = True
+                    else:
+                        llm_points = max(llm_points, fb.points_earned)
+                my_points = human_points if override_exists else llm_points
+        tasks_map[str(task.id)] = {
+            "id": task.id,
+            "title": task.title,
+            "taskType": task.task_type.value,
+            "maxPoints": task.max_points,
+            "myPoints": round(my_points, 1),
+            "attemptsUsed": attempts_used,
+            "maxAttempts": task.max_attempts,
+            "deadline": task.deadline,
+        }
+
     return {
         "mode": "edit" if is_tutor else "reading",
         "courseId": course_id,
         "chapters": chapters,
         "labels": labels,
+        "tasks": tasks_map,
     }
 
 
@@ -412,6 +466,17 @@ async def ai_generate_section(
     # Noch nicht im Skript verwendete (sichtbare) Medien — ggf. einbindbar.
     unused_media = media_service.unused_media_for_script(session, course_id)[:15]
 
+    # Übungsaufgaben des Kurses (ID + Titel) — das LLM kann passende Aufgaben
+    # per @task:{id} im Kapitel einbinden (Aufgaben-Box für Studenten).
+    course_tasks = [
+        {"id": t.id, "title": t.title}
+        for t in session.exec(
+            select(Task)
+            .where(Task.course_id == course_id)
+            .order_by(Task.display_order.asc())  # type: ignore[attr-defined]
+        ).all()
+    ]
+
     llm_cfg = get_effective_llm_config(session, course_id)
     result = await llm_service.generate_script_section(
         course_name=course.name,
@@ -421,6 +486,7 @@ async def ai_generate_section(
         current_content=(body.get("current_content") or "").strip(),
         other_chapters=other_chapters,
         unused_media=unused_media,
+        course_tasks=course_tasks,
         config=llm_cfg,
     )
     if not result.get("success"):

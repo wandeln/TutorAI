@@ -16,6 +16,38 @@
       <span class="text-gray-400">/</span>
       <span class="text-sm text-gray-500">Bewertung</span>
     </div>
+
+    <!-- Task Navigation -->
+    <div class="flex items-center justify-between mb-4 mt-4">
+      {% if prev_task %}
+        <a href="/courses/{{ course_id }}/tasks/{{ prev_task.id }}/students/{{ student_id }}/review"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:-webkit-fill-available">
+          <span class="text-lg">←</span>
+          <div class="flex flex-col items-start">
+            <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
+            <span class="text-sm font-medium">{{ prev_task.title }}</span>
+          </div>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+
+      {% if next_task %}
+        <a href="/courses/{{ course_id }}/tasks/{{ next_task.id }}/students/{{ student_id }}/review"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:-webkit-fill-available">
+          <div class="flex flex-col items-end text-right">
+            <span class="text-xs text-gray-500">Nächste Aufgabe</span>
+            <span class="text-sm font-medium">{{ next_task.title }}</span>
+          </div>
+          <span class="text-lg">→</span>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+    </div>
+
     <h1 class="text-2xl font-bold text-gray-900">{{ task_title }}</h1>
 
     <div class="flex gap-2 mt-3">
@@ -29,37 +61,6 @@
         {{ '💻 Code' if task_type == 'code' else '📄 Text' }}
       </span>
     </div>
-  </div>
-
-  <!-- Task Navigation -->
-  <div class="flex items-center justify-between mb-6">
-    {% if prev_task %}
-      <a href="/courses/{{ course_id }}/tasks/{{ prev_task.id }}/students/{{ student_id }}/review"
-         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:-webkit-fill-available">
-        <span class="text-lg">←</span>
-        <div class="flex flex-col items-start">
-          <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
-          <span class="text-sm font-medium">{{ prev_task.title }}</span>
-        </div>
-      </a>
-    {% else %}
-      <div></div>
-    {% endif %}
-
-    {% if next_task %}
-      <a href="/courses/{{ course_id }}/tasks/{{ next_task.id }}/students/{{ student_id }}/review"
-         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:-webkit-fill-available">
-        <div class="flex flex-col items-end text-right">
-          <span class="text-xs text-gray-500">Nächste Aufgabe</span>
-          <span class="text-sm font-medium">{{ next_task.title }}</span>
-        </div>
-        <span class="text-lg">→</span>
-      </a>
-    {% else %}
-      <div></div>
-    {% endif %}
   </div>
 
   <!-- Two-Column Layout with Sticky Left Sidebar -->

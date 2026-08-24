@@ -15,13 +15,14 @@ from sqlmodel import Session, SQLModel, select
 
 from database.base import get_session
 from database.models import (
-    User, Task, Submission, Feedback, HintExchange,
+    User, Task, Submission, Feedback, HintExchange, ScriptSection,
     TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
 from services.llm_service import LLMService
+from services.media_service import all_media_for_course
 from services.sandbox_runner import SandboxedRunner
 from services.settings_resolver import get_effective_llm_config
 
@@ -915,6 +916,43 @@ async def request_hint(
     # Resolve effektive LLM-Config
     llm_cfg = get_effective_llm_config(session)
 
+    # Skript-Kontext für konsistente Notation & Querverweise im Hinweis.
+    # NUR sichtbare Kapitel: der Student sieht genau diese — Labels aus
+    # versteckten Kapiteln wären kaputte Referenzen (❓) im Hinweis.
+    script_chapters = [
+        (s.title, (s.summary or "").strip())
+        for s in session.exec(
+            select(ScriptSection)
+            .where(ScriptSection.course_id == task.course_id)
+            .where(ScriptSection.is_visible)
+            .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
+        ).all()
+        if (s.summary or "").strip()
+    ][:20]
+    script_context = ""
+    if script_chapters:
+        lines = [f"- {t} — {s}" for t, s in script_chapters]
+        script_context = (
+            "SKRIPT-KAPITEL DES KURSES (mit ihren internen Zusammenfassungen):\n"
+            + "\n".join(lines)
+            + "\nHalte die Notation, Schreibweisen und Begriffswahl konsistent mit dem Skript, wo dies sinnvoll ist."
+            + "\nQuerverweise: Auf Abbildungen/Gleichungen aus dem Skript verweist du im Hinweis per @fig:label bzw. @eq:label — verwende NUR Labels, die in den obigen Zusammenfassungen vorkommen (sonst ist die Referenz kaputt). Lege KEINE neuen fig/eq-Labels an."
+            + "\nWICHTIG: @fig:label / @eq:label sind KEIN Code — schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen. Nur so werden sie zu klickbaren Referenzen aufgelöst. Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“."
+        )
+
+    course_media = all_media_for_course(session, task.course_id)
+    media_context = ""
+    if course_media:
+        lines = [
+            f"- {m['title']}{' — ' + m['description'] if m['description'] else ''} | ![{m['title']}]({m['url']})"
+            for m in course_media
+        ]
+        media_context = (
+            "MEDIEN DES KURSES (Titel — Beschreibung | Einbindung-Snippet):\n"
+            + "\n".join(lines)
+            + "\nEin inhaltlich passendes Medium aus dieser Liste DARFST du im Hinweis einbinden (max. 1) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade."
+        )
+
     # Rufe LLM fuer sokratischen Hinweis auf
     result = await llm_service.generate_socratic_hint(
         task_description=task.description,
@@ -924,6 +962,8 @@ async def request_hint(
         previous_submissions=prev_submissions_text,
         hint_history=hint_history_text,
         student_question=hint_request.question,
+        script_context=script_context,
+        media_context=media_context,
         config=llm_cfg,
     )
 

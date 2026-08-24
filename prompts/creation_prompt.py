@@ -70,6 +70,8 @@ Regeln:
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
 - Medien: Du DARFST Medien aus der obigen Medien-Liste in die Aufgabenstellung einbinden, wenn sie inhaltlich wirklich passen (max. 1-2) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
 - Querverweise: Bezug auf Abbildungen/Gleichungen aus dem Skript per @fig:label bzw. @eq:label — verwende NUR Labels, die in den obigen Kapitel-Zusammenfassungen vorkommen (sonst ist die Referenz kaputt). Lege in der Aufgabe selbst KEINE neuen fig/eq-Labels an (Kollisionsgefahr).
+  WICHTIG: @fig:label / @eq:label sind KEIN Code — schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen. Nur so werden sie zu klickbaren Referenzen („Abb. N“ / „Gl. N“) aufgelöst.
+  Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“
 - Musterlösung: knapp und präzise. Bei Code: Nur den funktionalen Code (passend zur Code-Vorlage — gleiche Signaturen/Struktur). Bei Text: Die direkte Antwort/Erläuterung. Falls es mehrere korrekte Lösungen geben kann, gehe kurz darauf ein.
 - Bitte gib in der Musterlösung auch Bewertungskriterien an um eine faire Bewertung zu ermöglichen. Es können maximal {{ max_points }} Punkte erzielt werden.
 - Die Bewertungskriterien sollten (abgesehen von standard good practice) keine Punkte enthalten, die aus der Aufgabenstellung nicht ersichtlich sind.

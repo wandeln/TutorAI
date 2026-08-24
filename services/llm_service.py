@@ -174,6 +174,7 @@ class LLMService:
         current_content: str = "",
         other_chapters: Optional[list[dict]] = None,
         unused_media: Optional[list[dict]] = None,
+        course_tasks: Optional[list[dict]] = None,
         config: Optional[dict] = None,
     ):
         """Generiert/ändert die angeforderten Felder eines Skript-Kapitels via LLM.
@@ -184,6 +185,8 @@ class LLMService:
         other_chapters: [{title, summary}] der anderen Kapitel (Konsistenz).
         unused_media: [{title, description, url}] — noch nicht im Skript
         verwendete Medien (ggf. einbindbar).
+        course_tasks: [{id, title}] — Übungsaufgaben des Kurses (ggf. per
+        @task:{id} im Kapitel einbindbar → Aufgaben-Box für Studenten).
         Das LLM liefert JSON mit EXAKT den angeforderten Schlüsseln.
 
         Enthält keine sensitive Studentendaten — nutzt daher den Public
@@ -197,6 +200,7 @@ class LLMService:
             generate_list=generate_list,
             other_chapters=other_chapters or [],
             unused_media=unused_media or [],
+            course_tasks=course_tasks or [],
             current_title=current_title,
             current_content=current_content,
         )
@@ -214,6 +218,8 @@ class LLMService:
         previous_submissions: str,
         hint_history: str,
         student_question: str,
+        script_context: str = "",
+        media_context: str = "",
         custom_prompt: Optional[str] = None,
         config: Optional[dict] = None,
     ):
@@ -235,6 +241,8 @@ class LLMService:
             previous_submissions=previous_submissions or "(Keine vorherigen Abgaben)",
             hint_history=hint_history or "(Dies ist die erste Frage)",
             student_question=student_question,
+            script_context=script_context,
+            media_context=media_context,
         )
 
         return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)

@@ -14,6 +14,38 @@
       <span class="text-gray-400">/</span>
       <span class="text-sm text-gray-500">{{ task.title }}</span>
     </div>
+
+    <!-- Task Navigation -->
+    <div class="flex items-center justify-between mb-4 mt-4" style="max-height:fit-content">
+      {% if prev_task %}
+        <a href="/courses/{{ course.id }}/tasks/{{ prev_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:stretch">
+          <span class="text-lg">←</span>
+          <div class="flex flex-col items-start">
+            <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
+            <span class="text-sm font-medium">{{ prev_task.title }}</span>
+          </div>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+
+      {% if next_task %}
+        <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:stretch">
+          <div class="flex flex-col items-end text-right">
+            <span class="text-xs text-gray-500">Nächste Aufgabe</span>
+            <span class="text-sm font-medium">{{ next_task.title }}</span>
+          </div>
+          <span class="text-lg">→</span>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+    </div>
+
     <h1 class="text-2xl font-bold text-gray-900">{{ task.title }}</h1>
 
     {% if is_student_view %}
@@ -54,37 +86,6 @@
     </div>
   </div>
 
-  <!-- Task Navigation -->
-  <div class="flex items-center justify-between mb-6" style="max-height:fit-content">
-    {% if prev_task %}
-      <a href="/courses/{{ course.id }}/tasks/{{ prev_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
-         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:stretch">
-        <span class="text-lg">←</span>
-        <div class="flex flex-col items-start">
-          <span class="text-xs text-gray-500">Vorherige Aufgabe</span>
-          <span class="text-sm font-medium">{{ prev_task.title }}</span>
-        </div>
-      </a>
-    {% else %}
-      <div></div>
-    {% endif %}
-
-    {% if next_task %}
-      <a href="/courses/{{ course.id }}/tasks/{{ next_task.id }}{% if is_student_view %}?as_student=1{% endif %}"
-         class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
-                text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:stretch">
-        <div class="flex flex-col items-end text-right">
-          <span class="text-xs text-gray-500">Nächste Aufgabe</span>
-          <span class="text-sm font-medium">{{ next_task.title }}</span>
-        </div>
-        <span class="text-lg">→</span>
-      </a>
-    {% else %}
-      <div></div>
-    {% endif %}
-  </div>
-
   <div class="flex flex-col lg:flex-row gap-6">
 
     <!-- ─── LEFT: Task Description ──────────────────────────────── -->
@@ -116,8 +117,8 @@
                    style="min-width: 0;"
                    onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); requestHint();}">
             <button type="button" id="hint-send-btn" onclick="requestHint()"
-                    class="shrink-0 bg-blue-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-700 transition">
-              🔍
+                    class="shrink-0 bg-blue-600 text-white px-3 py-2 rounded-lg text-lg font-bold hover:bg-blue-700 transition">
+              ⌕
             </button>
           </div>
           <div id="hint-error" class="hidden mt-2 text-sm text-red-600 bg-red-50 rounded p-2"></div>

@@ -15,6 +15,8 @@
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
  * Querverweise:       @fig:label / @eq:label      → klickbares "Abb. N" bzw. "Gl. N"
  *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
+ * Aufgaben-Box:       @task:{id}                  → Aufgaben-Box (Student: Punkte/Medaille analog
+ *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
@@ -178,6 +180,15 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%XREF_${xrefs.length - 1}%%`;
   });
 
+  // 1i. Extract task references: @task:{id}
+  //     → Aufgaben-Box (Daten via refmap.tasks; Code-Blöcke sind zu
+  //     diesem Zeitpunkt bereits extrahiert → in Code bleibt es literal).
+  const taskRefs = [];
+  processed = processed.replace(/@task:(\d+)/g, (match, id) => {
+    taskRefs.push(id);
+    return `%%TASKREF_${taskRefs.length - 1}%%`;
+  });
+
   // 2. Render Markdown (marked)
   let html = marked.parse(processed, {
     breaks: true,
@@ -261,6 +272,63 @@ async function renderMarkdown(text, targetElement, options = {}) {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehörige Abbildung/Gleichung fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
     html = html.replace(`%%XREF_${idx}%%`, refHtml);
+  });
+
+  // 6c. Restore task references (@task:{id})
+  //     Daten via refmap.tasks: Student (mode "reading") → nur freigeschaltete
+  //     Aufgaben inkl. eigener Punkte/Medaille (analog Aufgabenübersicht);
+  //     PROF/TUTOR/Admin (mode "edit") → alle Aufgaben, kompakte Box mit Link.
+  const refTasks = (refMap && refMap.tasks) || {};
+  const taskCid = (refMap && refMap.courseId) || '';
+  taskRefs.forEach((id, idx) => {
+    const t = refTasks[id];
+    let boxHtml;
+    if (!t) {
+      boxHtml = `<span class="tutorai-xref-broken" title="Aufgabe unbekannt — existiert nicht (mehr) oder ist nicht freigeschaltet">❓ Aufgabe ${escapeHtml(id)}</span>`;
+    } else if (refMap && refMap.mode === 'edit') {
+      // PROF/TUTOR/Admin: kompakte Box mit Link zur Aufgabenseite
+      boxHtml =
+        `<div class="tutorai-taskbox">` +
+        `<span class="tutorai-taskbox-icon" aria-hidden="true">📝</span>` +
+        `<div class="flex-1 min-w-0">` +
+        `<a href="/courses/${taskCid}/tasks/${t.id}" class="tutorai-xref font-semibold">${escapeHtml(t.title)}</a>` +
+        `<div class="text-sm text-gray-500 mt-0.5">${t.maxPoints} Punkte · ${t.taskType === 'code' ? '💻 Code-Aufgabe' : '📄 Text-Aufgabe'}</div>` +
+        `</div></div>`;
+    } else {
+      // Student: Karte analog zur Aufgabenübersicht (Punkte, Medaille, Versuche, Deadline)
+      const pct = t.maxPoints > 0 ? t.myPoints / t.maxPoints : 0;
+      let pointColor = 'text-gray-400';
+      if (pct >= 0.8) pointColor = 'text-green-600';
+      else if (pct >= 0.5) pointColor = 'text-yellow-600';
+      else if (t.myPoints > 0) pointColor = 'text-orange-600';
+      let medalBadge = '';
+      if (pct >= 1.0) medalBadge = '<span class="badge-tier badge-platinum">💎</span>';
+      else if (pct >= 0.9) medalBadge = '<span class="badge-tier badge-gold">🥇</span>';
+      else if (pct >= 0.8) medalBadge = '<span class="badge-tier badge-silver">🥈</span>';
+      else if (pct >= 0.7) medalBadge = '<span class="badge-tier badge-bronze">🥉</span>';
+      let deadlineHtml = '';
+      if (t.deadline) {
+        const dl = new Date(t.deadline).toLocaleDateString('de-DE');
+        deadlineHtml = ` · ⏰ Deadline ${dl}`;
+      }
+      const typeBadge = t.taskType === 'code'
+        ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">💻 Code</span>'
+        : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">📄 Text</span>';
+      boxHtml =
+        `<div class="tutorai-taskbox">` +
+        `<span class="tutorai-taskbox-icon" aria-hidden="true">📝</span>` +
+        `<div class="flex-1 min-w-0">` +
+        `<a href="/courses/${taskCid}/tasks/${t.id}" class="tutorai-xref text-base font-semibold">${escapeHtml(t.title)}</a>` +
+        `<div class="text-sm text-gray-500 mt-1">` +
+        `${t.attemptsUsed}${t.maxAttempts != null ? '/' + t.maxAttempts : ''} Versuche${deadlineHtml}&nbsp;${typeBadge}${medalBadge ? '&nbsp;&nbsp;&nbsp;&nbsp;' + medalBadge : ''}` +
+        `</div></div>` +
+        `<div class="text-right flex-shrink-0">` +
+        `<div class="text-lg font-bold ${pointColor}">${t.myPoints}/${t.maxPoints}</div>` +
+        `<div class="text-xs text-gray-400">Punkte</div>` +
+        `</div></div>`;
+    }
+    // $ in der Ersatz-String escapen (String.replace-Backrefs), wie bei Figuren/Latex
+    html = html.replace(`%%TASKREF_${idx}%%`, boxHtml.replace(/\$/g, '$$$$$$$$'));
   });
 
   // 7. Decode escaped dollar signs back to literal $

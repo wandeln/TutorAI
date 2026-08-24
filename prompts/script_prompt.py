@@ -44,6 +44,13 @@ NOCH NICHT IM SKRIPT VERWENDETEN MEDIEN DES KURSES (Titel — Beschreibung | Ein
 - {{ m.title }}{% if m.description %} — {{ m.description }}{% endif %} | ![{{ m.title }}]({{ m.url }})
 {% endfor %}
 {% endif %}
+{% if course_tasks %}
+
+ÜBUNGSAUFGaben DES KURSES (ID — Titel):
+{% for t in course_tasks %}
+- {{ t.id }} — {{ t.title }}
+{% endfor %}
+{% endif %}
 {% if current_title %}
 
 BESTEHENDER TITEL:
@@ -65,6 +72,8 @@ Regeln:
 - Verwende $...$ für Inline-Math und $$...$$ für Display-Math.
 - Medien: Bereits vorhandene /media/-Referenzen im bestehenden Inhalt unbedingt beibehalten. Zusätzlich DARFST du Medien aus der obigen Liste „noch nicht verwendet“ einbinden, wenn sie inhaltlich wirklich zum Kapitel passen (max. 1-2 pro Kapitel) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
 - Ein eingebundenes Medium IMMER auch im Fließtext per @fig:-Label referenzieren (nicht nur einbinden, sondern z.B. „wie in @fig:entropie dargestellt“), damit die Abbildung nummeriert und verlinkt wird.
+- Aufgaben: Du KANNST passende Übungsaufgaben aus der obigen Liste im Kapitel einbinden — z.B. direkt nach der passenden Erklärung oder am Kapitelende (max. 1-2 pro Kapitel). Schreibe dafür @task:{id} als EIGENE ZEILE (dann wird eine Aufgaben-Box mit dem Fortschritt der Studenten gerendert). Verwende NUR IDs aus der obigen Liste — andere IDs erscheinen für Studenten als kaputte Referenz (❓).
+  WICHTIG: @task:{id} ist KEIN Code — als normalen Fließtext schreiben, NIEMALS in Backticks (`...`) oder Code-Blöcke (``` ... ```) setzen, sonst wird die Aufgabenbox NICHT gerendert. Richtig: „Übe das mit @task:5“ — Falsch: „Übe das mit `@task:5`“.
 - Nummerierung & Querverweise (wie in LaTeX):
 {% raw %}
   - Abbildung, auf die du im Text Bezug nehmen möchtest: Snippet um ein Label ergänzen, z.B.
@@ -72,6 +81,8 @@ Regeln:
   - Formel, auf die du Bezug nehmen möchtest: Label direkt nach dem Display-Math, z.B.
     $$H(X) = -\\sum_i p_i \\log_2 p_i$$ {#eq:shannon}  →  wird als „(N)“ neben der Formel gerendert.
   - Bezugnahme im Fließtext: @fig:entropie bzw. @eq:shannon → wird durch die klickbare Referenz („Abb. N“ bzw. „Gl. N“) ersetzt.
+  - @fig:/@eq:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
+    Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“.
 {% endraw %}
   - Beschrifte alle Objekte, auf die du im Text Bezug nimmst, UND wichtige Definitionen, Sätze und Formeln — auch ohne unmittelbare Bezugnahme im Text, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können. Labels klein, snake_case, eindeutig im GESAMTEN Skript (siehe die „Labels“ bei den anderen Kapiteln — benutze bereits vorhandene Labels nicht neu und erfinde keine Labels, die dort bereits vergeben sind).
   - Querverweise auf Abbildungen/Gleichungen in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie).

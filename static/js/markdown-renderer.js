@@ -17,6 +17,8 @@
  *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
  * Aufgaben-Box:       @task:{id}                  → Aufgaben-Box (Student: Punkte/Medaille analog
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
+ * Hinweis-Boxen:      @box:{typ} … @endbox        → farbig markierte Box (merksatz/hinweis/bemerkung/
+ *                                                            warnung/beispiel; unbekannte Typen = neutrale Box)
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
@@ -69,6 +71,17 @@ function _chapterRef(refMap, sectionId) {
   return refMap.chapters[String(sectionId)] || null;
 }
 
+// ─── Hinweis-/Merksatz-Boxen: @box:{typ} … @endbox ─────────────────────────
+// Bekannte Typen mit Icon & Überschrift. Unbekannte Typen werden als neutrale
+// Box mit dem rohen Typen als Titel gerendert (Inhalt geht nicht verloren).
+const CALLOUT_TYPES = {
+  merksatz: { icon: '📌', title: 'Merksatz' },
+  hinweis: { icon: '💡', title: 'Hinweis' },
+  bemerkung: { icon: 'ℹ️', title: 'Nebenbemerkung' },
+  warnung: { icon: '⚠️', title: 'Warnung' },
+  beispiel: { icon: '📎', title: 'Beispiel' },
+};
+
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
     targetElement.innerHTML = '';
@@ -107,7 +120,28 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%IC${inlineCodeSpans.length - 1}%%`;
   });
 
-  // 1d. Extract labeled figures: ![caption](src){#fig:label}
+  // 1d. Convert callout boxes: @box:{typ} … @endbox
+  //     → statischer HTML-Wrapper (marked lässt HTML-Blöcke unverändert
+  //     durch, DOMPurify behält die divs). Der INHALT bleibt im Fließtext →
+  //     $...$/{#fig:…}/@fig:/@task:… darin werden wie gewohnt extrahiert.
+  //     Code-Blöcke sind zu diesem Zeitpunkt bereits extrahiert →
+  //     in Code bleibt @box:… literal.
+  processed = processed.replace(
+    /@box:([\p{L}0-9_-]+)\r?\n([\s\S]*?)\r?\n@endbox/gu,
+    (match, type, content) => {
+      const info = CALLOUT_TYPES[type] || { icon: '📄', title: type.charAt(0).toUpperCase() + type.slice(1) };
+      const body = content.trim();
+      return (
+        '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '">\n' +
+        '<div class="tutorai-callbox-head">' +
+        '<span class="tutorai-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
+        escapeHtml(info.title) + '</div>\n' +
+        '<div class="tutorai-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n'
+      );
+    }
+  );
+
+  // 1e. Extract labeled figures: ![caption](src){#fig:label}
   //     → nummerierte Abbildung ("Abb. N") mit Anker, latex-artig verlinkbar.
   //     Bilder ohne {#fig:…} bleiben unverändert (abwärtskompatibel).
   //     Nummerierung: global (kursweit) via refmap; neue (noch ungespeicherte)
@@ -137,11 +171,11 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
   );
 
-  // 1e. Handle escaped dollar signs: \$ → placeholder
+  // 1f. Handle escaped dollar signs: \$ → placeholder
   const escapedDollar = '%%ED%%';
   processed = processed.replace(/\\\$/g, escapedDollar);
 
-  // 1f. Extract $$...$$ display blocks (optional trailing {#eq:label}
+  // 1g. Extract $$...$$ display blocks (optional trailing {#eq:label}
   //     → nummerierte Gleichung "(N)" mit Anker, latex-artig verlinkbar)
   const latexBlocks = [];
   const latexLabels = [];
@@ -166,21 +200,21 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
   );
 
-  // 1g. Extract $...$ inline math (no newlines allowed)
+  // 1h. Extract $...$ inline math (no newlines allowed)
   const latexInlines = [];
   processed = processed.replace(/\$([^$\n]+?)\$/g, (match, latex) => {
     latexInlines.push(latex.trim());
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
   });
 
-  // 1h. Extract cross-references: @fig:label / @eq:label
+  // 1i. Extract cross-references: @fig:label / @eq:label
   const xrefs = [];
   processed = processed.replace(/@(fig|eq):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
 
-  // 1i. Extract task references: @task:{id}
+  // 1j. Extract task references: @task:{id}
   //     → Aufgaben-Box (Daten via refmap.tasks; Code-Blöcke sind zu
   //     diesem Zeitpunkt bereits extrahiert → in Code bleibt es literal).
   const taskRefs = [];

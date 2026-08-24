@@ -74,6 +74,12 @@ Regeln:
 - Ein eingebundenes Medium IMMER auch im Fließtext per @fig:-Label referenzieren (nicht nur einbinden, sondern z.B. „wie in @fig:entropie dargestellt“), damit die Abbildung nummeriert und verlinkt wird.
 - Aufgaben: Du KANNST passende Übungsaufgaben aus der obigen Liste im Kapitel einbinden — z.B. direkt nach der passenden Erklärung oder am Kapitelende (max. 1-2 pro Kapitel). Schreibe dafür @task:{id} als EIGENE ZEILE (dann wird eine Aufgaben-Box mit dem Fortschritt der Studenten gerendert). Verwende NUR IDs aus der obigen Liste — andere IDs erscheinen für Studenten als kaputte Referenz (❓).
   WICHTIG: @task:{id} ist KEIN Code — als normalen Fließtext schreiben, NIEMALS in Backticks (`...`) oder Code-Blöcke (``` ... ```) setzen, sonst wird die Aufgabenbox NICHT gerendert. Richtig: „Übe das mit @task:5“ — Falsch: „Übe das mit `@task:5`“.
+- Hinweis-Boxen: Hervorhebe besondere Absätze als farbig markierte Boxen (z.B. zentrale Merksätze, typische Fehler, Nebenbemerkungen, kurze Beispiele). Syntax — Marker JEWEILS auf EIGENER Zeile, Inhalt dazwischen (Markdown, $...$ und @fig:/@eq:-Referenzen im Inhalt erlaubt):
+  @box:merksatz
+  ...Inhalt der Box...
+  @endbox
+  Verfügbare Typen: merksatz, hinweis, bemerkung, warnung, beispiel. Setze Boxen SPARSAM ein (max. 2-3 pro Kapitel) — nur für wirklich besonders hervorzuhebende Stellen, nicht für normalen Fließtext.
+  WICHTIG: Die Marker @box:… und @endbox sind KEIN Code — NIEMALS in Backticks oder Code-Blöcke setzen, sonst wird die Box NICHT gerendert.
 - Nummerierung & Querverweise (wie in LaTeX):
 {% raw %}
   - Abbildung, auf die du im Text Bezug nehmen möchtest: Snippet um ein Label ergänzen, z.B.

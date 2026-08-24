@@ -334,6 +334,46 @@
   flex-shrink: 0;
 }
 
+/* Hinweis-/Merksatz-Boxen: @box:{typ} … @endbox (Renderer: markdown-renderer.js) */
+.tutorai-callbox {
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid #94a3b8;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+  margin: 1.25rem 0;
+}
+
+.tutorai-callbox-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem 0.25rem;
+  font-weight: 600;
+}
+
+.tutorai-callbox-icon {
+  font-size: 1.1rem;
+}
+
+.tutorai-callbox-body {
+  padding: 0 1.25rem 0.5rem;
+}
+
+.tutorai-callbox-body > :first-child { margin-top: 0.25rem; }
+.tutorai-callbox-body > :last-child { margin-bottom: 0.25rem; }
+
+/* Typ-Farben: linker Balken, Hintergrund & Kopf-Zeichenfarbe */
+.tutorai-callbox-merksatz { border-left-color: #3b82f6; background: #eff6ff; }
+.tutorai-callbox-merksatz .tutorai-callbox-head { color: #1d4ed8; }
+.tutorai-callbox-hinweis { border-left-color: #f59e0b; background: #fffbeb; }
+.tutorai-callbox-hinweis .tutorai-callbox-head { color: #b45309; }
+.tutorai-callbox-bemerkung { border-left-color: #94a3b8; background: #f8fafc; }
+.tutorai-callbox-bemerkung .tutorai-callbox-head { color: #475569; }
+.tutorai-callbox-warnung { border-left-color: #ef4444; background: #fef2f2; }
+.tutorai-callbox-warnung .tutorai-callbox-head { color: #b91c1c; }
+.tutorai-callbox-beispiel { border-left-color: #22c55e; background: #f0fdf4; }
+.tutorai-callbox-beispiel .tutorai-callbox-head { color: #15803d; }
+
 /* Medaillen-Badges — gemeinsame Basis für alle Seiten (tasks_student.html,
    dashboard.html & task_solve.html definieren teils eigene Varianten darüber) */
 .badge-tier { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:9999px; font-size:0.75rem; font-weight:700; text-transform:uppercase; white-space:nowrap; margin-right:6px; }

@@ -233,6 +233,23 @@ def reference_counts(session: Session, course_id: int) -> dict[str, RefInfo]:
     return result
 
 
+def all_media_for_course(session: Session, course_id: int) -> list[dict]:
+    """Alle Medien des Kurses für LLM-Prompts (z.B. Aufgabenstellung).
+
+    Returns: [{"title", "description", "url"}]
+    """
+    return [
+        {
+            "title": m.title,
+            "description": (m.llm_description or "").strip(),
+            "url": media_url(m),
+        }
+        for m in session.exec(
+            select(CourseMedia).where(CourseMedia.course_id == course_id)
+        ).all()
+    ]
+
+
 def unused_media_for_script(session: Session, course_id: int) -> list[dict]:
     """Sichtbare Medien, die in keinem Skript-Kapitel referenziert sind.
 

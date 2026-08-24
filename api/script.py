@@ -9,6 +9,7 @@ Regeln (analog zu den Übungsaufgaben):
 - Nach jeder Content-Änderung: sync_media_usages() (Medien-Einbindung).
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -25,6 +26,24 @@ from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Skript"])
 llm_service = LLMService()
+
+# Regexen identisch zu static/js/markdown-renderer.js:
+# Labels werden nur außerhalb von Code-Blöcken gezählt (fenced + inline
+# Code werden vorher entfernt). [\w-] ≈ JS [\p{L}0-9_-] (Unicode-Buchstaben,
+# Ziffern, Unterstrich, Bindestrich).
+_CODE_FENCED_RE = re.compile(r"```[\s\S]*?```")
+_CODE_INLINE_RE = re.compile(r"`[^`]+`")
+_FIG_LABEL_RE = re.compile(r"!\[[^\]]*\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
+_EQ_LABEL_RE = re.compile(r"\$\$[\s\S]*?\$\$\s*\{#eq:([\w-]+)\}")
+
+
+def _scan_labels(content: str) -> tuple[list[str], list[str]]:
+    """{#fig:…}/{#eq:…}-Labels aus Markdown in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
+    text = _CODE_FENCED_RE.sub("", content or "")
+    text = _CODE_INLINE_RE.sub("", text)
+    figs = _FIG_LABEL_RE.findall(text)
+    eqs = _EQ_LABEL_RE.findall(text)
+    return figs, eqs
 
 
 def _section_to_dict(s: ScriptSection, include_content: bool = False, include_summary: bool = False) -> dict:
@@ -133,6 +152,65 @@ async def get_section(
         raise HTTPException(404, "Kapitel nicht gefunden oder noch nicht freigeschaltet.")
 
     return _section_to_dict(section, include_content=True, include_summary=is_tutor)
+
+
+@router.get("/courses/{course_id}/script-refmap")
+async def script_refmap(
+    course_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Live-berechnete Nummerierungs-Map für Querverweise (ohne DB-Speicherung).
+
+    Die Nummerierung ist ein abgeleiteter Wert (wie LaTeX zur Kompilierzeit):
+    Jedes beschriftete Objekt erhält eine durchlaufende Nummer über das
+    gesamte Skript. Studenten sehen nur freigeschaltete Kapitel → saubere
+    „veröffentlichte“ Nummerierung.
+
+    Payload:
+        mode:     "reading" (Student → Skript-Seite) bzw. "edit" (PROF/TUTOR/Admin → Kapitel-Editseite)
+        courseId: Kurs-ID
+        chapters: {id: {title, maxFig, maxEq}}  # Preview-Fallback (neue, ungespeicherte Labels)
+        labels:   {label: {kind, sectionId, num}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt
+    """
+    _check_member(user, session, course_id)
+    is_tutor = user.role == GlobalUserRole.ADMIN or (
+        (m := _get_membership(session, user, course_id))
+        is not None
+        and m.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
+    )
+
+    q = select(ScriptSection).where(ScriptSection.course_id == course_id)
+    if not is_tutor:
+        q = q.where(ScriptSection.is_visible == True)  # noqa: E712
+    sections = session.exec(q.order_by(ScriptSection.display_order.asc())).all()  # type: ignore[attr-defined]
+
+    chapters: dict[str, dict[str, str | int]] = {}
+    labels: dict[str, dict[str, str | int]] = {}
+    fig_running = 0
+    eq_running = 0
+    for s in sections:
+        figs, eqs = _scan_labels(s.content)
+        max_fig = 0
+        max_eq = 0
+        for label in figs:
+            fig_running += 1
+            if label not in labels:
+                labels[label] = {"kind": "fig", "sectionId": s.id, "num": fig_running}
+            max_fig = max(max_fig, fig_running)
+        for label in eqs:
+            eq_running += 1
+            if label not in labels:
+                labels[label] = {"kind": "eq", "sectionId": s.id, "num": eq_running}
+            max_eq = max(max_eq, eq_running)
+        chapters[str(s.id)] = {"title": s.title, "maxFig": max_fig, "maxEq": max_eq}
+
+    return {
+        "mode": "edit" if is_tutor else "reading",
+        "courseId": course_id,
+        "chapters": chapters,
+        "labels": labels,
+    }
 
 
 # ─── Schreiben (PROF/TUTOR) ───────────────────────────────────────
@@ -309,18 +387,27 @@ async def ai_generate_section(
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
 
-    # Andere Kapitel (Titel + interne Zusammenfassung) — für Notations-Konsistenz.
-    # Das aktuell bearbeitete Kapitel wird ausgeschlossen.
+    # Andere Kapitel (Titel + interne Zusammenfassung + vorhandene Labels) —
+    # für Notations- und Label-Konsistenz. Das aktuell bearbeitete
+    # Kapitel wird ausgeschlossen.
     section_id = body.get("section_id")
-    other_chapters = [
-        {"title": s.title, "summary": (s.summary or "").strip()}
-        for s in session.exec(
-            select(ScriptSection)
-            .where(ScriptSection.course_id == course_id)
-            .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
-        ).all()
-        if s.id != section_id
-    ][:20]
+    other_chapters = []
+    for s in session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
+    ).all():
+        if s.id == section_id:
+            continue
+        figs, eqs = _scan_labels(s.content)
+        other_chapters.append(
+            {
+                "title": s.title,
+                "summary": (s.summary or "").strip(),
+                "labels": [f"fig:{l}" for l in figs] + [f"eq:{l}" for l in eqs],
+            }
+        )
+    other_chapters = other_chapters[:20]
 
     # Noch nicht im Skript verwendete (sichtbare) Medien — ggf. einbindbar.
     unused_media = media_service.unused_media_for_script(session, course_id)[:15]

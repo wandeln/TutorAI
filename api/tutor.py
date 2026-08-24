@@ -21,6 +21,7 @@ from database.models import (
     FeedbackSource,
     GlobalUserRole,
     HintExchange,
+    ScriptSection,
     Submission,
     SubmissionStatus,
     Task,
@@ -32,7 +33,7 @@ from services.auth_service import get_current_user, require_course_access
 from services.export_service import ExportService
 from services.grading_service import GradingService
 from services.llm_service import LLMService
-from services.media_service import sync_media_usages
+from services.media_service import all_media_for_course, sync_media_usages
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Tutor"])
@@ -679,6 +680,19 @@ async def ai_generate_task(
     internal_solution_text = ""
 
     if step1_fields:
+        # Kontext für konsistente Notation & Querverweise: Skript-Kapitel
+        # (nur mit Zusammenfassung, da Labels dort drinstecken) + alle Medien.
+        script_chapters = [
+            {"title": s.title, "summary": (s.summary or "").strip()}
+            for s in session.exec(
+                select(ScriptSection)
+                .where(ScriptSection.course_id == course_id)
+                .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
+            ).all()
+            if (s.summary or "").strip()
+        ][:20]
+        course_media = all_media_for_course(session, course_id)
+
         result = await llm_service.generate_task_fields(
             topic=body.get("topic", ""),
             difficulty=body.get("difficulty", "mittel"),
@@ -689,6 +703,8 @@ async def ai_generate_task(
             current_description=current_description,
             current_model_solution=current_solution,
             code_template=current_template,
+            script_chapters=script_chapters,
+            course_media=course_media,
             config=llm_cfg,
         )
 

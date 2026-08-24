@@ -315,9 +315,16 @@
   color: #dc2626;
 }
 
-/* ═══════════════════════════════════════════════════════════════
+/* Scroll-Offset für Kapitel-Deep-Links (#chapter-…), damit Kapitel nicht
+   unter der sticky Nav-Bar verschwinden (Tutor-Zeile + Student-Karte) */
+#section-list > div,
+.script-chapter-card {
+  scroll-margin-top: 100px;
+}
+
+/* ════════════════════════════════════════════════════════════
    KaTeX
-   ═══════════════════════════════════════════════════════════════ */
+   ════════════════════════════════════════════════════════════ */
 
 .markdown-preview .katex {
   font-size: 1em !important;

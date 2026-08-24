@@ -222,6 +222,10 @@
 
 {% block extra_scripts %}
 <script>
+  // Global für den Markdown-Renderer (kursweite Querverweise ins Skript).
+  // MUSS vor der ersten createMarkdownEditor()-Aufruf stehen (startInPreview rendert sofort).
+  const courseId = {{ course.id }};
+
   // ─── CodeMirror Editors ─────────────────────────────────────
   const codeMirrorConfig = {
     mode: { name: "python", version: 3 },
@@ -480,7 +484,6 @@ class PrivateTest(unittest.TestCase):
 
   // ─── Task speichern ─────────────────────────────────────────
   const isUpdate = {{ "true" if task and task.id else "false" }};
-  const courseId = {{ course.id }};
 
   // Speichert die Aufgabe (POST/PUT). Gibt die Task-ID zurueck, null bei Fehler.
   async function saveTask() {

@@ -13,7 +13,8 @@
  * Escaped dollar: \$                              → literal $ (no LaTeX)
  * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
- * Querverweise:       @fig:label / @eq:label      → klickbares "Abb. N" bzw. "Gl. N" (❓ wenn unbekannt)
+ * Querverweise:       @fig:label / @eq:label      → klickbares "Abb. N" bzw. "Gl. N"
+ *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
@@ -32,13 +33,52 @@ if (typeof mermaid !== 'undefined') {
   });
 }
 
+// ─── Kapitel-übergreifende Referenz-Map ─────────────────────────────────────
+// GET /api/courses/{courseId}/script-refmap: live-berechnete globale
+// Nummerierung aller fig:/eq:-Labels des Skripts (ohne DB). Wird einmal
+// pro Seite geholt und gecacht. Das globale `courseId` wird auf Kurs-Seiten
+// definiert (course/base.html bzw. direkt in task_detail/task_solve/
+// script_section_edit); fehlt es → null.
+let _refMapPromise = null;
+function _getCourseId() {
+  try {
+    const cid = (typeof courseId !== 'undefined') ? courseId : null;
+    return (cid === null || cid === undefined) ? null : cid;
+  } catch (e) {
+    return null; // TDZ: courseId wird auf der Seite deklariert, aber noch nicht initialisiert
+  }
+}
+
+function getCourseRefMap() {
+  const cid = _getCourseId();
+  if (cid === null) {
+    return Promise.resolve(null); // bewusst ohne Caching → nächster Render versucht es erneut
+  }
+  if (!_refMapPromise) {
+    _refMapPromise = fetch(`/api/courses/${cid}/script-refmap`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+  }
+  return _refMapPromise;
+}
+
+function _chapterRef(refMap, sectionId) {
+  if (!refMap || !refMap.chapters || sectionId === null || sectionId === undefined) return null;
+  return refMap.chapters[String(sectionId)] || null;
+}
+
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
     targetElement.innerHTML = '';
     return;
   }
 
-  const { preview = false } = options;
+  const { preview = false, sectionId = null } = options;
+
+  // Globale Label-Map für Querverweise (gecacht; null auf Nicht-Kurs-Seiten).
+  const refMap = await getCourseRefMap();
+  const globalLabels = (refMap && refMap.labels) || {};
+  const chapterRef = _chapterRef(refMap, sectionId);
 
   // ── Pre-extraction phase ──────────────────────────────────────────
   // Order matters: extract code blocks FIRST so LaTeX extraction never
@@ -68,14 +108,29 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // 1d. Extract labeled figures: ![caption](src){#fig:label}
   //     → nummerierte Abbildung ("Abb. N") mit Anker, latex-artig verlinkbar.
   //     Bilder ohne {#fig:…} bleiben unverändert (abwärtskompatibel).
+  //     Nummerierung: global (kursweit) via refmap; neue (noch ungespeicherte)
+  //     Labels bekommen Fallback-Nummern nach der letzten bekannten des Kapitels.
   const figures = [];
   const figLabelNumbers = {};
+  const figFallbackBase = chapterRef ? (chapterRef.maxFig || 0) : 0;
+  let figFallbackCount = 0;
   processed = processed.replace(
     /!\[([^\]]*)\]\(([^)\s]+)\)\s*\{#fig:([\p{L}0-9_-]+)\}/gu,
     (match, alt, src, label) => {
-      const num = figures.length + 1;
-      if (!(label in figLabelNumbers)) figLabelNumbers[label] = num;
-      figures.push({ alt, src, label, num: figLabelNumbers[label] });
+      let num;
+      if (label in figLabelNumbers) {
+        num = figLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
+      } else {
+        const g = globalLabels[label];
+        if (g && g.kind === 'fig') {
+          num = g.num; // gespeichertes Label → exakte globale Nummer
+        } else {
+          figFallbackCount += 1;
+          num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
+        }
+        figLabelNumbers[label] = num;
+      }
+      figures.push({ alt, src, label, num });
       return `%%FIG_${figures.length - 1}%%`;
     }
   );
@@ -89,14 +144,20 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const latexBlocks = [];
   const latexLabels = [];
   const eqLabelNumbers = {};
-  let eqCount = 0;
+  const eqFallbackBase = chapterRef ? (chapterRef.maxEq || 0) : 0;
+  let eqFallbackCount = 0;
   processed = processed.replace(
     /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?/gu,
     (match, latex, label) => {
       latexBlocks.push(latex.trim());
-      if (label) {
-        eqCount += 1;
-        if (!(label in eqLabelNumbers)) eqLabelNumbers[label] = eqCount;
+      if (label && !(label in eqLabelNumbers)) {
+        const g = globalLabels[label];
+        if (g && g.kind === 'eq') {
+          eqLabelNumbers[label] = g.num; // gespeichertes Label → exakte globale Nummer
+        } else {
+          eqFallbackCount += 1;
+          eqLabelNumbers[label] = eqFallbackBase + eqFallbackCount; // neues (ungespeichertes) Label
+        }
       }
       latexLabels.push(label || null);
       return `%%LATEX_BLOCK_${latexBlocks.length - 1}%%`;
@@ -179,12 +240,23 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 6b. Restore cross-references (@fig:label / @eq:label)
+  //     Auflösung: 1) in diesem Dokument → In-Page-Anker,
+  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label):
+  //                  Student → Skript-Seite, PROF/TUTOR/Admin → Kapitel-Editseite (via "mode"),
+  //               3) unbekannt → ❓
   xrefs.forEach((x, idx) => {
+    const text = x.kind === 'fig' ? 'Abb.' : 'Gl.';
+    const local = x.kind === 'fig' ? figLabelNumbers[x.label] : eqLabelNumbers[x.label];
+    const g = globalLabels[x.label];
     let refHtml;
-    if (x.kind === 'fig' && figLabelNumbers[x.label]) {
-      refHtml = `<a href="#fig:${x.label}" class="tutorai-xref">Abb. ${figLabelNumbers[x.label]}</a>`;
-    } else if (x.kind === 'eq' && eqLabelNumbers[x.label]) {
-      refHtml = `<a href="#eq:${x.label}" class="tutorai-xref">Gl. ${eqLabelNumbers[x.label]}</a>`;
+    if (local) {
+      refHtml = `<a href="#${x.kind}:${x.label}" class="tutorai-xref">${text} ${local}</a>`;
+    } else if (g && g.kind === x.kind) {
+      const cid = (refMap && refMap.courseId) || '';
+      const base = refMap && refMap.mode === 'edit'
+        ? `/courses/${cid}/script/${g.sectionId}`
+        : `/courses/${cid}/script`;
+      refHtml = `<a href="${base}#${x.kind}:${x.label}" class="tutorai-xref">${text} ${g.num}</a>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehörige Abbildung/Gleichung fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
@@ -397,6 +469,9 @@ function createMarkdownEditor(containerId, options = {}) {
 
   let isPreview = false;
 
+  // Markdown-Optionen für Preview + Auto-Update (sectionId → globale Nummerierung)
+  const mdRenderOptions = { preview: true, sectionId: options.sectionId || null };
+
   toggleBtn.addEventListener('click', () => {
     isPreview = !isPreview;
     if (isPreview) {
@@ -404,7 +479,7 @@ function createMarkdownEditor(containerId, options = {}) {
       previewDiv.classList.remove('hidden');
       toggleBtn.innerHTML = '<span>✏️</span> <span>Edit</span>';
       toggleBtn.classList.add('bg-blue-50', 'border-blue-300', 'text-blue-700');
-      renderMarkdown(textarea.value, previewDiv, { preview: true }).catch(() => {});
+      renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
     } else {
       previewDiv.classList.add('hidden');
       textarea.classList.remove('hidden');
@@ -418,7 +493,7 @@ function createMarkdownEditor(containerId, options = {}) {
     if (isPreview) {
       clearTimeout(updateTimeout);
       updateTimeout = setTimeout(() => {
-        renderMarkdown(textarea.value, previewDiv, { preview: true }).catch(() => {});
+        renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
       }, 300);
     }
     if (options.onValueChange) {

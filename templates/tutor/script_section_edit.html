@@ -145,6 +145,10 @@
 
 {% block extra_scripts %}
 <script>
+  // Global für den Markdown-Renderer (kursweite Querverweise ins Skript).
+  // MUSS vor der ersten createMarkdownEditor()-Aufruf stehen (startInPreview rendert sofort).
+  const courseId = {{ course.id }};
+
 (function() {
   const sectionId = {{ section.id if section else "null" }};
 
@@ -153,6 +157,7 @@
     buttonAnchor: 'content-preview-anchor',
     textareaId: 'content-textarea',
     startInPreview: true,
+    sectionId,  // globale (kursweite) Nummerierung von Abb./Gl.-Labels
   });
 
   // Zusammenfassung: eigener Preview-Button (Markdown + LaTeX)
@@ -161,6 +166,23 @@
     textareaId: 'section-summary',
     startInPreview: true,
   });
+
+  // ─── Deep-Link: #fig:label / #eq:label → in der Preview zum Objekt scrollen ───
+  (function scrollToHashAnchor() {
+    const m = location.hash.match(/^#(fig|eq):(.+)$/);
+    if (!m) return;
+    const targetId = m[1] + ':' + decodeURIComponent(m[2]);
+    const deadline = Date.now() + 15000;
+    const timer = setInterval(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        clearInterval(timer);
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (Date.now() > deadline) {
+        clearInterval(timer);
+      }
+    }, 100);
+  })();
 
   // ─── LLM-Generierung ──────────────────────────────────────────
   let aiTimer = null;
@@ -221,7 +243,7 @@
       if (generateFields.content && data.content) {
         contentEditor.textarea.value = data.content;
         (async () => {
-          await renderMarkdown(data.content, contentEditor.previewDiv, { preview: true });
+          await renderMarkdown(data.content, contentEditor.previewDiv, { preview: true, sectionId });
           if (!contentEditor.isPreview()) contentEditor.toggleBtn.click();
         })();
       }

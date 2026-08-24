@@ -116,6 +116,20 @@
     return text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
   }
 
+  // ─── Deep-Link: #chapter-{id} → zur Kapitel-Zeile scrollen + kurz hervorheben ───
+  function handleChapterHash() {
+    const m = location.hash.match(/^#chapter-(\d+)$/);
+    if (!m) return;
+    const row = document.getElementById('section-row-' + m[1]);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    row.style.outline = '2px solid #60a5fa';
+    row.style.outlineOffset = '2px';
+    setTimeout(() => { row.style.outline = ''; row.style.outlineOffset = ''; }, 2500);
+  }
+  window.addEventListener('hashchange', handleChapterHash);
+  handleChapterHash();
+
   // ─── Drag-and-Drop Reihenfolge ────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
     const sectionList = document.getElementById('section-list');
@@ -251,7 +265,8 @@
       const svgNS = "http://www.w3.org/2000/svg";
       for (const s of sections) {
         const card = document.createElement("div");
-        card.className = "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden";
+        card.className = "script-chapter-card bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden";
+        card.setAttribute("data-section-id", s.id);
 
         const header = document.createElement("button");
         header.type = "button";
@@ -275,7 +290,7 @@
         header.appendChild(chevron);
 
         const body = document.createElement("div");
-        body.className = "hidden px-6 pt-4 pb-6 border-t border-gray-100";
+        body.className = "script-chapter-body hidden px-6 pt-4 pb-6 border-t border-gray-100";
         const md = document.createElement("div");
         md.className = "markdown-preview";
         md.textContent = "Wird geladen…";
@@ -290,7 +305,7 @@
               const r = await fetch(`/api/script-sections/${s.id}`, { credentials: "same-origin" });
               if (!r.ok) throw new Error("Nicht geladen");
               const data = await r.json();
-              await renderMarkdown(data.content || "", md);
+              await renderMarkdown(data.content || "", md, { sectionId: s.id });
               loaded = true;
             } catch (e) {
               md.textContent = "Fehler beim Laden des Kapitels.";
@@ -302,10 +317,58 @@
         card.appendChild(body);
         container.appendChild(card);
       }
+
+      handleChapterHash();
+      handleObjectHash();
     } catch (e) {
       container.innerHTML = '<p class="text-red-500 text-sm">Fehler beim Laden des Skripts.</p>';
     }
   }
+
+  // ─── Deep-Link: #chapter-{id} → Kapitel aufklappen und dazu scrollen ───
+  function handleChapterHash() {
+    const m = location.hash.match(/^#chapter-(\d+)$/);
+    if (!m) return;
+    const card = document.querySelector(`#script-reading [data-section-id="${m[1]}"]`);
+    if (!card) return;
+    const body = card.querySelector('.script-chapter-body');
+    const header = card.querySelector('button');
+    if (body && header && body.classList.contains('hidden')) header.click();
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ─── Deep-Link: #fig:label / #eq:label → Kapitel aufklappen, zum Objekt scrollen ───
+  async function handleObjectHash() {
+    const m = location.hash.match(/^#(fig|eq):(.+)$/);
+    if (!m) return;
+    const kind = m[1];
+    const label = decodeURIComponent(m[2]);
+    const refMap = await getCourseRefMap();
+    const entry = refMap && refMap.labels ? refMap.labels[label] : null;
+    if (!entry || entry.kind !== kind) return;
+    const card = document.querySelector(`#script-reading [data-section-id="${entry.sectionId}"]`);
+    if (!card) return;
+    const body = card.querySelector('.script-chapter-body');
+    const header = card.querySelector('button');
+    if (body && header && body.classList.contains('hidden')) header.click();
+    // Auf Content-Rendering warten, dann zum Objekt scrollen
+    const targetId = kind + ':' + label;
+    const deadline = Date.now() + 15000;
+    const timer = setInterval(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        clearInterval(timer);
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (Date.now() > deadline) {
+        clearInterval(timer);
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
+  }
+  window.addEventListener('hashchange', () => {
+    handleChapterHash();
+    handleObjectHash();
+  });
 
   loadScript();
 

@@ -27,6 +27,21 @@ Mögliche Schlüssel und deren Bedeutung:
 Keine weiteren Schlüssel, keine zusätzlichen Texte, keine Code-Blöcke (```json ... ```).
 Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen können mit Backslash \\$ escaped werden.
 
+{% if script_chapters %}
+
+SKRIPT-KAPITEL DES KURSES (mit ihren internen Zusammenfassungen):
+{% for ch in script_chapters %}
+- {{ ch.title }}{% if ch.summary %} — {{ ch.summary }}{% endif %}
+{% endfor %}
+Halte die Notation, Schreibweisen und Begriffswahl konsistent mit dem Skript (z.B. gleiche Symbole für gleiche Größen), wo dies sinnvoll ist.
+{% endif %}
+{% if course_media %}
+
+MEDIEN DES KURSES (Titel — Beschreibung | Einbindung-Snippet):
+{% for m in course_media %}
+- {{ m.title }}{% if m.description %} — {{ m.description }}{% endif %} | ![{{ m.title }}]({{ m.url }})
+{% endfor %}
+{% endif %}
 {% if current_title %}
 BESTEHENDER TITEL:
 {{ current_title }}
@@ -53,6 +68,8 @@ Regeln:
 - Bei Text-Aufgaben: Verwende Markdown-Formatierung (**fett**, *kursiv*, Listen, $Math$, $$Display-Math$$) für bessere Lesbarkeit.
 - Bei Code-Aufgaben: Beschreibe in der Aufgabenstellung was implementiert werden soll. Verwende $...$ für mathematische Notation.
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
+- Medien: Du DARFST Medien aus der obigen Medien-Liste in die Aufgabenstellung einbinden, wenn sie inhaltlich wirklich passen (max. 1-2) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
+- Querverweise: Bezug auf Abbildungen/Gleichungen aus dem Skript per @fig:label bzw. @eq:label — verwende NUR Labels, die in den obigen Kapitel-Zusammenfassungen vorkommen (sonst ist die Referenz kaputt). Lege in der Aufgabe selbst KEINE neuen fig/eq-Labels an (Kollisionsgefahr).
 - Musterlösung: knapp und präzise. Bei Code: Nur den funktionalen Code (passend zur Code-Vorlage — gleiche Signaturen/Struktur). Bei Text: Die direkte Antwort/Erläuterung. Falls es mehrere korrekte Lösungen geben kann, gehe kurz darauf ein.
 - Bitte gib in der Musterlösung auch Bewertungskriterien an um eine faire Bewertung zu ermöglichen. Es können maximal {{ max_points }} Punkte erzielt werden.
 - Die Bewertungskriterien sollten (abgesehen von standard good practice) keine Punkte enthalten, die aus der Aufgabenstellung nicht ersichtlich sind.

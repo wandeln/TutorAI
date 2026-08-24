@@ -131,6 +131,8 @@ class LLMService:
         current_description: str = "",
         current_model_solution: str = "",
         code_template: str = "",
+        script_chapters: Optional[list[dict]] = None,
+        course_media: Optional[list[dict]] = None,
         config: Optional[dict] = None,
     ):
         """Generiert/ändert die angeforderten Felder einer Aufgabe via LLM.
@@ -155,6 +157,8 @@ class LLMService:
             current_description=current_description,
             current_model_solution=current_model_solution,
             code_template=code_template,
+            script_chapters=script_chapters or [],
+            course_media=course_media or [],
         )
 
         return await self._call_with_json(

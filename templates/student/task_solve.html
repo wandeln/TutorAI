@@ -593,6 +593,9 @@
 
 {% block extra_scripts %}
 <script>
+  // Global für den Markdown-Renderer (kursweite Querverweise ins Skript).
+  const courseId = {{ course.id }};
+
   // ─── Helper: escape HTML entities ──────────────────────────
   function escapeHtml(text) {
     const div = document.createElement('div');

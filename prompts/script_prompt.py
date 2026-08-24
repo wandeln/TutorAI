@@ -7,7 +7,10 @@ Inhalt, interne Zusammenfassung), die anderen Kapitel des Skripts
 (inkl. ihrer internen Zusammenfassungen UND vorhandenen fig/eq-Labels
 — für Notations- und Label-Konsistenz) und die noch nicht im Skript
 verwendeten Medien des Kurses.
-Es liefert ein JSON-Objekt mit EXAKT den angeforderten Schlüsseln.
+Es liefert ein JSON-Objekt mit einer Untermenge der angeforderten Schlüssel
+(weggelassener Schlüssel = das Feld bleibt unverändert) — für lokale Änderungen
+an vorhandenem Inhalt darf dabei „content_edits“ (Liste stellenweiser
+Edit-Objekte) statt „content“ geliefert werden.
 """
 
 SCRIPT_SECTION_PROMPT_TEMPLATE = """\
@@ -19,13 +22,20 @@ KURS: {{ course_name }}
 THEMA / ANWEISUNG DES TUTORS:
 {{ topic }}
 
-ANZUFORDERNDE FELDER — gib als Antwort ein gültiges JSON-Objekt mit EXAKT diesen Schlüsseln:
+ANZUFORDERNDE FELDER — gib als Antwort ein gültiges JSON-Objekt. Erlaubt sind NUR diese Schlüssel:
 {{ generate_list }}
+Jeder angeforderte Schlüssel ist OPTIONAL: Wenn die Anweisung ein Feld inhaltlich NICHT betrifft und das Feld bereits einen Inhalt hat, lass den Schlüssel einfach WEG — der vorhandene Wert bleibt dann unverändert. Wenn das Feld geändert werden soll, liefere den aktualisierten Wert. Für Felder OHNE vorhandenen Inhalt ist der Schlüssel PFLICHT.
+{% if current_content and '"content"' in generate_list %}
+Außerdem: Bei rein lokalen Änderungen an vorhandenem Inhalt darf der Schlüssel "content" durch "content_edits" ersetzt werden (Format siehe unten, „Stellenweise Bearbeitung“).
+{% endif %}
 
 Mögliche Schlüssel und deren Bedeutung:
 - "title": Kurzer, prägnanter Kapiteltitel (z.B. „Kapitel 3: Rekursion")
 - "content": Vollständiger Markdown-Inhalt des Kapitels
-- "summary": Interne Zusammenfassung des Kapitels in 3-6 Sätzen: zentrale Begriffe, verwendete Notation (Symbole, Schreibweisen), wichtige Definitionen/Sätze. Nimm AUCH alle wichtigen fig/eq-Labels des Kapitels mit auf (z.B. „Hauptformel: eq:shannon; Verteilungsdiagramm: fig:entropie“), damit spätere Kapitel und Übungsaufgaben darauf referenzieren können! Sie dient NUR der internen Konsistenz zwischen den Kapiteln und wird den Studenten NICHT angezeigt.
+{% if current_content and '"content"' in generate_list %}
+- "content_edits": NUR als Alternative zu "content" (nie beide zusammen in einer Antwort), wenn die Anweisung nur lokale Änderungen am vorhandenen Inhalt verlangt — eine Liste stellenweiser Edit-Objekte (Format siehe unten, „Stellenweise Bearbeitung“)
+{% endif %}
+- "summary": Interne Zusammenfassung des Kapitels in 3-6 Sätzen: zentrale Begriffe, verwendete Notation (Symbole, Schreibweisen), wichtige Definitionen/Sätze. Nimm AUCH alle wichtigen fig/eq-Labels des Kapitels mit auf — schreibe sie als Referenz mit @-Präfix, so wie im Fließtext (z.B. „Hauptformel: @eq:shannon; Verteilungsdiagramm: @fig:entropie“), damit spätere Kapitel und Übungsaufgaben darauf referenzieren können! Sie dient NUR der internen Konsistenz zwischen den Kapiteln und wird den Studenten NICHT angezeigt.
 
 Keine weiteren Schlüssel, keine zusätzlichen Texte, keine Code-Blöcke (```json ... ```).
 Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen, können mit Backslash \\$ escaped werden.
@@ -61,12 +71,36 @@ BESTEHENDER TITEL:
 BESTEHENDER INHALT:
 {{ current_content }}
 {% endif %}
+{% if current_content and '"content"' in generate_list %}
+
+STELLENWEISE BEARBEITUNG ("content_edits") — für lokale Änderungen am bestehenden Inhalt:
+Wenn die Anweisung nur LOKALE Änderungen am bestehenden Inhalt verlangt (z.B. ein Beispiel ergänzen, eine Formel oder einen Satz korrigieren, einen Abschnitt umformulieren, einen Abschnitt löschen), gib STATT "content" den Schlüssel "content_edits" mit einer LISTE von Edit-Objekten zurück. Der restliche Inhalt bleibt dabei unverändert — dadurch kann an anderen Stellen nichts versehentlich geändert oder verloren gehen.
+Verwende weiterhin "content" (Volltext) für: Kapitel ohne bestehenden Inhalt und für globale Überarbeitungen (z.B. Neugestaltung, Umstrukturierung, „kürzer fassen“).
+In der Antwort darf genau EINER der Schlüssel "content" bzw. "content_edits" vorkommen — nie beide.
+Jedes Edit-Objekt enthält einen Schlüssel "op" mit genau einem dieser Werte:
+- {"op": "replace_section", "heading": "### 3.2 Beispiel", "content": "..."}
+  Ersetzt den Inhalt des Abschnitts (alles ab der Heading-Zeile bis zur nächsten Heading — Unterabschnitte darunter bleiben davon unberührt) durch den neuen "content".
+  "heading" = die EXISTIERENDE Heading-Zeile des Abschnitts, WORTGLEICH (inkl. #-Zeichen, exakt wie im bestehenden Inhalt).
+  "content" = kompletter NEUER Abschnittsinhalt OHNE die Heading-Zeile selbst (die bleibt erhalten).
+- {"op": "insert_after", "heading": "## 3.1 Grundlagen", "content": "..."}
+  Fügt den "content" direkt NACH dem angegebenen Abschnitt ein. Der content darf eigene Headings enthalten (z.B. ein neuer "###"-Abschnitt).
+- {"op": "delete_section", "heading": "### Altes Beispiel"}
+  Löscht den gesamten Abschnitt (Heading + Inhalt).
+- {"op": "replace_span", "old": "...", "new": "..."}
+  Ersetzt ein KURZES (max. 1-2 Zeilen), im bestehenden Inhalt EXAKT EINMAL vorkommendes Snippet WORTGLEICH durch "new". Nur für Änderungen innerhalb eines Absatzes, die keinen ganzen Abschnitt betreffen. "old" muss exakt so im bestehenden Inhalt vorkommen (inkl. aller Backslashes, Leerzeichen und Zeilenumbrüche).
+Regeln für "content_edits":
+- Verwende NUR Headings und Snippets, die im bestehenden Inhalt tatsächlich vorhanden sind — erfinde keine.
+- Jedes "heading" bzw. "old" muss im Inhalt EXAKT EINMAL vorkommen (eindeutig); die Edits dürfen sich nicht überschneiden.
+- Bewahre vorhandene fig/eq-Labels und @fig:/@eq:/@task:-Referenzen bei, sofern die Anweisung nichts anderes verlangt.
+- Betrifft die Änderung einen Großteil des Kapitels, nutze STATTDESSEN "content" (Volltext).
+{% endif %}
 
 Regeln:
 - Generiere NUR die oben angeforderten Felder. Nicht angeforderte Schlüssel dürfen in der Antwort NICHT vorkommen.
 - Das Kapitel ist reiner Vorlesungsinhalt: KEINE Übungsaufgaben, keine Aufgabenlisten und keine Aufgabenformulierungen (z.B. „Bestimme …“, „Zeige …“, „Beweise …“) — Übungsaufgaben werden gesondert im Kurs gepflegt und gehören NICHT ins Skript.
-- Falls für ein angefordertes Feld bereits ein Inhalt existiert (s. o.), überarbeite/verbessere ihn gemäß der Anweisung — gestalte das Kapitel nicht grundlos neu, sondern behalte die Struktur bei, soweit die Anweisung nichts anderes vorschreibt.
-- Falls kein Inhalt existiert, erstelle das Kapitel neu passend zum Thema.
+- Falls für ein angefordertes Feld bereits ein Inhalt existiert (s. o.), überarbeite/verbessere ihn gemäß der Anweisung — gestalte das Kapitel nicht grundlos neu, sondern behalte die Struktur bei, soweit die Anweisung nichts anderes vorschreibt.{% if current_content and '"content"' in generate_list %} Bei lokalen Änderungen an vorhandenem Inhalt nutze dafür den Mechanismus „Stellenweise Bearbeitung“ („content_edits“), damit der restliche Inhalt garantiert unverändert bleibt.{% endif %}
+- Falls ein Feld KEINEN Inhalt hat, ist der zugehörige Schlüssel PFLICHT — erstelle den Inhalt neu passend zum Thema.
+- Wird der Inhalt geändert und betrifft die Änderung zentrale Begriffe, Notation, Definitionen/Sätze oder fig/eq-Labels, MUSST du die „summary“ aktualisieren (nicht weglassen) — sie dient der Konsistenz der anderen Kapitel.
 - Der Inhalt ist Markdown für ein Vorlesungsskript: lehrbuchartige, präzise und strukturierte Darstellung (Definitionen, Sätze, Beweisskizzen, Beispiele, Übungshinweise) auf dem Niveau einer Universität.
 - Beginne den Inhalt NICHT mit einer H1-Überschrift (der Kapiteltitel wird separat angezeigt); verwende ## für Abschnitte und ### für Unterabschnitte.
 - Verwende $...$ für Inline-Math und $$...$$ für Display-Math.

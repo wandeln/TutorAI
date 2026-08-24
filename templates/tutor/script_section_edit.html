@@ -24,6 +24,40 @@
       <span class="text-sm text-gray-500">{{ section.title }}</span>
       {% endif %}
     </div>
+
+    {% if prev_section or next_section %}
+    <!-- Kapitel-Navigation -->
+    <div class="flex items-center justify-between mb-4 mt-4" style="max-height:fit-content">
+      {% if prev_section %}
+        <a href="/courses/{{ course.id }}/script/{{ prev_section.id }}"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors mr-2" style="height:stretch">
+          <span class="text-lg">←</span>
+          <div class="flex flex-col items-start">
+            <span class="text-xs text-gray-500">Vorheriges Kapitel</span>
+            <span class="text-sm font-medium">{{ prev_section.title }}</span>
+          </div>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+
+      {% if next_section %}
+        <a href="/courses/{{ course.id }}/script/{{ next_section.id }}"
+           class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-300
+                  text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors ml-auto" style="height:stretch">
+          <div class="flex flex-col items-end text-right">
+            <span class="text-xs text-gray-500">Nächstes Kapitel</span>
+            <span class="text-sm font-medium">{{ next_section.title }}</span>
+          </div>
+          <span class="text-lg">→</span>
+        </a>
+      {% else %}
+        <div></div>
+      {% endif %}
+    </div>
+    {% endif %}
+
     <h1 class="text-2xl font-bold text-gray-900">
       {% if section %}{{ section.title }} — Bearbeiten{% else %}Neues Skript-Kapitel erstellen{% endif %}
     </h1>
@@ -254,7 +288,21 @@
           if (!summaryEditor.isPreview()) summaryEditor.toggleBtn.click();
         })();
       }
-      showToast('LLM-Inhalt generiert — bitte prüfen und speichern.', 'success');
+      // Leere Felder im Response = LLM hat das Feld nicht geändert (bleibt wie zuvor).
+      const changed = [], unchanged = [];
+      if (generateFields.title) (data.title ? changed : unchanged).push('Titel');
+      if (generateFields.content) (data.content ? changed : unchanged).push('Inhalt');
+      if (generateFields.summary) (data.summary ? changed : unchanged).push('Zusammenfassung');
+      let msg = data.edits_applied
+        ? `LLM: ${data.edits_applied} stellenweise Edits angewendet`
+        : 'LLM-Inhalt generiert';
+      if (sectionId !== null && unchanged.length) {
+        msg += ` — ${unchanged.join(' & ')} unverändert gelassen`;
+      }
+      showToast(msg + ' — bitte prüfen und speichern.', 'success');
+      if (Array.isArray(data.warnings) && data.warnings.length) {
+        showToast('⚠️ ' + data.warnings.join(' '), 'warning');
+      }
     } catch (err) {
       showToast(err.message, 'error');
     } finally {

@@ -187,7 +187,12 @@ class LLMService:
         verwendete Medien (ggf. einbindbar).
         course_tasks: [{id, title}] — Übungsaufgaben des Kurses (ggf. per
         @task:{id} im Kapitel einbindbar → Aufgaben-Box für Studenten).
-        Das LLM liefert JSON mit EXAKT den angeforderten Schlüsseln.
+        Das LLM liefert JSON mit einer Untermenge der angeforderten Schlüssel —
+        weggelassene Schlüssel = das Feld bleibt unverändert (leeres Feld im
+        Response, Frontend behält den vorhandenen Wert). Für lokale Änderungen
+        an vorhandenem Inhalt kann es „content_edits“ (Liste von Edit-Objekten)
+        statt „content“ liefern — die Anwendung auf den bestehenden Inhalt
+        erfolgt serverseitig (api.script._apply_content_edits).
 
         Enthält keine sensitive Studentendaten — nutzt daher den Public
         Endpoint, falls konfiguriert.

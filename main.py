@@ -827,6 +827,21 @@ async def script_section_page(
 
     course_role = membership.role_in_course.value if membership else "PROF"
 
+    # Previous and next section in the same course (Tutoren sehen auch versteckte Kapitel)
+    prev_section = session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .where(ScriptSection.display_order < section.display_order)  # type: ignore[operator]
+        .order_by(ScriptSection.display_order.desc())  # type: ignore[attr-defined]
+    ).first()
+
+    next_section = session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .where(ScriptSection.display_order > section.display_order)  # type: ignore[operator]
+        .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
+    ).first()
+
     return templates.TemplateResponse(
         "tutor/script_section_edit.html",
         {
@@ -853,6 +868,8 @@ async def script_section_page(
                 "summary": section.summary or "",
                 "updated_at": section.updated_at.isoformat() if section.updated_at else None,
             },
+            "prev_section": {"id": prev_section.id, "title": prev_section.title} if prev_section else None,
+            "next_section": {"id": next_section.id, "title": next_section.title} if next_section else None,
             "LLM_TIMEOUT": LLM_TIMEOUT,
         },
     )

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 import hashlib
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
@@ -191,6 +191,25 @@ def _asset(path: str) -> str:
 
 
 templates.env.globals["asset"] = _asset
+
+
+@app.middleware("http")
+async def _cors_for_static_fonts(request: Request, call_next):
+    """CORS für statische Fonts (woff2/woff/ttf/otf).
+
+    Sandboxed Applets (opaque Origin „null“) dürfen @font-face-Fonts nur mit
+    Access-Control-Allow-Origin laden — der einzige CORS-geschützte Ressourcen-Typ,
+    den Applets brauchen (Scripts/CSS sind nicht betroffen). Deshalb nur auf
+    Font-Pfade begrenzt; authentifizierte Antworten (z. B. /media/) bleiben
+    unberührt.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/static/") and re.search(
+        r"\.(?:woff2?|ttf|otf)$", request.url.path, re.IGNORECASE
+    ):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
 
 # API-Routes
 app.include_router(auth.router)
@@ -905,6 +924,69 @@ async def media_page(
     return templates.TemplateResponse("course/media.html", ctx)
 
 
+@app.get("/courses/{course_id}/applets/new")
+async def applet_new_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Applet-Studio: neues Applet generieren (nur PROF/Admin)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="media")
+    if not (ctx["is_prof"] or ctx["is_admin"]):
+        raise HTTPException(403, "Nur PROFs und Administratoren dürfen Medien verwalten.")
+    ctx["page_title"] = f"Applet erstellen — {ctx['course']['name']}"
+    ctx["media"] = None
+    ctx["code_editor"] = True
+    return templates.TemplateResponse("course/applet_studio.html", ctx)
+
+
+@app.get("/courses/{course_id}/applets/{media_id}")
+async def applet_edit_page(
+    course_id: int,
+    media_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Applet-Studio: Applet bearbeiten (nur PROF/Admin)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="media")
+    if not (ctx["is_prof"] or ctx["is_admin"]):
+        raise HTTPException(403, "Nur PROFs und Administratoren dürfen Medien verwalten.")
+    media = session.get(CourseMedia, media_id)
+    if not media or media.course_id != course_id or media.media_type != "applet":
+        raise HTTPException(404, "Applet nicht gefunden.")
+    ctx["page_title"] = f"Applet bearbeiten — {ctx['course']['name']}"
+    ctx["media"] = media
+    ctx["code_editor"] = True
+    return templates.TemplateResponse("course/applet_studio.html", ctx)
+
+
+_APPLET_HEIGHT_SCRIPT = (
+    "\n<script>\n"
+    "(function () {\n"
+    "  function report() {\n"
+    '    try { parent.postMessage({ source: "tutorai-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n'
+    "  }\n"
+    '  window.addEventListener("load", report);\n'
+    '  window.addEventListener("resize", report);\n'
+    "  if (window.ResizeObserver) { new ResizeObserver(report).observe(document.body); }\n"
+    "  report();\n"
+    "})();\n"
+    "</script>\n"
+)
+
+
+def _with_applet_height_script(html: str) -> str:
+    """Applet-HTML um ein Auto-Size-Boilerplate erweitern (idempotent)."""
+    if "tutorai-applet" in html:
+        return html  # Boilerplate bereits vorhanden
+    m = re.search(r"</body\s*>", html, re.IGNORECASE)
+    if m:
+        return html[: m.start()] + _APPLET_HEIGHT_SCRIPT + html[m.start():]
+    return html + _APPLET_HEIGHT_SCRIPT
+
+
 @app.get("/media/{course_id}/{filename}")
 async def serve_media(
     course_id: int,
@@ -939,7 +1021,14 @@ async def serve_media(
     if not path:
         raise HTTPException(404, "Datei nicht gefunden.")
     # no-cache: Browser müssen nach Datei-Ersatz revalidieren (304 = kein Datentransfer)
-    return FileResponse(path, media_type=media.mime_type, headers={"Cache-Control": "no-cache"})
+    headers = {"Cache-Control": "no-cache"}
+    if media.media_type == "applet":
+        # Applets (text/html) explizit als HTML markieren — kein MIME-Guessing.
+        # Auto-Size-Boilerplate wird serverseitig injiziert (wirkt auch für manuelle Edits).
+        headers["X-Content-Type-Options"] = "nosniff"
+        raw = path.read_text(encoding="utf-8")
+        return HTMLResponse(content=_with_applet_height_script(raw), headers=headers)
+    return FileResponse(path, media_type=media.mime_type, headers=headers)
 
 
 @app.get("/courses/{course_id}/members")

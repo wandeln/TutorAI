@@ -23,9 +23,54 @@ from services.llm_service import LLMService
 from services.settings_resolver import get_effective_llm_config
 from services import media_service
 from services.media_service import RefInfo
+from api.script import _resolve_span
 
 router = APIRouter(prefix="/api", tags=["Medien"])
 llm_service = LLMService()
+
+
+def _apply_html_edits(html: str, edits: object) -> str:
+    """Wendet die LLM-Edit-Liste („html_edits“) auf das Applet-HTML an.
+
+    Analog zu „content_edits“ im Skript (api/script.py): nur „replace_span“
+    mit eindeutig im HTML vorkommendem „old“-Anker. Wirft HTTPException(400),
+    wenn ein Edit ungültig oder unklar ist (Anker nicht gefunden/mehrdeutig,
+    Überlappung, unbekanntes op) — dann bleibt das HTML unverändert."""
+    if not isinstance(edits, list) or not edits:
+        raise HTTPException(400, "LLM-Antwort ungültig: „html_edits“ ist keine (nicht-leere) Liste von Edit-Objekten.")
+    spans: list[tuple[int, int, str]] = []  # (start, end, Ersetzung)
+    for i, edit in enumerate(edits):
+        if not isinstance(edit, dict):
+            raise HTTPException(400, f"LLM-Edit nicht anwendbar: Edit {i + 1} ist kein Objekt.")
+        op = str(edit.get("op") or "").strip()
+        if op != "replace_span":
+            raise HTTPException(400, f"LLM-Edit nicht anwendbar: unbekanntes „op“ {op!r} (Edit {i + 1}).")
+        old = str(edit.get("old") or "")
+        new = str(edit.get("new") or "")
+        s, e = _resolve_span(html, old)
+        spans.append((s, e, new))
+    # Überlappungs-Check: Einfügepunkte (0 Breite) konfligieren nur, wenn sie
+    # STRENG innerhalb eines anderen Spans liegen.
+    for a in range(len(spans)):
+        for b in range(a + 1, len(spans)):
+            a1, a2, _ = spans[a]
+            b1, b2, _ = spans[b]
+            if a1 == a2 or b1 == b2:
+                p = a1 if a1 == a2 else b1
+                lo, hi = (b1, b2) if a1 == a2 else (a1, a2)
+                if lo < p < hi:
+                    raise HTTPException(400, "LLM-Edit nicht anwendbar: Edits überschneiden sich.")
+            elif a1 < b2 and b1 < a2:
+                raise HTTPException(400, "LLM-Edit nicht anwendbar: Edits überschneiden sich.")
+    spans.sort(key=lambda sp: (sp[0], sp[1]))
+    parts: list[str] = []
+    pos = 0
+    for s, e, repl in spans:
+        parts.append(html[pos:s])
+        parts.append(repl)
+        pos = e
+    parts.append(html[pos:])
+    return "".join(parts)
 
 
 def _get_media(session: Session, course_id: int, media_id: int) -> CourseMedia:
@@ -166,6 +211,161 @@ async def replace_media_file(
 
     counts = media_service.reference_counts(session, course_id)
     return {"message": "Datei ersetzt.", "media": _media_to_dict(media, [], counts)}
+
+
+# ─── Applets (LLM-generierte, self-contained HTML-Medien) ──────────────
+#
+# Das Applet-Studio (course/applet_studio.html) nutzt diese Endpoints:
+# LLM-Generierung (speichert NICHT) → manuell/LLM anpassen → Speichern
+# (neu anlegen oder ersetzen). Dateien: data/media/course_{id}/<uuid>.html.
+# Einbettung über <iframe sandbox="allow-scripts"> (Medienbibliothek,
+# Skript, Aufgaben — siehe markdown-renderer.js).
+
+@router.post("/courses/{course_id}/media/applet-llm")
+async def generate_applet_llm(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
+):
+    """LLM erzeugt/ändert Applet-HTML + Titel + Beschreibung (speichert NICHT).
+
+    Body: {"prompt": str, "existing_html": str (optional, für Refinement)}
+    """
+    body = await request.json()
+    prompt = (body.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "Bitte gib an, was das Applet zeigen soll.")
+    existing_html = (body.get("existing_html") or "").strip()
+
+    llm_cfg = dict(get_effective_llm_config(session, course_id))
+    result = await llm_service.generate_applet(
+        prompt=prompt, existing_html=existing_html, config=llm_cfg
+    )
+    if not result.get("success"):
+        raise HTTPException(502, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")
+
+    data = result.get("data", {})
+    html = (data.get("html") or "").strip()
+    html_edits = data.get("html_edits")
+    edits_applied = 0
+    if not html and html_edits:
+        if not existing_html:
+            raise HTTPException(400, "LLM lieferte stellenweise Edits („html_edits“), aber es existiert noch kein Applet zum Editieren. Bitte erneut versuchen.")
+        html = _apply_html_edits(existing_html, html_edits)
+        edits_applied = len(html_edits)
+    if not html:
+        raise HTTPException(502, "Das LLM hat weder „html“ noch „html_edits“ geliefert.")
+    try:
+        media_service.validate_applet_html(html)
+    except HTTPException as e:
+        raise HTTPException(502, f"Das LLM hat kein gültiges Applet-HTML geliefert: {e.detail}")
+
+    return {
+        "html": html,
+        "title": (data.get("title") or "").strip(),
+        "description": (data.get("description") or "").strip(),
+        "edits_applied": edits_applied,
+    }
+
+
+@router.post("/courses/{course_id}/media/applet")
+async def create_applet_media(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
+):
+    """Neues Applet-Medium anlegen (HTML aus dem Applet-Studio).
+
+    Body: {"title": str, "llm_description": str, "html": str}
+    """
+    user, _ = user_and_course
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "Titel darf nicht leer sein.")
+    description = (body.get("llm_description") or "").strip()
+
+    rel_path, mime, size = media_service.save_applet(course_id, body.get("html") or "")
+
+    media = CourseMedia(
+        course_id=course_id,
+        title=title,
+        file_path=rel_path,
+        media_type="applet",
+        mime_type=mime,
+        file_size=size,
+        llm_description=description or None,
+        created_by=user.id,  # type: ignore[arg-type]
+    )
+    session.add(media)
+    session.commit()
+    session.refresh(media)
+
+    counts = media_service.reference_counts(session, course_id)
+    return {"message": f"Applet '{media.title}' erstellt.", "media": _media_to_dict(media, [], counts)}
+
+
+@router.put("/courses/{course_id}/media/{media_id}/applet")
+async def update_applet_media(
+    course_id: int,
+    media_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
+):
+    """Ersetzt das HTML eines Applets (gleicher Pfad → Markdown-Referenzen bleiben gültig).
+
+    Body: {"html": str, "title": str (optional), "llm_description": str (optional)}
+    """
+    media = _get_media(session, course_id, media_id)
+    if media.media_type != "applet":
+        raise HTTPException(400, "Dieses Medium ist kein Applet.")
+    body = await request.json()
+
+    if body.get("html"):
+        rel_path, mime, size = media_service.replace_applet(media.file_path, body["html"])
+        media.file_path = rel_path
+        media.mime_type = mime
+        media.file_size = size
+    if "title" in body:
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "Titel darf nicht leer sein.")
+        media.title = title
+    if "llm_description" in body:
+        media.llm_description = (body.get("llm_description") or "").strip() or None
+
+    session.add(media)
+    session.commit()
+    session.refresh(media)
+
+    counts = media_service.reference_counts(session, course_id)
+    return {"message": "Applet aktualisiert.", "media": _media_to_dict(media, [], counts)}
+
+
+@router.get("/courses/{course_id}/media/{media_id}/applet")
+async def get_applet_media(
+    course_id: int,
+    media_id: int,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
+):
+    """Applet-Quelle (HTML + Metadaten) für das Applet-Studio."""
+    media = _get_media(session, course_id, media_id)
+    if media.media_type != "applet":
+        raise HTTPException(400, "Dieses Medium ist kein Applet.")
+    path = media_service.MEDIA_DIR / media.file_path
+    if not path.is_file():
+        raise HTTPException(404, "Datei nicht gefunden.")
+    return {
+        "id": media.id,
+        "title": media.title,
+        "llm_description": media.llm_description or "",
+        "html": path.read_text(encoding="utf-8"),
+        "url": media_service.media_url(media),
+    }
 
 
 @router.post("/courses/{course_id}/media/{media_id}/generate-metadata")

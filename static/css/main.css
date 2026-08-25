@@ -24,6 +24,11 @@
   border-color: #3b82f6;
 }
 
+/* Applet-Studio: CodeMirror füllt die Kachel (fixe Höhe, kein Überlauf) */
+.applet-code-wrapper .CodeMirror {
+  height: 100%;
+}
+
 /* Task Card */
 .task-card {
   @apply bg-white rounded-xl shadow-sm border border-gray-200 hover:shadow-md transition-all duration-200;
@@ -373,6 +378,16 @@
 .tutorai-callbox-warnung .tutorai-callbox-head { color: #b91c1c; }
 .tutorai-callbox-beispiel { border-left-color: #22c55e; background: #f0fdf4; }
 .tutorai-callbox-beispiel .tutorai-callbox-head { color: #15803d; }
+
+/* Applet-Iframes: interaktive HTML-Medien (.html) in Skript & Aufgaben
+   (werden von markdown-renderer.js als Iframe gerendert, sandboxed) */
+.tutorai-applet {
+  width: 100%;
+  height: 420px;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #fff;
+}
 
 /* Medaillen-Badges — gemeinsame Basis für alle Seiten (tasks_student.html,
    dashboard.html & task_solve.html definieren teils eigene Varianten darüber) */

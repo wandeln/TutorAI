@@ -25,11 +25,15 @@ from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
 from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
+from prompts.applet_prompt import APPLET_PROMPT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
 # Report-Timeout ist höher, da der Prompt sehr groß sein kann
 REPORT_TIMEOUT = int(os.getenv("REPORT_TIMEOUT", "180"))
+# Applet-Generierung: komplettes HTML-Dokument → längeres Budget + mehr Tokens
+APPLET_TIMEOUT = int(os.getenv("APPLET_TIMEOUT", "240"))
+APPLET_MAX_TOKENS = int(os.getenv("APPLET_MAX_TOKENS", "16384"))
 
 
 class LLMService:
@@ -212,6 +216,38 @@ class LLMService:
 
         return await self._call_with_json(
             prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
+
+    async def generate_applet(
+        self,
+        prompt: str,
+        existing_html: str = "",
+        config: Optional[dict] = None,
+    ):
+        """Generiert/überarbeitet ein interaktives HTML-Applet via LLM.
+
+        prompt: Was das Applet zeigen/ermöglichen soll (bzw. Änderungswunsch
+        bei existing_html). existing_html: aktueller HTML-Code (Refinement).
+        Das LLM liefert JSON: {"html", "title", "description"} — wird hier
+        NICHT gespeichert (Preview-first im Applet-Studio).
+
+        Applets enthalten keine Studentendaten — nutzt den Public Endpoint,
+        falls konfiguriert.
+        """
+        tpl = Template(APPLET_PROMPT_TEMPLATE).render(
+            prompt=prompt,
+            existing_html=existing_html,
+        )
+
+        # Komplettes HTML-Dokument → großzügiges Timeout + Token-Budget.
+        cfg = dict(config or {})
+        cfg["timeout"] = max(cfg.get("timeout", self.timeout), APPLET_TIMEOUT)
+
+        return await self._call_with_json(
+            tpl,
+            response_format={"type": "json_object"},
+            config=self._public_config(cfg),
+            max_tokens=APPLET_MAX_TOKENS,
         )
 
     async def generate_socratic_hint(
@@ -661,12 +697,14 @@ class LLMService:
             "raw_response": "",
         }
 
-    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None, config: Optional[dict] = None):
+    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None, config: Optional[dict] = None, max_tokens: Optional[int] = None):
         """
         Generischer LLM-Aufruf mit JSON-Response-Format.
 
         Falls config uebergeben wird, wird ein temporares Client mit dieser Config
         verwendet (unterstuetzt global_settings / course_settings Resolver).
+        max_tokens: optionale Obergrenze für die Antwortlänge (z. B. für große
+        HTML-Generierungen), sonst Modell-Default.
 
         retry=2 bei Fehlern (Rate Limits, Timeouts).
         """
@@ -686,6 +724,8 @@ class LLMService:
         }
         if response_format is not None:
             create_kwargs["response_format"] = response_format
+        if max_tokens is not None:
+            create_kwargs["max_tokens"] = max_tokens
 
         deadline = time.monotonic() + timeout
 

@@ -1,0 +1,272 @@
+{% extends "course/base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Applet-Studio: interaktive HTML-Applets generieren (LLM) & bearbeiten
+   (manuell per CodeMirror). Nur PROF/Admin.
+
+   Neu:  GET /courses/{id}/applets/new      (media = None)
+   Edit: GET /courses/{id}/applets/{mid}    (media = CourseMedia, type applet)
+
+   API:
+   POST /api/courses/{id}/media/applet-llm   → LLM (HTML+Titel+Beschreibung, speichert NICHT)
+   POST /api/courses/{id}/media/applet       → neues Applet-Medium anlegen
+   PUT  /api/courses/{id}/media/{mid}/applet → HTML (+Titel/Beschreibung) ersetzen
+   GET  /api/courses/{id}/media/{mid}/applet → Quelle laden (Edit-Modus)
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block course_content %}
+
+<div class="mb-4">
+  <a href="/courses/{{ course.id }}/media" class="text-sm text-blue-600 hover:underline">← Zurück zu den Medien</a>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-5">
+
+  <!-- ═══ Links: LLM + Metadaten + Speichern ═══ -->
+  <div class="lg:col-span-2 space-y-4">
+
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 class="font-bold text-gray-800 mb-3">🤖 Mit LLM erzeugen</h2>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            {{ "Änderungswunsch" if media else "Was soll das Applet zeigen?" }}
+          </label>
+          <textarea id="applet-prompt" rows="4"
+                    placeholder="z. B. „Interaktive Visualisierung der Entropie H(X) mit Slider für die Wahrscheinlichkeitsverteilung“ oder „3D-Darstellung einer binären Quelle mit OrbitControls“"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        </div>
+        <button id="applet-generate" type="button"
+                class="w-full bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+          ✨ {{ "Applet anpassen" if media else "Applet generieren" }}
+        </button>
+        <div id="applet-llm-status" class="hidden text-xs text-gray-600 flex items-center gap-2">
+          <span class="inline-block w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></span>
+          <span id="applet-llm-status-text"></span>
+        </div>
+        <p class="text-xs text-gray-400">
+          {{ "Der aktuelle HTML-Code wird als Kontext übergeben. " if media }}
+          Das Ergebnis landet in Titel, Beschreibung und HTML-Code — bitte prüfen und
+          anschließend speichern. Chart.js &amp; Three.js (lokal) stehen dem LLM zur Verfügung.
+        </p>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 class="font-bold text-gray-800 mb-3">💾 Speichern</h2>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+          <input id="applet-title" type="text" maxlength="300"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+          <textarea id="applet-description" rows="3" maxlength="2000"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        </div>
+        <button id="applet-save" type="button"
+                class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+          {{ "💾 Applet in Medienbibliothek speichern" if not media else "💾 Änderungen speichern" }}
+        </button>
+        <p class="text-xs text-gray-400">
+          {{ "Es wird ein neues Medium (Typ Applet) in der Medienbibliothek angelegt." if not media else "Der HTML-Code wird am gleichen Pfad ersetzt — Markdown-Referenzen bleiben gültig." }}
+          Einbetten über <code class="text-[11px] bg-gray-100 rounded px-1">![Titel]({{ media.url if media else '/media/' ~ course.id ~ '/…html' }})</code>
+          → rendert in Skript &amp; Aufgaben als interaktive Vorschau.
+        </p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══ Rechts: Live-Preview + HTML-Code ═══ -->
+  <div class="lg:col-span-3 space-y-4">
+
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="font-bold text-gray-800">👁️ Live-Preview</h2>
+        <button id="applet-preview-refresh" type="button"
+                class="text-xs text-blue-600 hover:underline" title="Preview aus dem HTML-Code unten neu laden">
+          ⟳ Vorschau aktualisieren
+        </button>
+      </div>
+      <!-- Auto-Size: Iframe passt sich an die gemeldete Applet-Höhe an (150–600 px) -->
+      <div style="max-height: 600px">
+        <iframe id="applet-preview" class="tutorai-applet" sandbox="allow-scripts"
+                title="Applet-Vorschau"></iframe>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 class="font-bold text-gray-800 mb-1">📝 HTML-Code</h2>
+      <p class="text-xs text-gray-400 mb-3">
+        Kann auch manuell editiert werden — „⟳ Vorschau aktualisieren“ lädt den Code neu.
+      </p>
+      <div class="applet-code-wrapper" style="height: 320px">
+        <textarea id="applet-html"
+                  placeholder="<!DOCTYPE html>&#10;<html>…</html>"></textarea>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  const mediaId = {{ media.id if media else 'null' }};
+
+  const previewFrame = document.getElementById("applet-preview");
+  const titleInput = document.getElementById("applet-title");
+  const descInput = document.getElementById("applet-description");
+  const promptInput = document.getElementById("applet-prompt");
+  const generateBtn = document.getElementById("applet-generate");
+  const saveBtn = document.getElementById("applet-save");
+  const statusBox = document.getElementById("applet-llm-status");
+  const statusText = document.getElementById("applet-llm-status-text");
+
+  // CodeMirror (htmlmixed) — Editor-Inhalt in den (versteckten) Textarea schreiben
+  const codeCM = CodeMirror.fromTextArea(document.getElementById("applet-html"), {
+    mode: "htmlmixed",
+    theme: "dracula",
+    lineNumbers: true,
+    autoCloseBrackets: true,
+    indentUnit: 2,
+    tabSize: 2,
+    lineWrapping: true,
+    matchBrackets: true,
+  });
+
+  // Auto-Size-Boilerplate (identisch zum serverseitigen Versand in serve_media,
+  // main.py): ins srcdoc injizieren, damit die Preview wie eingebettete Applets
+  // mitwächst (ohne Boilerplate meldet das Applet keine Höhe).
+  const APPLET_HEIGHT_SNIPPET =
+    '<script>\n' +
+    '(function () {\n' +
+    '  function report() {\n' +
+    '    try { parent.postMessage({ source: "tutorai-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n' +
+    '  }\n' +
+    '  window.addEventListener("load", report);\n' +
+    '  window.addEventListener("resize", report);\n' +
+    '  if (window.ResizeObserver) { new ResizeObserver(report).observe(document.body); }\n' +
+    '  report();\n' +
+    '})();\n' +
+    '<\/script>\n';
+
+  function updatePreview() {
+    let html = codeCM.getValue();
+    if (html.trim() && !html.includes("tutorai-applet")) {
+      const m = html.match(/<\/body\s*>/i);
+      html = m
+        ? html.slice(0, m.index) + APPLET_HEIGHT_SNIPPET + html.slice(m.index)
+        : html + APPLET_HEIGHT_SNIPPET;
+    }
+    previewFrame.srcdoc = html;
+  }
+
+  function setBusy(busy, msg) {
+    generateBtn.disabled = busy;
+    saveBtn.disabled = busy;
+    statusBox.classList.toggle("hidden", !busy);
+    if (msg) statusText.textContent = msg;
+  }
+
+  // ─── Laden (Edit-Modus) ───────────────────────────────────────
+
+  async function loadApplet() {
+    if (mediaId === null) return;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media/${mediaId}/applet`, { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Fehler beim Laden des Applets.");
+      codeCM.setValue(data.html);
+      titleInput.value = data.title;
+      descInput.value = data.llm_description || "";
+      updatePreview();
+    } catch (err) {
+      showToast(err.message, "error");
+    }
+  }
+
+  // ─── LLM-Generierung (speichert NICHT — füllt die Felder) ─────
+
+  async function generateApplet() {
+    const prompt = promptInput.value.trim();
+    if (!prompt) {
+      showToast("Bitte beschreibe, was das Applet zeigen soll.", "error");
+      return;
+    }
+    setBusy(true, "Applet wird generiert — das kann bis zu 2 Minuten dauern …");
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media/applet-llm`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: prompt, existing_html: codeCM.getValue() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "LLM-Fehler.");
+      codeCM.setValue(data.html);
+      if (data.title) titleInput.value = data.title;
+      if (data.description) descInput.value = data.description;
+      updatePreview();
+      const editsMsg = data.edits_applied > 0 ? ` (${data.edits_applied} stellenweise Edits angewendet)` : "";
+      showToast("Applet generiert" + editsMsg + " — bitte prüfen und speichern.", "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ─── Speichern (neu anlegen bzw. ersetzen) ────────────────────
+
+  async function saveApplet() {
+    const title = titleInput.value.trim();
+    const html = codeCM.getValue();
+    if (!title) {
+      showToast("Titel darf nicht leer sein.", "error");
+      return;
+    }
+    if (!html.trim()) {
+      showToast("Der HTML-Code ist leer.", "error");
+      return;
+    }
+    setBusy(true, "Wird gespeichert …");
+    try {
+      const isEdit = mediaId !== null;
+      const res = await fetch(isEdit
+        ? `/api/courses/${courseId}/media/${mediaId}/applet`
+        : `/api/courses/${courseId}/media/applet`, {
+        method: isEdit ? "PUT" : "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title,
+          llm_description: descInput.value.trim(),
+          html: html,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Fehler beim Speichern.");
+      showToast(data.message || "Applet gespeichert.", "success");
+      if (!isEdit) {
+        window.location.href = `/courses/${courseId}/media`;
+      }
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  generateBtn.addEventListener("click", generateApplet);
+  saveBtn.addEventListener("click", saveApplet);
+  document.getElementById("applet-preview-refresh").addEventListener("click", updatePreview);
+  loadApplet();
+})();
+</script>
+{% endblock %}

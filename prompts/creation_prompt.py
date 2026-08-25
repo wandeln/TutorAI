@@ -68,7 +68,7 @@ Regeln:
 - Bei Text-Aufgaben: Verwende Markdown-Formatierung (**fett**, *kursiv*, Listen, $Math$, $$Display-Math$$) für bessere Lesbarkeit.
 - Bei Code-Aufgaben: Beschreibe in der Aufgabenstellung was implementiert werden soll. Verwende $...$ für mathematische Notation.
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
-- Medien: Du DARFST Medien aus der obigen Medien-Liste in die Aufgabenstellung einbinden, wenn sie inhaltlich wirklich passen (max. 1-2) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
+- Medien: Du DARFST Medien aus der obigen Medien-Liste in die Aufgabenstellung einbinden, wenn sie inhaltlich wirklich passen (max. 1-2) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE andere Medien-Pfade. Medien mit .html-Endung sind interaktive Applets — sie werden als interaktive Vorschau (Iframe) gerendert und im Markdown genauso eingebunden wie Bilder.
 - Querverweise: Bezug auf Abbildungen/Gleichungen aus dem Skript per @fig:label bzw. @eq:label — verwende NUR Labels, die in den obigen Kapitel-Zusammenfassungen vorkommen (sonst ist die Referenz kaputt). Lege in der Aufgabe selbst KEINE neuen fig/eq-Labels an (Kollisionsgefahr).
   WICHTIG: @fig:label / @eq:label sind KEIN Code — schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen. Nur so werden sie zu klickbaren Referenzen („Abb. N“ / „Gl. N“) aufgelöst.
   Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“

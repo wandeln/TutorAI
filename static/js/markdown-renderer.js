@@ -19,6 +19,8 @@
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
  * Hinweis-Boxen:      @box:{typ} … @endbox        → farbig markierte Box (merksatz/hinweis/bemerkung/
  *                                                            warnung/beispiel; unbekannte Typen = neutrale Box)
+ * Applet-Abbildung:   ![caption](src.html)         → interaktives (sandboxed) Iframe;
+ *                                                            mit {#fig:label} nummeriert wie Bilder
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
@@ -81,6 +83,24 @@ const CALLOUT_TYPES = {
   warnung: { icon: '⚠️', title: 'Warnung' },
   beispiel: { icon: '📎', title: 'Beispiel' },
 };
+
+// ─── Applet-Auto-Sizing ───────────────────────────────────────────────
+// Applets (.html-Medien) melden ihre Inhaltshöhe per postMessage — das
+// Boilerplate wird serverseitig in jeden Applet-Versand injiziert (siehe
+// serve_media in main.py). Das Iframe passt sich an (150–600 px);
+// darüber hinaus scrollt das Applet im Iframe intern.
+const APPLET_MIN_H = 150;
+const APPLET_MAX_H = 600;
+window.addEventListener('message', (event) => {
+  const d = event.data;
+  if (!d || d.source !== 'tutorai-applet' || typeof d.height !== 'number' || !isFinite(d.height)) return;
+  const h = Math.round(Math.min(Math.max(d.height + 8, APPLET_MIN_H), APPLET_MAX_H));
+  document.querySelectorAll('iframe.tutorai-applet').forEach((f) => {
+    if (f.contentWindow === event.source) {
+      f.style.height = h + 'px';
+    }
+  });
+});
 
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
@@ -168,6 +188,18 @@ async function renderMarkdown(text, targetElement, options = {}) {
       }
       figures.push({ alt, src, label, num });
       return `%%FIG_${figures.length - 1}%%`;
+    }
+  );
+
+  // 1e2. Extract unlabeled HTML figures: ![caption](src.html)
+  //      → interaktive Vorschau (sandboxed Iframe) OHNE Nummerierung.
+  //      Labelierte .html-Medien ({#fig:…}) wurden oben bereits extrahiert.
+  const appletFigures = [];
+  processed = processed.replace(
+    /!\[([^\]]*)\]\(([^)\s]+\.html?)\)/giu,
+    (match, alt, src) => {
+      appletFigures.push({ alt, src });
+      return `%%APPLETFIG_${appletFigures.length - 1}%%`;
     }
   );
 
@@ -274,14 +306,25 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%LATEX_INLINE_${idx}%%`, renderLatexInline(latex));
   });
 
-  // 6a. Restore numbered figures
+  // 6a. Restore numbered figures (.html-Medien als interaktives Iframe)
   figures.forEach((f, idx) => {
     const safeAlt = escapeHtml(f.alt);
+    const isApplet = /\.html?$/i.test(f.src);
+    const mediaTag = isApplet
+      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${safeAlt}"></iframe>`
+      : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}">`;
     const figHtml =
       `<figure id="fig:${f.label}" class="tutorai-figure">` +
-      `<img src="${escapeHtml(f.src)}" alt="${safeAlt}">` +
+      mediaTag +
       `<figcaption>Abb. ${f.num}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
+  });
+
+  // 6a2. Restore unlabeled HTML figures (interaktive Vorschau, ohne Nummer)
+  appletFigures.forEach((f, idx) => {
+    const iframeHtml =
+      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${escapeHtml(f.alt)}"></iframe>`;
+    html = html.replace(`%%APPLETFIG_${idx}%%`, iframeHtml.replace(/\$/g, '$$$$'));
   });
 
   // 6b. Restore cross-references (@fig:label / @eq:label)
@@ -375,8 +418,16 @@ async function renderMarkdown(text, targetElement, options = {}) {
   html = decodeTextEntities(html);
 
   // 10. Sanitize with DOMPurify
+  //     (ADD_TAGS/ADD_ATTR: Applet-Iframes werden sonst komplett entfernt —
+  //     iframe steht nicht in der Default-Allow-List von DOMPurify)
   if (typeof DOMPurify !== 'undefined') {
-    html = DOMPurify.sanitize(html);
+    html = DOMPurify.sanitize(html, { ADD_TAGS: ['iframe'], ADD_ATTR: ['sandbox'] });
+    // Sicherheitsnetz: Applet-Iframes dürfen IMMER nur sandboxed laufen
+    // (allow-scripts, ohne allow-same-origin). Falls DOMPurify das sandbox-
+    // Attribut entfernt, wird es neu eingefügt.
+    html = html.replace(/<iframe(?![^>]*\bsandbox=)([^>]*)>/g, (_m, attrs) => {
+      return '<iframe sandbox="allow-scripts"' + attrs.replace(/\/\s*$/, '') + '>';
+    });
   }
 
   // 11. Render Mermaid diagrams

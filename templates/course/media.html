@@ -43,6 +43,14 @@
             <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-150" style="width: 0%"></div>
           </div>
         </div>
+
+        <button id="media-llm-generate" type="button"
+                class="w-full bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-semibold">
+          🤖 Medium mit LLM generieren (Applet)
+        </button>
+        <p class="text-xs text-gray-400">
+          Erzeugt ein interaktives Applet (Chart.js / Three.js) im Applet-Studio.
+        </p>
       </div>
     </div>
 
@@ -188,7 +196,7 @@
   function renderGrid() {
     const grid = document.getElementById("media-grid");
     if (mediaList.length === 0) {
-      grid.innerHTML = '<p class="text-gray-400 text-sm col-span-2">Noch keine Medien. Lade links ein Bild hoch.</p>';
+      grid.innerHTML = '<p class="text-gray-400 text-sm col-span-2">Noch keine Medien. Lade links ein Bild hoch oder generiere ein Applet mit dem LLM.</p>';
       return;
     }
     const list = getVisibleMedia();
@@ -206,13 +214,28 @@
     const card = document.createElement("div");
     card.className = "bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex flex-col";
 
-    const img = document.createElement("img");
-    img.src = m.url + "?t=" + ts;
-    img.alt = m.title;
-    img.title = "Klick zum Vergrößern";
-    img.style.cursor = "pointer";
-    img.onclick = () => openImageOverlay(m.url + "?t=" + Date.now(), m.title);
-    img.className = "w-full h-36 object-cover bg-gray-100";
+    // Preview: Bild → <img>; Applet → lebendes Mini-Iframe (sandboxed,
+    // pointer-events: none, damit die Karten-Buttons bedienbar bleiben).
+    let preview;
+    if (m.media_type === "applet") {
+      preview = document.createElement("div");
+      preview.className = "relative w-full h-36 bg-white cursor-pointer";
+      preview.title = "Klick zum Vergrößern";
+      preview.onclick = () => openAppletOverlay(m.url + "?t=" + Date.now(), m.title);
+      const frame = document.createElement("iframe");
+      frame.src = m.url + "?t=" + ts;
+      frame.sandbox = "allow-scripts";
+      frame.className = "w-full h-full border-0 pointer-events-none";
+      frame.title = m.title;
+      preview.appendChild(frame);
+    } else {
+      preview = document.createElement("img");
+      preview.src = m.url + "?t=" + ts;
+      preview.alt = m.title;
+      preview.title = "Klick zum Vergrößern";
+      preview.onclick = () => openImageOverlay(m.url + "?t=" + Date.now(), m.title);
+      preview.className = "w-full h-36 object-cover bg-gray-100";
+    }
 
     const body = document.createElement("div");
     body.className = "p-4 flex-1 flex flex-col gap-2";
@@ -260,7 +283,7 @@
       <button type="button" class="text-xs border border-red-200 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 transition"
               data-del="${m.id}">🗑️</button>`;
 
-    card.appendChild(img);
+    card.appendChild(preview);
     card.appendChild(body);
     card.appendChild(actions);
     return card;
@@ -279,6 +302,23 @@
     document.body.appendChild(overlay);
   }
 
+  // Applet-Vorschau im Vollbild: interaktives (aber sandboxed) Iframe.
+  function openAppletOverlay(url, title) {
+    const overlay = document.createElement("div");
+    overlay.className = "fixed inset-0 z-50 bg-black bg-opacity-75 flex items-center justify-center p-4";
+    overlay.onclick = () => overlay.remove();
+    const frame = document.createElement("iframe");
+    frame.src = url;
+    frame.sandbox = "allow-scripts";
+    frame.title = title;
+    // Auto-Size: Das Applet meldet seine Höhe (Boilerplate aus serve_media),
+    // der globale Listener in markdown-renderer.js passt das Iframe an (150–600 px).
+    frame.className = "tutorai-applet max-w-4xl shadow-xl";
+    frame.onclick = (e) => e.stopPropagation();
+    overlay.appendChild(frame);
+    document.body.appendChild(overlay);
+  }
+
   // ─── Aktionen (Event-Delegation) ──────────────────────────────
 
   document.getElementById("media-grid").addEventListener("click", (e) => {
@@ -292,6 +332,11 @@
       return;
     }
     if (target.dataset.edit) {
+      const m = mediaList.find(x => x.id === parseInt(target.dataset.edit));
+      if (m && m.media_type === "applet") {
+        window.location.href = `/courses/${courseId}/applets/${m.id}`; // Applet-Studio
+        return;
+      }
       openMediaModal(parseInt(target.dataset.edit));
       return;
     }
@@ -305,6 +350,10 @@
   function openMediaModal(id) {
     const m = mediaList.find(x => x.id === id);
     if (!m) return;
+    if (m.media_type === "applet") {
+      window.location.href = `/courses/${courseId}/applets/${m.id}`; // Applets im Studio bearbeiten
+      return;
+    }
     editingId = id;
     document.getElementById("edit-media-title").value = m.title;
     document.getElementById("edit-media-description").value = m.llm_description || "";
@@ -377,6 +426,9 @@
   document.getElementById("edit-modal-cancel").addEventListener("click", closeMediaModal);
   document.getElementById("edit-modal-save").addEventListener("click", saveMediaEdit);
   document.getElementById("edit-modal-generate").addEventListener("click", (e) => generateEditMetadata(e.currentTarget));
+  document.getElementById("media-llm-generate").addEventListener("click", () => {
+    window.location.href = `/courses/${courseId}/applets/new`; // Applet-Studio (neu)
+  });
 
   // ─── Upload + LLM-Generierung (gemeinsam) ─────────────────────
 

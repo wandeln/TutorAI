@@ -29,8 +29,9 @@ from database.models import (
     Task,
 )
 
-# ─── Upload-Limits & Whitelist ────────────────────────────────────
+# ─── Upload-Limits & Whitelist ────────────────────────────────
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_APPLET_BYTES = 200 * 1024  # 200 KB (LLM-generiertes HTML, inkl. inline JS/CSS)
 ALLOWED_MEDIA: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -113,6 +114,59 @@ def replace_file(rel_path: str, filename: str, data: bytes) -> tuple[str, str, i
         raise HTTPException(404, "Bestehende Datei nicht gefunden.")
     p.write_bytes(data)
     return rel_path, ALLOWED_MEDIA[ext], len(data)
+
+
+# ─── Applets (LLM-generierte, self-contained HTML-Dateien) ─────────
+#
+# Applets laufen in einem sandboxed Iframe (allow-scripts, ohne
+# allow-same-origin). Zusätzlich prüft validate_applet_html() serverseitig,
+# dass keine externen Ressourcen geladen werden (Offline-Design + Sicherheit).
+
+_EXTERNAL_SRC_RE = re.compile(r"""(?:src|href)\s*=\s*["']?\s*(?:https?:)?//""")
+
+
+def validate_applet_html(html: str) -> None:
+    """Validiert Applet-HTML. Raises 400/413 bei Verstößen."""
+    if not html or not html.strip():
+        raise HTTPException(400, "Applet-HTML ist leer.")
+    if len(html.encode("utf-8")) > MAX_APPLET_BYTES:
+        raise HTTPException(413, f"Applet-HTML zu groß (max. {MAX_APPLET_BYTES // 1024} KB).")
+    low = html.lower()
+    if "<html" not in low or "</html>" not in low:
+        raise HTTPException(400, "Ungültiges Applet-HTML (es muss ein vollständiges HTML-Dokument sein).")
+    if _EXTERNAL_SRC_RE.search(html):
+        raise HTTPException(400, "Applet darf keine externen Ressourcen laden (keine CDN-Links/URLs in src/href).")
+
+
+def save_applet(course_id: int, html: str) -> tuple[str, str, int]:
+    """Validiert + speichert ein neues Applet-HTML.
+
+    Returns: (relativer file_path, mime_type, size)
+    """
+    validate_applet_html(html)
+    data = html.encode("utf-8")
+    course_dir = media_dir_for_course(course_id)
+    stored_name = f"{uuid.uuid4().hex}.html"
+    (course_dir / stored_name).write_bytes(data)
+    return f"course_{course_id}/{stored_name}", "text/html", len(data)
+
+
+def replace_applet(rel_path: str, html: str) -> tuple[str, str, int]:
+    """Überschreibt eine Applet-Datei am selben Pfad.
+
+    Der Dateiname bleibt unverändert, damit Markdown-Referenzen und gespeicherte
+    URLs weiter funktionieren.
+
+    Returns: (relativer file_path, mime_type, size)
+    Raises:  400/404/413 bei ungültigem HTML bzw. fehlender Datei.
+    """
+    validate_applet_html(html)
+    data = html.encode("utf-8")
+    p = (MEDIA_DIR / rel_path).resolve()
+    if not p.is_relative_to(MEDIA_DIR.resolve()) or not p.is_file() or p.suffix.lower() != ".html":
+        raise HTTPException(404, "Bestehende Applet-Datei nicht gefunden.")
+    p.write_bytes(data)
+    return rel_path, "text/html", len(data)
 
 
 def resolve_media_path(course_id: int, filename: str) -> Path | None:

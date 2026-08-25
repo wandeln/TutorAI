@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TutorAI{% block title %} - {{ page_title or "Übungsaufgaben" }}{% endblock %}</title>
 
-  <!-- HTMX (BSD-3) -->
-  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <!-- HTMX (BSD-3) — lokal gespiegelt -->
+  <script src="{{ asset('vendor/htmx.min.js') }}"></script>
 
-  <!-- Tailwind CSS (MIT) via CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tailwind CSS (MIT) Play CDN v3.4.17 — lokal gespiegelt (Production-Warnung entfernt) -->
+  <script src="{{ asset('vendor/tailwind.js') }}"></script>
 
   <!-- Prevent Tailwind preflight from resetting markdown elements -->
   <style>
@@ -50,19 +50,23 @@
     }
   </style>
 
-  <!-- CodeMirror (MIT) — nur laden wenn benötigt -->
+  <!-- CodeMirror (MIT) — nur laden wenn benötigt (lokal gespiegelt) -->
   {% if code_editor %}
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <link rel="stylesheet" href="{{ asset('vendor/codemirror/codemirror.min.css') }}">
+  <link rel="stylesheet" href="{{ asset('vendor/codemirror/theme/dracula.min.css') }}">
+  <script src="{{ asset('vendor/codemirror/codemirror.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/python/python.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/xml/xml.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/css/css.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/javascript/javascript.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/htmlmixed/htmlmixed.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/addon/edit/closebrackets.min.js') }}"></script>
   {% endif %}
 
-  <!-- KaTeX (MIT) — LaTeX-Rendering -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/contrib/auto-render.min.js"></script>
+  <!-- KaTeX (MIT) — LaTeX-Rendering (lokal gespiegelt) -->
+  <link rel="stylesheet" href="{{ asset('vendor/katex/katex.min.css') }}">
+  <script src="{{ asset('vendor/katex/katex.min.js') }}"></script>
+  <script src="{{ asset('vendor/katex/contrib/auto-render.min.js') }}"></script>
 
   <!-- marked (MIT) — Markdown-Parser -->
   <script src="https://cdn.jsdelivr.net/npm/marked@14.1.0/marked.min.js"></script>

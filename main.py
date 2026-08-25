@@ -331,7 +331,7 @@ def _course_tab_context(
             "key": "tasks",
             "icon": "📋",
             "label": "Aufgaben",
-            "url": f"/courses/{course_id}",
+            "url": f"/courses/{course_id}/tasks",
             "active": active_tab == "tasks",
         }
     )
@@ -388,6 +388,7 @@ def _course_tab_context(
         "is_prof": is_prof,
         "tabs": tabs,
         "active_tab": active_tab,
+        "has_visible_sections": bool(visible_sections),
         # für _material_page_context() (Skript/Slides-Tabs)
         "materials": {m.material_type: m for m in materials},
     }
@@ -616,6 +617,27 @@ async def login_submit(
 
 @app.get("/courses/{course_id}")
 async def course_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Start: leitet zum Skript weiter (falls sichtbar), sonst zu den Aufgaben."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="tasks"
+    )
+
+    if not membership:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+    # Standard-Landing: Skript (wenn der Nutzer es sieht), sonst Aufgaben.
+    if ctx["is_tutor"] or ctx["is_admin"] or ctx["has_visible_sections"]:
+        return RedirectResponse(url=f"/courses/{course_id}/script", status_code=302)
+    return RedirectResponse(url=f"/courses/{course_id}/tasks", status_code=302)
+
+
+@app.get("/courses/{course_id}/tasks")
+async def tasks_page(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),

@@ -59,6 +59,7 @@ class UserBase(SQLModel):
     role: GlobalUserRole = GlobalUserRole.USER    # Global: ADMIN oder USER
     password_hash: Optional[str] = Field(default=None)   # NULL bei LDAP-Users
     ldap_dn: Optional[str] = Field(default=None)         # Distinguished Name
+    avatar: Optional[str] = Field(default=None, max_length=255)  # relativer Pfad: avatars/<uuid>.<ext>
 
 
 class User(UserBase, table=True):
@@ -111,6 +112,7 @@ class Course(CourseBase, table=True):
     script_sections: List["ScriptSection"] = Relationship(back_populates="course")
     media: List["CourseMedia"] = Relationship(back_populates="course")
     settings: Optional["CourseSettings"] = Relationship(back_populates="course")
+    channels: List["ForumChannel"] = Relationship(back_populates="course")
 
 
 class CourseCreate(CourseBase):
@@ -630,3 +632,70 @@ class CourseInviteRead(SQLModel):
 
     class Config:
         from_attributes = True
+
+
+# ═══════════════════════════════════════════════════════════════════
+# FORUM (Kurs-Forum: Chat in Kanälen, offen für alle Kurs-Rollen)
+# ═══════════════════════════════════════════════════════════════════
+
+class ForumChannelBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    name: str = Field(max_length=100)
+    description: str = Field(default="", max_length=300)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class ForumChannel(ForumChannelBase, table=True):
+    __tablename__ = "forum_channels"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    course: Optional["Course"] = Relationship(back_populates="channels")
+    messages: List["ForumMessage"] = Relationship(back_populates="channel")
+
+
+class ForumChannelCreate(SQLModel):
+    name: str = Field(min_length=1, max_length=100)
+    description: str = Field(default="", max_length=300)
+
+
+class ForumChannelUpdate(SQLModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=300)
+
+
+class ForumMessageBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    channel_id: Optional[int] = Field(default=None, foreign_key="forum_channels.id", index=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    content: str = Field(max_length=5000)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class ForumMessage(ForumMessageBase, table=True):
+    __tablename__ = "forum_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    user: Optional["User"] = Relationship()
+    course: Optional["Course"] = Relationship()
+    channel: Optional["ForumChannel"] = Relationship(back_populates="messages")
+
+
+class ForumMessageCreate(SQLModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class ForumMessageRead(SQLModel):
+    id: int
+    course_id: int
+    channel_id: Optional[int] = None
+    user_id: int
+    content: str
+    created_at: datetime
+    username: str
+    name: str
+    role: str
+    avatar: Optional[str] = None
+    can_delete: bool = False

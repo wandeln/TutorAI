@@ -25,6 +25,9 @@ data/*.db-journal
 # Kurs-Medien (hochgeladene Dateien)
 data/media/
 
+# Profilbilder (hochgeladene Dateien)
+data/avatars/
+
 # Environment (contains secrets!)
 .env
 

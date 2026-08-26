@@ -10,7 +10,7 @@ oder:
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 import logging
 import os
 import re
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 import hashlib
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -40,6 +40,8 @@ from database.models import (
     CourseMedia,
     CourseRole,
     FeedbackSource,
+    ForumChannel,
+    ForumMessage,
     GlobalUserRole,
     HintExchange,
     MaterialType,
@@ -52,7 +54,7 @@ from database.models import (
 from services.auth_service import get_current_user, hash_password, require_course_access
 from services import media_service
 
-from api import admin, auth, media as media_api, materials as materials_api, script as script_api, student, tutor, user_settings, course_members
+from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -90,6 +92,7 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     migrate_schema()
     migrate_script_sections()
+    migrate_forum_channels()
 
     # Admin-User anlegen, wenn DB leer
     with Session(engine) as session:
@@ -147,6 +150,44 @@ def migrate_script_sections():
             session.commit()
             media_service.sync_media_usages(session, mat.course_id)
             logger.info(f"Skript-Material '{mat.title}' (Kurs {mat.course_id}) in Kapitel umgewandelt.")
+
+
+def migrate_forum_channels():
+    """Migration: Forum-Kanäle für Daten aus der Zeit vor der Kanal-Einführung.
+
+    Noch kanallose Nachrichten werden einem Default-Kanal 'Allgemein' zugeordnet
+    (der bei Bedarf angelegt wird). Idempotent: ohne kanallose Nachrichten no-op;
+    bewusst gelöschte Kanäle werden NICHT neu angelegt.
+    """
+    with Session(engine) as session:
+        orphans_by_course: dict[int, list[ForumMessage]] = {}
+        for m in session.exec(
+            select(ForumMessage).where(ForumMessage.channel_id == None)
+        ).all():
+            orphans_by_course.setdefault(m.course_id, []).append(m)
+
+        for course_id, orphans in orphans_by_course.items():
+            course = session.get(Course, course_id)
+            if course is None:
+                continue
+            ch = session.exec(
+                select(ForumChannel).where(ForumChannel.course_id == course_id)
+            ).first()
+            if ch is None:
+                ch = ForumChannel(
+                    course_id=course_id,  # type: ignore[arg-type]
+                    name="Allgemein",
+                    created_by=course.created_by,
+                )
+                session.add(ch)
+                session.commit()
+                session.refresh(ch)
+            for m in orphans:
+                m.channel_id = ch.id
+            session.commit()
+            logger.info(
+                f"{len(orphans)} Forum-Nachrichten (Kurs {course_id}) dem Default-Kanal 'Allgemein' zugeordnet."
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -221,6 +262,7 @@ app.include_router(student.router)
 app.include_router(media_api.router)
 app.include_router(materials_api.router)
 app.include_router(script_api.router)
+app.include_router(forum.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -263,6 +305,21 @@ def _get_user_courses(user: User, session: Session) -> list[dict[str, Any]]:
                 "role_in_course": m.role_in_course.value,
             })
     return courses
+
+
+def _user_ctx(user: User, role: str) -> dict[str, Any]:
+    """Template-Kontext für current_user (Navbar + Seiten-Kopf).
+
+    Enthält das Profilbild (avatar), falls gesetzt — zentrales Format für
+    alle Seiten, damit Templates nicht doppelt gebaut werden müssen.
+    """
+    return {
+        "id": user.id,
+        "username": user.username,
+        "name": user.name,
+        "role": role,
+        "avatar": f"/avatars/{user.avatar.rsplit('/', 1)[-1]}" if user.avatar else None,
+    }
 
 
 def _course_tab_context(
@@ -335,6 +392,17 @@ def _course_tab_context(
             "active": active_tab == "tasks",
         }
     )
+    # Forum: für alle Kurs-Mitglieder (Student/Tutor/PROF) + Admins
+    if membership is not None or is_admin:
+        tabs.append(
+            {
+                "key": "forum",
+                "icon": "💬",
+                "label": "Forum",
+                "url": f"/courses/{course_id}/forum",
+                "active": active_tab == "forum",
+            }
+        )
     if is_tutor:
         tabs.append(
             {
@@ -369,12 +437,7 @@ def _course_tab_context(
     ctx = {
         "request": request,
         "page_title": page_title or course.name,
-        "current_user": {
-            "id": user.id,
-            "username": user.username,
-            "name": user.name,
-            "role": role.value if role else "ADMIN",
-        },
+        "current_user": _user_ctx(user, role.value if role else "ADMIN"),
         "courses": _get_user_courses(user, session),
         "selected_course_id": course_id,
         "is_admin": is_admin,
@@ -492,12 +555,7 @@ async def index(
         {
             "request": request,
             "page_title": "Dashboard",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": display_role,
-            },
+            "current_user": _user_ctx(user, display_role),
             "courses": courses,
             "selected_course_id": None,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -817,12 +875,7 @@ async def new_script_section_page(
         {
             "request": request,
             "page_title": "Neues Skript-Kapitel",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": course_role,
-            },
+            "current_user": _user_ctx(user, course_role),
             "courses": _get_user_courses(user, session),
             "selected_course_id": course_id,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -888,12 +941,7 @@ async def script_section_page(
         {
             "request": request,
             "page_title": f"{section.title} — Bearbeiten",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": course_role,
-            },
+            "current_user": _user_ctx(user, course_role),
             "courses": _get_user_courses(user, session),
             "selected_course_id": course_id,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -1053,6 +1101,63 @@ async def serve_media(
     return FileResponse(path, media_type=media.mime_type, headers=headers)
 
 
+@app.get("/avatars/{filename}")
+async def serve_avatar(
+    filename: str,
+    user: User = Depends(get_current_user),
+):
+    """Profilbild-Versand: für alle eingeloggten User (nicht kurs-spezifisch)."""
+    if not re.fullmatch(r"[A-Za-z0-9._\-]+", filename):
+        raise HTTPException(404, "Avatar nicht gefunden.")
+
+    path = media_service.resolve_avatar_path(filename)
+    if not path:
+        raise HTTPException(404, "Avatar nicht gefunden.")
+
+    mime = media_service.ALLOWED_MEDIA.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=mime, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/courses/{course_id}/forum")
+async def forum_page(
+    course_id: int,
+    request: Request,
+    channel: Optional[int] = Query(None, description="Ausgewählter Forum-Kanal"),
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Forum': Chat in Kanälen für alle Kurs-Mitglieder (Student/Tutor/PROF)."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="forum"
+    )
+
+    if not membership and user.role != GlobalUserRole.ADMIN:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+    channels = forum.load_channels_payload(
+        session, course_id, user, ctx["current_user"]["role"]
+    )
+    active = next((c for c in channels if c["id"] == channel), None) if channel is not None else None
+    channel_selected = active is not None
+    if active is None:
+        # Kein (gültiger) Kanal gewählt: Desktop zeigt den ersten Kanal,
+        # die schmale (mobile) Ansicht nur die Kanal-Liste (CSS im Template).
+        active = channels[0] if channels else None
+
+    ctx["page_title"] = f"Forum — {ctx['course']['name']}"
+    ctx["forum_channels"] = channels
+    ctx["active_channel"] = active
+    ctx["channel_selected"] = channel_selected
+    ctx["forum_messages"] = (
+        forum.load_forum_payload(
+            session, course_id, active["id"], user, ctx["current_user"]["role"], None
+        )
+        if active
+        else []
+    )
+    return templates.TemplateResponse("course/forum.html", ctx)
+
+
 @app.get("/courses/{course_id}/members")
 async def members_page(
     course_id: int,
@@ -1083,6 +1188,7 @@ async def members_page(
             "user_id": uc.user_id,
             "username": uc.user.username if uc.user else "unknown",
             "name": uc.user.name if uc.user else "unknown",
+            "avatar": f"/avatars/{uc.user.avatar.rsplit('/', 1)[-1]}" if uc.user and uc.user.avatar else None,
             "role_in_course": uc.role_in_course.value,
         }
         for uc in user_courses
@@ -1153,12 +1259,7 @@ async def join_page(
             {
                 "request": request,
                 "page_title": f"Kurs beitreten — {course.name}",
-                "current_user": {
-                    "id": user_id,
-                    "username": user.username,
-                    "name": user.name,
-                    "role": existing.role_in_course.value,
-                },
+                "current_user": _user_ctx(user, existing.role_in_course.value),
                 "courses": _get_user_courses(user, session),
                 "selected_course_id": invite.course_id,
                 "course": {
@@ -1188,12 +1289,7 @@ async def join_page(
         {
             "request": request,
             "page_title": f"Kurs beitreten — {course.name}",
-            "current_user": {
-                "id": user_id,
-                "username": user.username,
-                "name": user.name,
-                "role": "STUDENT",
-            },
+            "current_user": _user_ctx(user, "STUDENT"),
             "courses": _get_user_courses(user, session),
             "selected_course_id": invite.course_id,
             "course": {
@@ -1239,12 +1335,7 @@ async def new_task_page(
         {
             "request": request,
             "page_title": "Neue Aufgabe",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": course_role,
-            },
+            "current_user": _user_ctx(user, course_role),
             "courses": courses,
             "selected_course_id": course_id,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -1410,12 +1501,7 @@ async def task_page(
         {
             "request": request,
             "page_title": task.title,
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": membership.role_in_course.value,
-            },
+            "current_user": _user_ctx(user, membership.role_in_course.value),
             "courses": courses,
             "selected_course_id": course_id,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -1568,12 +1654,7 @@ async def submission_review_page(
         {
             "request": request,
             "page_title": f"Bewertung — {task.title}",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": membership.role_in_course.value,
-            },
+            "current_user": _user_ctx(user, membership.role_in_course.value),
             "is_admin": user.role == GlobalUserRole.ADMIN,
             "courses": courses,
             "selected_course_id": course_id,
@@ -1618,12 +1699,7 @@ async def settings_page(
         {
             "request": request,
             "page_title": "Einstellungen",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": display_role,
-            },
+            "current_user": _user_ctx(user, display_role),
             "courses": courses,
             "selected_course_id": None,
             "is_admin": user.role == GlobalUserRole.ADMIN,
@@ -1672,12 +1748,7 @@ async def admin_page(
         {
             "request": request,
             "page_title": "Admin",
-            "current_user": {
-                "id": user.id,
-                "username": user.username,
-                "name": user.name,
-                "role": user.role.value,
-            },
+            "current_user": _user_ctx(user, user.role.value),
             "courses": courses,
             "selected_course_id": None,
             "is_admin": True,

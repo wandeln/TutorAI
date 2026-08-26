@@ -1,15 +1,18 @@
 """
-User-Settings: Name / Passwort ändern.
+User-Settings: Name / Passwort ändern, Profilbild verwalten.
 
-- PATCH /api/auth/settings  → Eigene Einstellungen aktualisieren
+- PATCH  /api/auth/settings      → Eigene Einstellungen aktualisieren
+- POST   /api/auth/settings/avatar → Profilbild hochladen/ersetzen
+- DELETE /api/auth/settings/avatar → Profilbild entfernen
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from database.base import get_session
 from database.models import User, GlobalUserRole
+from services import media_service
 from services.auth_service import (
     get_current_user,
     hash_password,
@@ -91,10 +94,56 @@ async def update_settings(
     display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
     return {
         "message": " ".join(messages),
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "name": user.name,
-            "role": display_role,
-        },
+        "user": _user_dict(user, display_role),
     }
+
+
+def _user_dict(user: User, display_role: str) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "name": user.name,
+        "role": display_role,
+        "avatar": f"/avatars/{user.avatar.rsplit('/', 1)[-1]}" if user.avatar else None,
+    }
+
+
+@router.post("/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Profilbild hochladen (PNG/JPG/WebP/GIF, max. 2 MB). Ersetzt ein bestehendes Bild."""
+    data = await file.read()
+    rel_path, _mime = media_service.save_avatar(file.filename or "avatar.png", data)
+
+    if user.avatar:
+        media_service.delete_avatar_file(user.avatar)
+
+    user.avatar = rel_path
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
+    return {"message": "Profilbild wurde aktualisiert.", "user": _user_dict(user, display_role)}
+
+
+@router.delete("/avatar")
+async def delete_avatar(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Profilbild entfernen."""
+    if not user.avatar:
+        return {"message": "Kein Profilbild vorhanden.", "user": _user_dict(user, "Admin" if user.role == GlobalUserRole.ADMIN else "User")}
+
+    media_service.delete_avatar_file(user.avatar)
+    user.avatar = None
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
+    return {"message": "Profilbild wurde entfernt.", "user": _user_dict(user, display_role)}

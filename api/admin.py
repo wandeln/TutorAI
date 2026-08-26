@@ -17,6 +17,7 @@ from database.models import (
     CourseSettings,
     CourseSettingsUpdate,
     Feedback,
+    ForumChannel,
     GlobalSettings,
     GlobalSettingsUpdate,
     GlobalSettingsRead,
@@ -81,7 +82,17 @@ async def create_course(
     )
     session.add(membership)
     session.commit()
-    
+
+    # Default-Forum-Kanal anlegen
+    session.add(
+        ForumChannel(
+            course_id=course.id,  # type: ignore[arg-type]
+            name="Allgemein",
+            created_by=user.id,  # type: ignore[arg-type]
+        )
+    )
+    session.commit()
+
     return {
         "message": f"Kurs '{course.name}' erstellt.",
         "course": {
@@ -130,7 +141,22 @@ async def duplicate_course(
     session.add(membership)
     session.commit()
 
-    # 3. Alle Tasks kopieren (ohne Submissions/Feedback)
+    # 3. Forum-Kanäle kopieren (ohne Nachrichten)
+    source_channels = session.exec(
+        select(ForumChannel).where(ForumChannel.course_id == course_id)
+    ).all()
+    for src_ch in source_channels:
+        session.add(
+            ForumChannel(
+                course_id=new_course.id,  # type: ignore[arg-type]
+                name=src_ch.name,
+                description=src_ch.description,
+                created_by=user.id,  # type: ignore[arg-type]
+            )
+        )
+    session.commit()
+
+    # 4. Alle Tasks kopieren (ohne Submissions/Feedback)
     source_tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
     for src_task in source_tasks:
         new_task = Task(
@@ -150,7 +176,7 @@ async def duplicate_course(
         session.add(new_task)
     session.commit()
 
-    # 4. CourseSettings kopieren
+    # 5. CourseSettings kopieren
     source_settings = session.exec(
         select(CourseSettings).where(CourseSettings.course_id == course_id)
     ).first()

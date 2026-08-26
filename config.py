@@ -22,6 +22,11 @@ DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 MEDIA_DIR = BASE_DIR / "data" / "media"
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
+# Profilbilder: data/avatars/<uuid>.<ext>
+# Versand über authentifizierte Route GET /avatars/{filename} (kein Static-Mount!)
+AVATAR_DIR = BASE_DIR / "data" / "avatars"
+AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+
 # ─── Server ──────────────────────────────────────────────────────
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))

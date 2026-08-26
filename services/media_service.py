@@ -19,7 +19,7 @@ from typing import Optional, TypedDict
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
-from config import MEDIA_DIR
+from config import AVATAR_DIR, MEDIA_DIR
 from database.models import (
     CourseMaterial,
     CourseMedia,
@@ -29,9 +29,10 @@ from database.models import (
     Task,
 )
 
-# ─── Upload-Limits & Whitelist ────────────────────────────────
+# ─── Upload-Limits & Whitelist ────────────────────────────────────
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
 MAX_APPLET_BYTES = 200 * 1024  # 200 KB (LLM-generiertes HTML, inkl. inline JS/CSS)
+MAX_AVATAR_BYTES = 2 * 1024 * 1024  # 2 MB (Profilbilder)
 ALLOWED_MEDIA: dict[str, str] = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -167,6 +168,55 @@ def replace_applet(rel_path: str, html: str) -> tuple[str, str, int]:
         raise HTTPException(404, "Bestehende Applet-Datei nicht gefunden.")
     p.write_bytes(data)
     return rel_path, "text/html", len(data)
+
+
+# ─── Avatare (Profilbilder, user-spezifisch) ──────────────────────
+#
+# Eigenes Verzeichnis (AVATAR_DIR), da Avatare keinem Kurs zugeordnet sind
+# und nicht in die Kurs-Medien-Bibliothek (CourseMedia) gehören.
+
+def save_avatar(filename: str, data: bytes) -> tuple[str, str]:
+    """Validiert + speichert ein Profilbild-Upload.
+
+    Returns: (relativer file_path, mime_type)
+    Raises:  400/413 bei ungültigem Upload.
+    """
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_MEDIA:
+        allowed = ", ".join(sorted(ALLOWED_MEDIA))
+        raise HTTPException(400, f"Dateityp nicht erlaubt. Erlaubt: {allowed}")
+    if not data:
+        raise HTTPException(400, "Datei ist leer.")
+    if len(data) > MAX_AVATAR_BYTES:
+        raise HTTPException(413, f"Profilbild zu groß (max. {MAX_AVATAR_BYTES // (1024 * 1024)} MB).")
+
+    AVATAR_DIR.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    (AVATAR_DIR / stored_name).write_bytes(data)
+    return f"avatars/{stored_name}", ALLOWED_MEDIA[ext]
+
+
+def resolve_avatar_path(filename: str) -> Path | None:
+    """Löst einen Dateinamen auf eine sichere Datei unter AVATAR_DIR.
+
+    Returns: Pfad (wenn Datei existiert) oder None.
+    """
+    if not _FILENAME_RE.match(filename):
+        return None
+    p = (AVATAR_DIR / filename).resolve()
+    if not p.is_relative_to(AVATAR_DIR.resolve()):
+        return None
+    return p if p.is_file() else None
+
+
+def delete_avatar_file(rel_path: str) -> None:
+    """Löscht ein Profilbild auf der Festplatte (best effort)."""
+    try:
+        p = (AVATAR_DIR / rel_path.rsplit("/", 1)[-1]).resolve()
+        if p.is_relative_to(AVATAR_DIR.resolve()) and p.is_file():
+            p.unlink()
+    except OSError:
+        pass  # Datei fehlt schon oder FS-Problem — DB-Eintrag wird trotzdem gelöscht
 
 
 def resolve_media_path(course_id: int, filename: str) -> Path | None:

@@ -96,6 +96,9 @@ def migrate_schema():
     nachgezogen und obsolete Spalten entfernt (SQLite + PostgreSQL).
     """
     column_migrations = {
+        "users": {
+            "avatar": "VARCHAR",  # relatives Pfad des Profilbilds (avatars/<uuid>.<ext>)
+        },
         "global_settings": {
             "llm_api_url_public": "VARCHAR",
             "llm_api_key_public": "VARCHAR",
@@ -103,6 +106,9 @@ def migrate_schema():
         },
         "course_script_sections": {
             "summary": "TEXT",  # Interne LLM-Zusammenfassung (nicht für Studenten)
+        },
+        "forum_messages": {
+            "channel_id": "INTEGER",  # Forum-Kanal, dem die Nachricht zugeordnet ist
         },
     }
     column_drops = {

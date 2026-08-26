@@ -123,7 +123,13 @@
 
         <!-- User Info -->
         <a href="/settings" class="flex items-center gap-2 text-sm hover:opacity-80 transition" id="user-info">
-          <span>👤</span>
+          <span class="nav-avatar flex items-center justify-center w-7 h-7">
+            {% if current_user.avatar %}
+            <img src="{{ current_user.avatar }}" alt="" class="w-7 h-7 rounded-full object-cover border border-blue-300">
+            {% else %}
+            <span>👤</span>
+            {% endif %}
+          </span>
           <span>{{ current_user.name }}</span>
           <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
             {{ current_user.role }}
@@ -142,7 +148,7 @@
           hx-post="/api/auth/logout"
           hx-swap="none"
           hx-on::after-request="window.location.href = '/login'"
-          class="text-blue-200 hover:text-white transition ml-2"
+          class="text-blue-200 hover:text-white transition ml-2 mr-4"
         >
           🔑 Abmelden
         </button>
@@ -175,7 +181,13 @@
         {% endif %}
 
         <a href="/settings" class="flex items-center justify-center gap-2 text-sm hover:opacity-80 transition">
-          <span>👤</span>
+          <span class="nav-avatar flex items-center justify-center w-7 h-7">
+            {% if current_user.avatar %}
+            <img src="{{ current_user.avatar }}" alt="" class="w-7 h-7 rounded-full object-cover border border-blue-300">
+            {% else %}
+            <span>👤</span>
+            {% endif %}
+          </span>
           <span>{{ current_user.name }}</span>
           <span class="bg-blue-500 px-2 py-0.5 rounded text-xs font-semibold">
             {{ current_user.role }}

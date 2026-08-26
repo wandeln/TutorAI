@@ -35,7 +35,16 @@
             {% for member in members %}
             <tr class="member-row border-t hover:bg-gray-50 transition"
                 data-search="{{ member.name }} {{ member.username }} {{ member.role_in_course }}">
-              <td class="px-4 py-3">{{ member.name }}</td>
+              <td class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  {% if member.avatar %}
+                  <img src="{{ member.avatar }}" alt="" class="w-7 h-7 rounded-full object-cover shrink-0">
+                  {% else %}
+                  <span class="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-sm shrink-0">👤</span>
+                  {% endif %}
+                  {{ member.name }}
+                </div>
+              </td>
               <td class="px-4 py-3 text-gray-500">{{ member.username }}</td>
               <td class="px-4 py-3 text-center">
                 {% if member.user_id != current_user.id %}

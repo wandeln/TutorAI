@@ -33,7 +33,8 @@
     </div>
   </div>
 
-  <!-- Tab-Leiste -->
+  <!-- Tab-Leiste (sticky unter der Main-Nav; Sentinel markiert den Haft-Punkt) -->
+  <div id="course-tab-sentinel" aria-hidden="true"></div>
   {% include "course/_tabs.html" %}
 
   <!-- Tab-Inhalt -->
@@ -44,6 +45,42 @@
 <script>
   // Kurs-ID für alle Kurs-Seiten (auch von Child-Scripts genutzt)
   const courseId = {{ course.id }};
+
+  // Sticky Tab-Leiste: --navbar-height am Main-Nav ausrichten (Top-Offset)
+  // und Schatten aktivieren, sobald die Leiste am Viewport-Oberrand haftet.
+  (function () {
+    const nav = document.querySelector("body > nav");
+    const bar = document.getElementById("course-tab-bar");
+    const sentinel = document.getElementById("course-tab-sentinel");
+    if (nav) {
+      const setNavHeight = (h) =>
+        document.documentElement.style.setProperty("--navbar-height", h + "px");
+      new ResizeObserver((entries) => {
+        const h = entries[0].borderBoxSize[0].blockSize;
+        setNavHeight(h);
+      }).observe(nav);
+      setNavHeight(nav.offsetHeight);
+    }
+    if (bar && sentinel) {
+      new IntersectionObserver(([entry]) => {
+        bar.classList.toggle("shadow-md", !entry.isIntersecting);
+      }).observe(sentinel);
+    }
+    // Full-Bleed: Leiste exakt auf die sichtbare Viewport-Breite ziehen
+    // (100vw würde die vertikale Scrollbar mitzählen — daher sb + Spalten-Offset).
+    if (bar) {
+      const applyBleed = () => {
+        const sb = window.innerWidth - document.documentElement.clientWidth;
+        const x = bar.parentElement.getBoundingClientRect().left;
+        const root = document.documentElement.style;
+        root.setProperty("--tab-sb", sb + "px");
+        root.setProperty("--tab-page-x", x + "px");
+        bar.classList.add("tab-full-bleed");
+      };
+      applyBleed();
+      window.addEventListener("resize", applyBleed);
+    }
+  })();
 </script>
 
 {% if is_prof or is_admin %}

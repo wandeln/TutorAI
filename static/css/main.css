@@ -406,6 +406,15 @@
   scroll-margin-top: 100px;
 }
 
+/* Kurs-Tab-Leiste: volle Viewport-Breite (Full-Bleed), damit der Haft-Schatten
+   nicht an der Kante der max-w-6xl-Spalte endet. course/base.html misst den
+   Spalten-Offset (--tab-page-x) und die Scrollbar-Breite (--tab-sb) —
+   100vw allein würde die Scrollbar mitzählen und rechts eine Lücke lassen. */
+#course-tab-bar.tab-full-bleed {
+  width: calc(100vw - var(--tab-sb, 0px));
+  margin-left: calc(-1 * var(--tab-page-x, 0px));
+}
+
 /* ════════════════════════════════════════════════════════════
    KaTeX
    ════════════════════════════════════════════════════════════ */

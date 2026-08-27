@@ -7,10 +7,9 @@
            Rollen- und Inhalts-Sichtbarkeit ist dort zentral geregelt)
 
    Die Leiste ist sticky direkt unter der Main-Navigation: course/base.html
-   hält --navbar-height (Fallback 60px) via ResizeObserver aktuell, blendet
-   einen Schatten ein, sobald die Leiste haftet, und zieht sie per
-   .tab-full-bleed (main.css) auf die volle Viewport-Breite (--tab-page-x /
-   --tab-sb). Die innere Box spiegelt exakt die Struktur von
+   hält --navbar-height (Fallback 60px) via ResizeObserver aktuell und zieht
+   die Leiste per .tab-full-bleed (main.css) auf die volle Viewport-Breite
+   (--tab-page-x / --tab-sb). Die innere Box spiegelt exakt die Struktur von
    <main> → Inhalts-Spalte (container px-4 > max-w-6xl), damit die Tabs
    an den Inhalts-Kanten ausgerichtet bleiben.
    ───────────────────────────────────────────────────────────────────── #}

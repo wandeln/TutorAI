@@ -33,8 +33,7 @@
     </div>
   </div>
 
-  <!-- Tab-Leiste (sticky unter der Main-Nav; Sentinel markiert den Haft-Punkt) -->
-  <div id="course-tab-sentinel" aria-hidden="true"></div>
+  <!-- Tab-Leiste (sticky, full-width unter der Main-Nav) -->
   {% include "course/_tabs.html" %}
 
   <!-- Tab-Inhalt -->
@@ -47,11 +46,10 @@
   const courseId = {{ course.id }};
 
   // Sticky Tab-Leiste: --navbar-height am Main-Nav ausrichten (Top-Offset)
-  // und Schatten aktivieren, sobald die Leiste am Viewport-Oberrand haftet.
+  // und Full-Bleed-Geometrie (--tab-sb / --tab-page-x) aktuell halten.
   (function () {
     const nav = document.querySelector("body > nav");
     const bar = document.getElementById("course-tab-bar");
-    const sentinel = document.getElementById("course-tab-sentinel");
     if (nav) {
       const setNavHeight = (h) =>
         document.documentElement.style.setProperty("--navbar-height", h + "px");
@@ -61,13 +59,11 @@
       }).observe(nav);
       setNavHeight(nav.offsetHeight);
     }
-    if (bar && sentinel) {
-      new IntersectionObserver(([entry]) => {
-        bar.classList.toggle("shadow-md", !entry.isIntersecting);
-      }).observe(sentinel);
-    }
     // Full-Bleed: Leiste exakt auf die sichtbare Viewport-Breite ziehen
     // (100vw würde die vertikale Scrollbar mitzählen — daher sb + Spalten-Offset).
+    // ResizeObserver auf <body>: fängt auch den Scrollbar-Wechsel ein, der
+    // keinen Viewport-Resize auslöst — wenn die Scrollbar erscheint, wird
+    // der Body um genau ihre Breite schmaler.
     if (bar) {
       const applyBleed = () => {
         const sb = window.innerWidth - document.documentElement.clientWidth;
@@ -78,6 +74,7 @@
         bar.classList.add("tab-full-bleed");
       };
       applyBleed();
+      new ResizeObserver(applyBleed).observe(document.body);
       window.addEventListener("resize", applyBleed);
     }
   })();

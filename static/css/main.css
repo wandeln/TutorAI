@@ -406,12 +406,15 @@
   scroll-margin-top: 100px;
 }
 
-/* Kurs-Tab-Leiste: volle Viewport-Breite (Full-Bleed), damit der Haft-Schatten
-   nicht an der Kante der max-w-6xl-Spalte endet. course/base.html misst den
-   Spalten-Offset (--tab-page-x) und die Scrollbar-Breite (--tab-sb) —
-   100vw allein würde die Scrollbar mitzählen und rechts eine Lücke lassen. */
+/* Kurs-Tab-Leiste: volle Viewport-Breite (Full-Bleed). course/base.html misst
+   den Spalten-Offset (--tab-page-x) und die Scrollbar-Breite (--tab-sb) —
+   100vw allein würde die Scrollbar mitzählen und rechts eine Lücke lassen.
+   Die zusätzlichen -1px sind eine Sicherheitsmarge: jeder noch so kleine
+   Überhang (z. B. Subpixel-Rundung) würde eine horizontale Scrollbar
+   auslösen, die dann dauerhaft bleibt. Da die Leiste denselben Hintergrund
+   wie die Seite hat, ist der 1px-Randversatz rechts nicht sichtbar. */
 #course-tab-bar.tab-full-bleed {
-  width: calc(100vw - var(--tab-sb, 0px));
+  width: calc(100vw - var(--tab-sb, 0px) - 1px);
   margin-left: calc(-1 * var(--tab-page-x, 0px));
 }
 

@@ -20,10 +20,12 @@
   <a href="/courses/{{ course.id }}/media" class="text-sm text-blue-600 hover:underline">← Zurück zu den Medien</a>
 </div>
 
+{# min-w-0 an beiden Spalten verhindert, dass der CodeMirror-Editor die
+   Grid-Spalte auf min-content-Breite aufbläst und das Layout in x sprengt #}
 <div class="grid gap-6 lg:grid-cols-5">
 
   <!-- ═══ Links: LLM + Metadaten + Speichern ═══ -->
-  <div class="lg:col-span-2 space-y-4">
+  <div class="lg:col-span-2 min-w-0 space-y-4">
 
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
       <h2 class="font-bold text-gray-800 mb-3">🤖 Mit LLM erzeugen</h2>
@@ -80,7 +82,7 @@
   </div>
 
   <!-- ═══ Rechts: Live-Preview + HTML-Code ═══ -->
-  <div class="lg:col-span-3 space-y-4">
+  <div class="lg:col-span-3 min-w-0 space-y-4">
 
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
       <div class="flex items-center justify-between mb-3">

@@ -13,6 +13,11 @@
   /* Etwas Luft, wenn per scrollIntoView (block: 'start') hingescrollt wird */
   mark.sq-mark { scroll-margin-top: 1.5rem; }
   .sq-thread { scroll-margin-top: 0.5rem; }
+  /* Mobil: kein Vertikalabstand zwischen Tab-Leiste und Kapitelliste
+     (mb-6 der Leiste → 0; entspricht Tailwind-sm-Grenze 640px) */
+  @media (max-width: 639px) {
+    #course-tab-bar { margin-bottom: 0; }
+  }
 </style>
 {% endblock %}
 
@@ -111,7 +116,8 @@
 {% else %}
 
   <!-- Student: freigeschaltete Kapitel (Überschriften, Inhalt per Klick ausklappbar) -->
-  <div id="script-reading" class="space-y-4">
+  <!-- space-y nur ab sm: mobil haben die Karten keinen Vertikalabstand -->
+  <div id="script-reading" class="sm:space-y-4">
     <p class="text-gray-400 text-sm">Wird geladen…</p>
   </div>
 
@@ -323,7 +329,9 @@
       const svgNS = "http://www.w3.org/2000/svg";
       for (const s of sections) {
         const card = document.createElement("div");
-        card.className = "script-chapter-card bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden";
+        // Mobil: Karte full-bleed (nimmt das px-4 des Main-Containers per
+        // -mx-4 mit, keine Rundung, keine Seitenbänder). Ab sm: gewöhnliche Karte.
+        card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl";
         card.setAttribute("data-section-id", s.id);
         card.setAttribute("data-section-title", s.title);
 

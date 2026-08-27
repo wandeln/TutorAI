@@ -54,7 +54,7 @@ from database.models import (
 from services.auth_service import get_current_user, hash_password, require_course_access
 from services import media_service
 
-from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, student, tutor, user_settings, course_members
+from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, script_questions, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -263,6 +263,7 @@ app.include_router(media_api.router)
 app.include_router(materials_api.router)
 app.include_router(script_api.router)
 app.include_router(forum.router)
+app.include_router(script_questions.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -392,6 +393,17 @@ def _course_tab_context(
             "active": active_tab == "tasks",
         }
     )
+    # Fragen: nur für Tutor/PROF/Admin (Studenten sehen Fragen im Skript-Dialog)
+    if is_tutor or is_admin:
+        tabs.append(
+            {
+                "key": "questions",
+                "icon": "❓",
+                "label": "Fragen",
+                "url": f"/courses/{course_id}/script-questions",
+                "active": active_tab == "questions",
+            }
+        )
     # Forum: für alle Kurs-Mitglieder (Student/Tutor/PROF) + Admins
     if membership is not None or is_admin:
         tabs.append(
@@ -1156,6 +1168,33 @@ async def forum_page(
         else []
     )
     return templates.TemplateResponse("course/forum.html", ctx)
+
+
+@app.get("/courses/{course_id}/script-questions")
+async def script_questions_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Fragen': alle Studenten-Fragen zum Skript (nur Tutor/PROF/Admin)."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="questions"
+    )
+
+    if not ctx["is_tutor"] and not ctx["is_admin"]:
+        raise HTTPException(403, "Nur Tutoren und PROFs können die Fragen einsehen.")
+
+    sections = session.exec(
+        select(ScriptSection)
+        .where(ScriptSection.course_id == course_id)
+        .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
+    ).all()
+
+    ctx["page_title"] = f"Fragen — {ctx['course']['name']}"
+    ctx["questions_payload"] = script_questions.load_questions_payload(session, course_id, user)
+    ctx["script_sections"] = [{"id": s.id, "title": s.title} for s in sections]
+    return templates.TemplateResponse("course/script_questions.html", ctx)
 
 
 @app.get("/courses/{course_id}/members")

@@ -22,6 +22,7 @@ from database.models import (
     CourseRole,
     FeedbackSource,
     GlobalUserRole,
+    ScriptQuestion,
     ScriptSection,
     Submission,
     Task,
@@ -568,6 +569,14 @@ async def delete_section(
 
     section_course_id = section.course_id
     section_title = section.title
+
+    # Fragen auf dieses Kapitel bleiben als „Allgemein“ (sonst FK-Verstoß)
+    for q in session.exec(
+        select(ScriptQuestion).where(ScriptQuestion.section_id == section_id)
+    ).all():
+        q.section_id = None
+        session.add(q)
+
     session.delete(section)
     session.commit()
     sync_media_usages(session, section_course_id)

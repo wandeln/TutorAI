@@ -24,6 +24,7 @@ from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
 from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
 from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
+from prompts.script_question_prompt import SCRIPT_QUESTION_PROMPT_TEMPLATE
 from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
 from prompts.applet_prompt import APPLET_PROMPT_TEMPLATE
 
@@ -620,6 +621,46 @@ class LLMService:
         # Passe das Return-Format an, um "report" statt "model_solution" zu verwenden
         if result["success"]:
             result["data"] = {"report": result["data"]["model_solution"]}
+
+        return result
+
+    async def answer_script_question(
+        self,
+        course_name: str,
+        section_context: str,
+        quote_context: str,
+        chapter_index: str,
+        question_history: str,
+        student_question: str,
+        config: Optional[dict] = None,
+    ):
+        """Beantwortet eine Studenten-Frage zum Skript (Freitext, kein JSON).
+
+        section_context: Markdown-Inhalt des zitierten Kapitels (ggf. gekürzt)
+            oder Hinweis, dass die Frage allgemein ist.
+        quote_context: Textauswahl des Studenten oder Hinweis, dass keine da ist.
+        chapter_index: Titel (+ Zusammenfassung) der sichtbaren Kapitel —
+            für konsistente Querverweise (@fig:/@eq:).
+        question_history: Die letzten Fragen des Studenten (Kontext).
+
+        Returns:
+            Dict mit "success", "data"{"text": markdown}, "latency_ms", "raw_response"
+        """
+        prompt = self._render_prompt(
+            SCRIPT_QUESTION_PROMPT_TEMPLATE,
+            course_name=course_name,
+            section_context=section_context,
+            quote_context=quote_context,
+            chapter_index=chapter_index,
+            question_history=question_history,
+            student_question=student_question,
+        )
+
+        result = await self._call_plain(prompt, config=config)
+
+        # Passe das Return-Format an: "text" statt "model_solution"
+        if result["success"]:
+            result["data"] = {"text": result["data"]["model_solution"]}
 
         return result
 

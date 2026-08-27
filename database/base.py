@@ -110,6 +110,10 @@ def migrate_schema():
         "forum_messages": {
             "channel_id": "INTEGER",  # Forum-Kanal, dem die Nachricht zugeordnet ist
         },
+        "script_questions": {
+            "quote_ctx": "VARCHAR(2000)",  # Kontext um die Quote (eindeutige Ortung)
+            "quote_off": "INTEGER",  # Startoffset der Quote innerhalb von quote_ctx
+        },
     }
     column_drops = {
         "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt

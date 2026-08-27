@@ -699,3 +699,50 @@ class ForumMessageRead(SQLModel):
     role: str
     avatar: Optional[str] = None
     can_delete: bool = False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SKRIPT-FRAGEN (Studenten-Fragen zum Skript, inkl. LLM- +
+# Human-Antworten; für Tutoren/Profs zur Skript-Verbesserung)
+# ═══════════════════════════════════════════════════════════════════
+
+class ScriptQuestionBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    # None = Allgemeine Frage (kein konkretes Kapitel / Kapitel gelöscht)
+    section_id: Optional[int] = Field(default=None, foreign_key="course_script_sections.id", index=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    question: str = Field(max_length=2000)
+    # Optionaler Text-Exkurs aus dem Skript, auf den sich die Frage bezieht
+    quote: str = Field(default="", max_length=1000)
+    # Kontext um die Quote (Quote + ~120 Zeichen vor/nachher, normalisiert),
+    # damit die Stelle im Skript eindeutig zu finden ist; None bei älteren Fragen
+    quote_ctx: Optional[str] = Field(default=None, max_length=2000)
+    # Startoffset der Quote innerhalb von quote_ctx (normalisierter String)
+    quote_off: int = Field(default=0)
+    # "open" | "addressed" (von Tutoren/Profs umschaltbar)
+    status: str = Field(default="open", max_length=20)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class ScriptQuestion(ScriptQuestionBase, table=True):
+    __tablename__ = "script_questions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    responses: List["ScriptQuestionResponse"] = Relationship(back_populates="question")
+
+
+class ScriptQuestionResponse(SQLModel, table=True):
+    __tablename__ = "script_question_responses"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    question_id: int = Field(foreign_key="script_questions.id", index=True)
+    # None = LLM-Antwort (source == "llm")
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    # "llm" | "human"
+    source: str = Field(default="human", max_length=10)
+    content: str = Field(default="", max_length=8000)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    question: Optional["ScriptQuestion"] = Relationship(back_populates="responses")

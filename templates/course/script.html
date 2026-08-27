@@ -3,6 +3,17 @@
 {% block extra_head %}
 <!-- SortableJS (MIT) — Drag-and-Drop -->
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+<style>
+  /* Markierungen für Skript-Fragen im Lesefluss (Student) */
+  mark.sq-mark { background: #fef08a; border-radius: 3px; cursor: pointer; }
+  mark.sq-mark:hover { background: #fde047; }
+  /* Blockinhalt im Mark (z. B. Display-Formel): Mark wird Block, damit
+     der Hintergrund die ganze Formel überdeckt */
+  mark.sq-mark:has(> .katex-display) { display: block; border-radius: 6px; }
+  /* Etwas Luft, wenn per scrollIntoView (block: 'start') hingescrollt wird */
+  mark.sq-mark { scroll-margin-top: 1.5rem; }
+  .sq-thread { scroll-margin-top: 0.5rem; }
+</style>
 {% endblock %}
 
 {# ─────────────────────────────────────────────────────────────────────
@@ -102,6 +113,53 @@
   <!-- Student: freigeschaltete Kapitel (Überschriften, Inhalt per Klick ausklappbar) -->
   <div id="script-reading" class="space-y-4">
     <p class="text-gray-400 text-sm">Wird geladen…</p>
+  </div>
+
+  <!-- Schwebender Fragen-Button (mousedown preventDefault erhält die Text-Auswahl) -->
+  <button id="script-question-fab" type="button" onmousedown="event.preventDefault()"
+          class="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-2xl font-bold shadow-lg transition"
+          title="Frage zum Skript stellen">?</button>
+
+  <!-- Fragen-Dialog: eigene + alle Fragen, Composer mit Auswahl-Bezug, Markierungs-Modus -->
+  <div id="sq-dialog" class="hidden fixed bottom-24 right-6 z-40 w-[440px] max-w-[calc(100vw-2rem)] h-[70vh] max-h-[640px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-clip">
+    <div class="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50">
+      <span class="text-sm font-bold text-gray-700 shrink-0">❓ Fragen</span>
+      <label class="flex items-center gap-1.5 cursor-pointer select-none shrink-0" title="Fragen im Skript markieren – ob eigene oder alle hängt von der Registerkarte ab">
+        <span class="text-xs text-gray-600">Markierungen</span>
+        <span class="relative inline-block w-9 h-5">
+          <input id="sq-mark-toggle" type="checkbox" class="sr-only peer">
+          <span class="absolute inset-0 rounded-full bg-gray-300 peer-checked:bg-blue-500 peer-focus:ring-2 peer-focus:ring-blue-300 transition"></span>
+          <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition peer-checked:translate-x-4"></span>
+        </span>
+      </label>
+      <select id="sq-status-filter" class="text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white text-gray-600 shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500" title="Fragen nach Status filtern">
+        <option value="all">Alle</option>
+        <option value="open">Offen</option>
+        <option value="addressed">Behandelt</option>
+      </select>
+      <span class="flex-1"></span>
+      <button id="sq-close" type="button" class="text-gray-400 hover:text-gray-700 text-lg leading-none px-1" title="Schließen">✕</button>
+    </div>
+    <div class="flex border-b border-gray-100 shrink-0">
+      <button id="sq-tab-mine" type="button" class="flex-1 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 transition">Meine Fragen</button>
+      <button id="sq-tab-all" type="button" class="flex-1 py-2 text-sm font-semibold text-gray-400 border-b-2 border-transparent hover:text-gray-600 transition">Alle Fragen</button>
+    </div>
+    <!-- Tab „Meine“: Threads + Composer -->
+    <div id="sq-body-mine" class="flex-1 flex flex-col min-h-0">
+      <div id="sq-threads" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
+      <div class="border-t border-gray-100 p-3 shrink-0">
+        <div id="sq-quote-chip" class="hidden mb-2 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
+          <span class="flex-1 min-w-0 break-words">📖 <span id="sq-quote-text"></span> <span id="sq-quote-section" class="text-gray-400"></span></span>
+          <button id="sq-quote-clear" type="button" class="text-gray-400 hover:text-gray-600 leading-none" title="Auswahl entfernen">✕</button>
+        </div>
+        <div class="flex items-end gap-2">
+          <textarea id="sq-input" rows="2" maxlength="2000" placeholder="Frage zum Skript stellen…" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+          <button id="sq-send" type="button" class="bg-blue-600 hover:bg-blue-700 text-white w-10 h-10 rounded-lg text-lg transition shrink-0" title="Frage stellen">➤</button>
+        </div>
+      </div>
+    </div>
+    <!-- Tab „Alle“ -->
+    <div id="sq-body-all" class="hidden flex-1 overflow-y-auto p-3 space-y-3"></div>
   </div>
 
 {% endif %}
@@ -267,6 +325,7 @@
         const card = document.createElement("div");
         card.className = "script-chapter-card bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden";
         card.setAttribute("data-section-id", s.id);
+        card.setAttribute("data-section-title", s.title);
 
         const header = document.createElement("button");
         header.type = "button";
@@ -300,17 +359,24 @@
         header.addEventListener("click", async () => {
           const nowHidden = body.classList.toggle("hidden");
           chevron.style.transform = nowHidden ? "" : "rotate(180deg)";
-          if (!nowHidden && !loaded) {
+          if (nowHidden) return;
+          if (!loaded) {
             try {
               const r = await fetch(`/api/script-sections/${s.id}`, { credentials: "same-origin" });
               if (!r.ok) throw new Error("Nicht geladen");
               const data = await r.json();
               await renderMarkdown(data.content || "", md, { sectionId: s.id });
               loaded = true;
+              md.setAttribute("data-loaded", "1");
             } catch (e) {
               md.textContent = "Fehler beim Laden des Kapitels.";
+              return;
             }
           }
+          // Markierungen bei JEDEM Aufklappen (neu) anwenden — idempotent.
+          // Wichtig, wenn das Kapitel schon vor dem ersten Laden der Fragen
+          // geöffnet war (sqData war dann noch leer → keine Markierung).
+          sqApplyMarksToSection(md, s.id);
         });
 
         card.appendChild(header);
@@ -371,6 +437,910 @@
   });
 
   loadScript();
+
+  // ─── Skript-Fragen: Dialog, Auswahl, Markierungen ──────────────────
+  const sqMe = {{ current_user | tojson }};
+
+  const SQ_ROLE_STYLES = {
+    PROF: 'bg-red-100 text-red-700',
+    TUTOR: 'bg-blue-100 text-blue-700',
+    STUDENT: 'bg-green-100 text-green-700',
+    ADMIN: 'bg-yellow-100 text-yellow-800',
+    LLM: 'bg-purple-100 text-purple-700',
+  };
+
+  let sqData = [];        // Fragen (neueste zuerst)
+  let sqSelection = null; // { quote, quoteCtx, quoteOff, sectionId, sectionTitle }
+  let sqLoaded = false;
+  let sqPolling = false;
+  let sqActiveTab = 'mine'; // Aktiver Tab ('mine' | 'all') – steuert den Markierungs-Modus
+  let sqFilter = 'all'; // Status-Filter der Fragenliste ('all' | 'open' | 'addressed')
+
+  const sqDialog = document.getElementById('sq-dialog');
+
+  function sqEscapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function sqTimeLabel(iso) {
+    const d = new Date(iso);
+    const time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    if (d.toDateString() === new Date().toDateString()) return time;
+    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + time;
+  }
+
+  function sqAvatarHtml(u, sizeCls) {
+    const size = sizeCls || 'w-8 h-8';
+    if (u.avatar) return `<img src="${u.avatar}" alt="" class="${size} rounded-full object-cover shrink-0">`;
+    const isLLM = u.role === 'LLM';
+    return `<div class="${size} rounded-full ${isLLM ? 'bg-purple-100' : 'bg-gray-200'} flex items-center justify-center shrink-0 text-sm">${isLLM ? '🤖' : '👤'}</div>`;
+  }
+
+  // Status-Chip: für Fragesteller/Staff ein Dropdown (offen / behandelt),
+  // sonst ein reiner Anzeigechip — farbcodiert wie die Rollen-Dropdowns.
+  function sqStatusBadge(q) {
+    const addressed = q.status === 'addressed';
+    if (!q.can_set_status) {
+      return addressed
+        ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 shrink-0">behandelt</span>'
+        : '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 shrink-0">offen</span>';
+    }
+    const colors = addressed ? 'bg-green-50 border-green-200 text-green-700' : 'bg-yellow-50 border-yellow-200 text-yellow-700';
+    return `<select class="sq-status-select border rounded px-1.5 py-0.5 text-[10px] font-bold shrink-0 focus:outline-none focus:ring-2 focus:ring-blue-500 ${colors}" data-id="${q.id}" title="Status ändern (offen / behandelt)">` +
+      `<option value="open"${addressed ? '' : ' selected'}>offen</option>` +
+      `<option value="addressed"${addressed ? ' selected' : ''}>behandelt</option>` +
+      `</select>`;
+  }
+
+  // ─── Laden + Rendern ──────────────────────────────────────────
+  async function sqLoad() {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/script-questions`, { credentials: "same-origin" });
+      if (!res.ok) return;
+      sqData = await res.json();
+    } catch {
+      return; // kein Netz — nächster Poll
+    }
+    const mineBody = document.getElementById('sq-body-mine');
+    const allBody = document.getElementById('sq-body-all');
+    if (!sqTabHasDirtyInput(mineBody)) await sqRenderTab('mine');
+    if (!sqTabHasDirtyInput(allBody)) await sqRenderTab('all');
+    sqApplyMarks();
+  }
+
+  // Tab nur neu rendern, wenn dort kein eingegebener Text verloren ginge
+  function sqTabHasDirtyInput(tabEl) {
+    if (!tabEl) return true;
+    return Array.from(tabEl.querySelectorAll('input, textarea')).some((el) => el.value.trim().length > 0);
+  }
+
+  async function sqRenderTab(which) {
+    const list = which === 'mine' ? document.getElementById('sq-threads') : document.getElementById('sq-body-all');
+    const scrollTop = list.scrollTop; // Sonst springt die Liste beim Re-Render (Status ändern, Polling) nach oben
+    list.innerHTML = '';
+    let items = which === 'mine' ? sqData.filter((q) => q.is_mine) : sqData;
+    if (sqFilter !== 'all') items = items.filter((q) => q.status === sqFilter);
+    if (!items.length) {
+      const hasAny = which === 'mine' ? sqData.some((q) => q.is_mine) : sqData.length > 0;
+      list.innerHTML = hasAny && sqFilter !== 'all'
+        ? '<p class="text-center text-sm text-gray-400 py-6">Keine Fragen mit diesem Status.</p>'
+        : which === 'mine'
+          ? '<p class="text-center text-sm text-gray-400 py-6">Du hast noch keine Fragen gestellt.<br>Text im Skript markieren und unten die Frage schreiben — oder einfach direkt fragen.</p>'
+          : '<p class="text-center text-sm text-gray-400 py-6">Noch keine Fragen zum Skript.</p>';
+      return;
+    }
+    for (const q of items) list.appendChild(await sqThreadEl(q));
+    list.scrollTop = scrollTop;
+  }
+
+  async function sqThreadEl(q) {
+    const el = document.createElement('div');
+    el.className = 'sq-thread group bg-white rounded-xl border border-gray-200 p-3';
+    el.dataset.sqId = String(q.id);
+    const roleClass = SQ_ROLE_STYLES[q.student.role] || 'bg-gray-100 text-gray-600';
+    const jumpable = !!(q.quote && q.section_id != null);
+    const jumpCls = jumpable ? ' cursor-pointer transition' : '';
+    const jumpTitle = jumpable ? ' title="Zur Stelle im Skript springen"' : '';
+    el.innerHTML = `
+      <div class="flex items-center gap-2">
+        ${sqAvatarHtml(q.student, 'w-7 h-7')}
+        <span class="text-sm font-semibold text-gray-800 min-w-0 truncate" title="${sqEscapeHtml(q.student.name)}">${sqEscapeHtml(q.student.name)}</span>
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${roleClass} shrink-0">${sqEscapeHtml(q.student.role)}</span>
+        ${sqStatusBadge(q)}
+        <span class="text-[11px] text-gray-400 ml-auto shrink-0">${sqTimeLabel(q.created_at)}</span>
+        ${q.can_delete ? `<button type="button" class="sq-delete opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition text-sm leading-none shrink-0" data-id="${q.id}" title="Frage löschen">✕</button>` : ''}
+      </div>
+      ${q.section_title ? `<div class="mt-1.5"><span class="px-1.5 py-0.5 rounded bg-gray-100 text-[10px] font-semibold text-gray-500">📖 ${sqEscapeHtml(q.section_title)}</span></div>` : ''}
+      ${q.quote ? `<div class="sq-quote-block mt-2 bg-yellow-50 border-l-4 border-yellow-300 rounded-r-lg px-2.5 py-1.5 text-xs text-gray-600 break-words${jumpCls} hover:bg-yellow-100"${jumpTitle}>📖 „${sqEscapeHtml(q.quote)}“</div>` : ''}
+      <div class="sq-question-text mt-1.5 text-sm text-gray-800 whitespace-pre-wrap break-words${jumpCls} hover:text-blue-700"${jumpTitle}>${sqEscapeHtml(q.question)}</div>
+      <div class="sq-responses"></div>
+      <div class="mt-2 flex items-center gap-2">
+        <input type="text" maxlength="8000" placeholder="Antwort schreiben…" class="sq-answer-input flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+        <button type="button" class="sq-answer-send text-blue-600 hover:text-blue-800 text-sm font-semibold shrink-0" data-id="${q.id}">Senden</button>
+      </div>
+    `;
+    const respList = el.querySelector('.sq-responses');
+    for (const r of q.responses) respList.appendChild(await sqResponseEl(r));
+    if (jumpable) {
+      // Klick auf Frage oder Zitat → zur markierten Stelle im Skript scrollen
+      el.querySelector('.sq-quote-block').addEventListener('click', () => sqScrollToQuestion(q));
+      el.querySelector('.sq-question-text').addEventListener('click', () => sqScrollToQuestion(q));
+    }
+    return el;
+  }
+
+  async function sqResponseEl(r) {
+    const el = document.createElement('div');
+    el.className = 'sq-response flex gap-2.5 mt-2';
+    const roleClass = SQ_ROLE_STYLES[r.role] || 'bg-gray-100 text-gray-600';
+    el.innerHTML = `
+      ${sqAvatarHtml(r, 'w-8 h-8')}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs font-semibold text-gray-700">${sqEscapeHtml(r.name)}</span>
+          <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${roleClass}">${sqEscapeHtml(r.role)}</span>
+          <span class="text-[11px] text-gray-400">${sqTimeLabel(r.created_at)}</span>
+        </div>
+        <div class="sq-md markdown-preview mt-0.5 text-sm text-gray-700"></div>
+      </div>
+    `;
+    await renderMarkdown(r.content || '', el.querySelector('.sq-md'), {});
+    return el;
+  }
+
+  function sqTempThreadEl(tempId, question, selection) {
+    const el = document.createElement('div');
+    el.className = 'sq-thread bg-white rounded-xl border border-blue-200 p-3';
+    el.dataset.sqId = tempId;
+    const roleClass = SQ_ROLE_STYLES[sqMe.role] || 'bg-gray-100 text-gray-600';
+    el.innerHTML = `
+      <div class="flex items-center gap-2 flex-wrap">
+        ${sqAvatarHtml(sqMe, 'w-7 h-7')}
+        <span class="text-sm font-semibold text-gray-800">${sqEscapeHtml(sqMe.name)}</span>
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold ${roleClass}">${sqEscapeHtml(sqMe.role)}</span>
+        <span class="text-[11px] text-gray-400 ml-auto shrink-0">gerade eben</span>
+      </div>
+      ${selection && selection.quote ? `<div class="mt-2 bg-yellow-50 border-l-4 border-yellow-300 rounded-r-lg px-2.5 py-1.5 text-xs text-gray-600 break-words">📖 „${sqEscapeHtml(selection.quote)}“${selection.sectionTitle ? ` <span class="text-gray-400">— ${sqEscapeHtml(selection.sectionTitle)}</span>` : ''}</div>` : ''}
+      <div class="mt-1.5 text-sm text-gray-800 whitespace-pre-wrap break-words">${sqEscapeHtml(question)}</div>
+      <div class="sq-waiting mt-2 text-xs text-purple-500">⏳ Die KI denkt nach… (0 s)</div>
+    `;
+    return el;
+  }
+
+  // ─── Neue Frage stellen (optimistischer Temp-Thread) ──────────
+  async function sqSend() {
+    const input = document.getElementById('sq-input');
+    const question = input.value.trim();
+    if (!question) return;
+    input.value = '';
+    input.style.height = 'auto';
+
+    const list = document.getElementById('sq-threads');
+    const tempId = 'temp-' + Date.now();
+    const empty = list.querySelector('p');
+    if (empty) empty.remove();
+    list.prepend(sqTempThreadEl(tempId, question, sqSelection));
+    sqSwitchTab('mine');
+
+    let seconds = 0;
+    const timer = setInterval(() => {
+      seconds += 1;
+      const waiting = list.querySelector(`[data-sq-id="${tempId}"] .sq-waiting`);
+      if (waiting) waiting.textContent = `⏳ Die KI denkt nach… (${seconds} s)`;
+    }, 1000);
+
+    try {
+      const res = await fetch(`/api/courses/${courseId}/script-questions`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          section_id: sqSelection && sqSelection.sectionId ? sqSelection.sectionId : null,
+          question,
+          quote: sqSelection && sqSelection.quote ? sqSelection.quote : '',
+          quote_ctx: sqSelection && sqSelection.quoteCtx ? sqSelection.quoteCtx : null,
+          quote_off: sqSelection && sqSelection.quoteOff ? sqSelection.quoteOff : 0,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.detail || 'Frage konnte nicht gesendet werden.', 'error');
+        const tmp = list.querySelector(`[data-sq-id="${tempId}"]`);
+        if (tmp) tmp.remove();
+      }
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+      const tmp = list.querySelector(`[data-sq-id="${tempId}"]`);
+      if (tmp) tmp.remove();
+    } finally {
+      clearInterval(timer);
+      sqSelection = null;
+      sqUpdateQuoteChip();
+      await sqLoad();
+    }
+  }
+
+  // ─── Antworten + Löschen (Event-Delegation in beiden Tabs) ────
+  for (const container of [document.getElementById('sq-threads'), document.getElementById('sq-body-all')]) {
+    // Status-Dropdown (offen / behandelt) — Chip selbst ist das Select
+    container.addEventListener('change', async (e) => {
+      const sel = e.target.closest('.sq-status-select');
+      if (!sel) return;
+      const prev = sel.value;
+      try {
+        const res = await fetch('/api/script-questions/' + sel.dataset.id, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: sel.value }),
+        });
+        if (res.ok) {
+          await sqLoad();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          sel.value = prev;
+          showToast(data.detail || 'Status konnte nicht geändert werden.', 'error');
+        }
+      } catch (err) {
+        sel.value = prev;
+        showToast('Fehler: ' + err.message, 'error');
+      }
+    });
+    container.addEventListener('click', async (e) => {
+      const delBtn = e.target.closest('.sq-delete');
+      if (delBtn) {
+        if (!confirm('Diese Frage inkl. aller Antworten wirklich löschen?')) return;
+        try {
+          const res = await fetch('/api/script-questions/' + delBtn.dataset.id, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+          });
+          if (res.ok) {
+            await sqLoad();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            showToast(data.detail || 'Löschen fehlgeschlagen.', 'error');
+          }
+        } catch (err) {
+          showToast('Fehler: ' + err.message, 'error');
+        }
+        return;
+      }
+      const sendBtn = e.target.closest('.sq-answer-send');
+      if (!sendBtn) return;
+      const row = sendBtn.closest('.sq-thread');
+      const input = row ? row.querySelector('.sq-answer-input') : null;
+      if (!input) return;
+      const content = input.value.trim();
+      if (!content) return;
+      input.value = '';
+      try {
+        const res = await fetch(`/api/script-questions/${sendBtn.dataset.id}/responses`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content }),
+        });
+        if (res.ok) {
+          await sqLoad();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          showToast(data.detail || 'Antwort konnte nicht gesendet werden.', 'error');
+          input.value = content;
+        }
+      } catch (err) {
+        showToast('Fehler: ' + err.message, 'error');
+        input.value = content;
+      }
+    });
+    container.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const input = e.target.closest('.sq-answer-input');
+      if (!input) return;
+      e.preventDefault();
+      const btn = input.parentElement ? input.parentElement.querySelector('.sq-answer-send') : null;
+      if (btn) btn.click();
+    });
+  }
+
+  // ─── Dialog: öffnen/schließen, Tabs ───────────────────────────
+  function sqOpenDialog() {
+    sqDialog.classList.remove('hidden');
+    if (!sqLoaded) {
+      sqLoaded = true;
+      sqLoad();
+    }
+    setTimeout(() => document.getElementById('sq-input').focus(), 50);
+  }
+
+  // "?"-Button togglet den Dialog (zweiter Klick blendet ihn wieder aus)
+  document.getElementById('script-question-fab').addEventListener('click', () => {
+    if (sqDialog.classList.contains('hidden')) sqOpenDialog();
+    else sqDialog.classList.add('hidden');
+  });
+  document.getElementById('sq-close').addEventListener('click', () => sqDialog.classList.add('hidden'));
+
+  function sqSwitchTab(which) {
+    const mine = which === 'mine';
+    sqActiveTab = which; // Markierungs-Modus hängt vom aktiven Tab ab
+    const tabMine = document.getElementById('sq-tab-mine');
+    const tabAll = document.getElementById('sq-tab-all');
+    const activeCls = 'flex-1 py-2 text-sm font-semibold transition text-blue-600 border-b-2 border-blue-600';
+    const idleCls = 'flex-1 py-2 text-sm font-semibold transition text-gray-400 border-b-2 border-transparent hover:text-gray-600';
+    tabMine.className = mine ? activeCls : idleCls;
+    tabAll.className = !mine ? activeCls : idleCls;
+    document.getElementById('sq-body-mine').classList.toggle('hidden', !mine);
+    document.getElementById('sq-body-all').classList.toggle('hidden', mine);
+    sqApplyMarks(); // Modus wechselt mit dem Tab → Markierungen aktualisieren
+  }
+  document.getElementById('sq-tab-mine').addEventListener('click', () => sqSwitchTab('mine'));
+  document.getElementById('sq-tab-all').addEventListener('click', () => sqSwitchTab('all'));
+
+  // Status-Filter für beide Fragenlisten (offen / behandelt / alle)
+  const sqFilterSelect = document.getElementById('sq-status-filter');
+  sqFilterSelect.addEventListener('change', async () => {
+    sqFilter = sqFilterSelect.value;
+    const mineBody = document.getElementById('sq-body-mine');
+    const allBody = document.getElementById('sq-body-all');
+    if (!sqTabHasDirtyInput(mineBody)) await sqRenderTab('mine');
+    if (!sqTabHasDirtyInput(allBody)) await sqRenderTab('all');
+    sqApplyMarks(); // Status-Filter wirkt auch auf die Markierungen im Skript
+  });
+
+  // ─── Markierungen: Toggle an/aus (persistiert pro Kurs) ────────
+  // Ob nur eigene oder alle Fragen markiert werden, hängt vom aktiven
+  // Tab ("Meine Fragen" = 'mine' / "Alle Fragen" = 'all') ab.
+  function sqMarkKey() { return 'tutorai-script-mark-' + courseId; }
+  function sqMarksOn() {
+    const v = localStorage.getItem(sqMarkKey());
+    // Standard: an. Legacy: 'none' => aus, 'mine'/'all' => on.
+    return v !== 'off' && v !== 'none';
+  }
+  function sqMarkMode() {
+    if (!sqMarksOn()) return 'none';
+    return sqActiveTab === 'all' ? 'all' : 'mine';
+  }
+  const sqMarkToggle = document.getElementById('sq-mark-toggle');
+  sqMarkToggle.checked = sqMarksOn();
+  sqMarkToggle.addEventListener('change', () => {
+    localStorage.setItem(sqMarkKey(), sqMarkToggle.checked ? 'on' : 'off');
+    sqApplyMarks();
+  });
+
+  // ─── Composer: Auswahl-Bezug (Quote) ──────────────────────────
+  function sqUpdateQuoteChip() {
+    const chip = document.getElementById('sq-quote-chip');
+    const has = sqSelection && sqSelection.quote;
+    chip.classList.toggle('hidden', !has);
+    if (has) {
+      document.getElementById('sq-quote-text').textContent = '„' + sqSelection.quote + '“';
+      document.getElementById('sq-quote-section').textContent = sqSelection.sectionTitle ? '— ' + sqSelection.sectionTitle : '';
+    }
+  }
+  document.getElementById('sq-quote-clear').addEventListener('click', () => {
+    sqSelection = null;
+    sqUpdateQuoteChip();
+  });
+
+  const sqInput = document.getElementById('sq-input');
+  document.getElementById('sq-send').addEventListener('click', sqSend);
+  sqInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sqSend(); }
+  });
+  sqInput.addEventListener('input', () => {
+    sqInput.style.height = 'auto';
+    sqInput.style.height = Math.min(sqInput.scrollHeight, 120) + 'px';
+  });
+
+  // Text-Auswahl im Skript erfassen (nur neue, nicht-leere Auswahl —
+  // ein Klick ins Dialog würde die Auswahl sonst wegwerfen). Zusätzlich
+  // wird ein Kontext um die Auswahl gespeichert, damit die Stelle auch
+  // dann eindeutig gefunden wird, wenn der Text mehrfach vorkommt.
+  document.addEventListener('selectionchange', () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const reading = document.getElementById('script-reading');
+    if (!reading || !reading.contains(range.commonAncestorContainer)) return;
+    let el = range.commonAncestorContainer;
+    if (el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+    const card = el && el.closest ? el.closest('[data-section-id]') : null;
+    const body = card ? card.querySelector('.script-chapter-body') : null;
+    const md = body ? body.querySelector('.markdown-preview[data-loaded]') : null;
+
+    let quote = '';
+    let quoteCtx = null;
+    let quoteOff = 0;
+    if (md) {
+      // Konsistent mit der späteren DOM-Suche extrahieren (inkl. Offsets)
+      const info = sqSelectionInfo(md, range);
+      if (info) {
+        // Trimmen im normierten Raum (norm = Whitespace auf ' ' kollabiert)
+        let s = info.inv[info.start];
+        let e = info.inv[info.end - 1] + 1;
+        while (s < e && info.norm[s] === ' ') s++;
+        while (e > s && info.norm[e - 1] === ' ') e--;
+        if (e > s) {
+          quote = info.norm.slice(s, e).slice(0, 1000);
+          const cStart = Math.max(0, s - 120);
+          const cEnd = Math.min(info.norm.length, e + 120);
+          // Sehr lange Auswahl: Kontext weglassen (Quote ist dann eindeutig)
+          if (cEnd - cStart <= 1990) {
+            quoteCtx = info.norm.slice(cStart, cEnd);
+            quoteOff = s - cStart;
+          }
+        }
+      }
+    }
+    // Fallback ohne Kontext (z. B. Auswahl außerhalb geladenen Inhalts)
+    if (!quote) quote = (sel.toString() || '').replace(/\s+/g, ' ').trim();
+    if (!quote) return;
+    sqSelection = {
+      quote,
+      quoteCtx,
+      quoteOff,
+      sectionId: card ? parseInt(card.getAttribute('data-section-id')) : null,
+      sectionTitle: card ? (card.getAttribute('data-section-title') || null) : null,
+    };
+    sqUpdateQuoteChip();
+  });
+
+  // ─── Markierungen der Fragen im Skript ────────────────────────
+  function sqNormalize(text) {
+    return (text || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // Unsichtbarer Hilfs-Text (KaTeX-MathML, Mermaid-SVG): wird bei der
+  // Quote-Extraktion UND bei der DOM-Suche identisch ignoriert → beide
+  // Seiten nutzen exakt dieselbe Textgrundlage (unabhängig davon, wie
+  // der Browser sel.toString() berechnet).
+  const SQ_AUX_SELECTOR = '.katex-mathml, svg';
+  function sqAuxTextFilter(node) {
+    if (node.nodeType !== Node.TEXT_NODE) return NodeFilter.FILTER_SKIP;
+    const p = node.parentElement;
+    if (p && p.closest(SQ_AUX_SELECTOR)) return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;
+  }
+
+  // Text-Karte des Abschnitts (nur sichtbarer Text): alle Text-Node in
+  // Dokumentreihenfolge + Volltext + normierter Volltext mit
+  // Offset-Karte (normalisierter Index → Originalindex).
+  function sqBuildTextMap(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, sqAuxTextFilter);
+    const nodes = [];
+    let full = '';
+    let n = walker.nextNode();
+    while (n) { nodes.push(n); full += n.nodeValue; n = walker.nextNode(); }
+    let norm = '';
+    const pos = [];
+    for (let i = 0; i < full.length; i++) {
+      const ch = full[i];
+      if (/\s/.test(ch)) {
+        if (norm.length > 0 && /\s/.test(norm[norm.length - 1])) continue;
+        norm += ' ';
+        pos.push(i);
+      } else {
+        norm += ch;
+        pos.push(i);
+      }
+    }
+    return { nodes, full, norm, pos };
+  }
+
+  // Whitespace + unsichtbare Zeichen (ZWSP, Invisible-Function, …):
+  // werden im Fallback-Match ignoriert, weil ältere Quotes (via
+  // Browser-sel.toString() erfasst) u. a. bei Formeln andere
+  // Leerzeichen enthalten können als der aktuelle DOM-Text.
+  const SQ_NS_RE = /[\s\u200b\u200c\u200d\u2060\u2061\u2062\u2063\u2064\ufeff]/;
+  const SQ_NS_RE_G = new RegExp(SQ_NS_RE.source, 'g');
+
+  // Suche die Quote im Abschnitts-Text (Whitespace-tolerant, best-effort).
+  // innerStart/innerLen: nur einen Teilbereich des Treffers zurückgeben
+  // (wenn die „Quote“ ein größerer Kontext ist, der die eigentliche
+  // Auswahl enthält).
+  function sqFindQuoteIn(root, quote, innerStart = 0, innerLen = 0) {
+    const target = sqNormalize(quote);
+    if (!target) return null;
+    const { nodes, norm, pos } = sqBuildTextMap(root);
+
+    let origStart = null;
+    let origEnd = null;
+    const idx = norm.indexOf(target);
+    if (idx >= 0) {
+      const from = idx + Math.max(0, Math.min(innerStart, target.length));
+      const to = innerLen > 0
+        ? Math.min(from + innerLen, idx + target.length)
+        : idx + target.length;
+      if (to > from) {
+        origStart = pos[from];
+        origEnd = pos[to - 1] + 1;
+      }
+    } else {
+      // Fallback: Whitespace/Unsichtbar-Zeichen ignorieren (repariert
+      // ältere Quotes, deren Leerzeichen vom DOM-Text abweichen)
+      const targetNs = target.replace(SQ_NS_RE_G, '');
+      if (targetNs.length >= 8) {
+        let normNs = '';
+        const posNs = [];
+        for (let i = 0; i < norm.length; i++) {
+          if (SQ_NS_RE.test(norm[i])) continue;
+          normNs += norm[i];
+          posNs.push(pos[i]);
+        }
+        const idxNs = normNs.indexOf(targetNs);
+        if (idxNs >= 0) {
+          origStart = posNs[idxNs];
+          origEnd = posNs[idxNs + targetNs.length - 1] + 1;
+        }
+      }
+    }
+    if (origStart === null || origEnd === null) return null;
+
+    let offset = 0;
+    let start = null;
+    let end = null;
+    for (const node of nodes) {
+      const len = node.nodeValue.length;
+      if (!start && offset + len > origStart) start = { node, offset: origStart - offset };
+      if (offset + len >= origEnd) {
+        end = { node, offset: Math.min(origEnd - offset, len) };
+        break;
+      }
+      offset += len;
+    }
+    if (!start || !end) return null;
+    return { start, end };
+  }
+
+  // ── Robuste Range-Grenzenlogik ─────────────────────────────────
+  // compareBoundaryPoints(how, other) wird bewusst NICHT verwendet:
+  // die Operandenreihenfolge ist unzuverlässig dokumentiert und hat
+  // hier zu einem Bug geführt (Overlap-Test hat nie gematcht).
+  // Stattdessen nur eindeutige Primitives: intersectsNode() +
+  // compareDocumentPosition().
+
+  // Ist ein Range invertiert (Ende vor Start, z. B. rechts→links gezogen)?
+  function sqRangeInverted(r) {
+    const sc = r.startContainer, so = r.startOffset;
+    const ec = r.endContainer, eo = r.endOffset;
+    if (sc === ec) return eo < so;
+    const rel = ec.compareDocumentPosition(sc);
+    if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return true; // sc liegt nach ec
+    if (rel & Node.DOCUMENT_POSITION_CONTAINS) {
+      // ec: Element, das sc (tiefer) enthält. Ende (ec, eo) liegt zwischen
+      // den ec-Kindern; Start liegt im Unterbaum des Kinds c, das sc trägt.
+      // Invertiert, wenn das Ende vor c beginnt (eo <= Index von c).
+      let c = sc;
+      while (c.parentNode !== ec && c.parentNode) c = c.parentNode;
+      let k = 0;
+      for (let x = ec.firstChild; x !== null && x !== c; x = x.nextSibling) k++;
+      return eo <= k;
+    }
+    if (rel & Node.DOCUMENT_POSITION_CONTAINED_BY) {
+      // sc: Element, das ec (tiefer) enthält. Start (sc, so) liegt zwischen
+      // den sc-Kindern; Ende liegt im Unterbaum des Kinds c, das ec trägt.
+      // Invertiert, wenn der Start nach c liegt (so > Index von c).
+      let c = ec;
+      while (c.parentNode !== sc && c.parentNode) c = c.parentNode;
+      let k = 0;
+      for (let x = sc.firstChild; x !== null && x !== c; x = x.nextSibling) k++;
+      return so > k;
+    }
+    return false; // sc liegt vor ec
+  }
+
+  // Beginnt Node n am/nach dem Ende des Bereichs? (für Walk-Abbruch)
+  function sqNodeAtOrAfterRangeEnd(n, R) {
+    const q = R.endContainer;
+    if (n === q) return R.endOffset === 0;
+    return !!(n.compareDocumentPosition(q) & Node.DOCUMENT_POSITION_PRECEDING);
+  }
+
+  // Auswahl-Text mit derselben Filterlogik extrahieren wie sqFindQuoteIn,
+  // damit die gespeicherte Quote später exakt im DOM auffindbar ist.
+  // Liefert zusätzlich die Offsets der Auswahl innerhalb des rohen
+  // Abschnitts-Volltexts. Invertierte Auswahl (rechts→links gezogen) wird
+  // zuerst normalisiert — der Overlap-Check funktioniert nur für start < end.
+  function sqSelectionInfo(root, range) {
+    let sc = range.startContainer;
+    let so = range.startOffset;
+    let ec = range.endContainer;
+    let eo = range.endOffset;
+    if (sqRangeInverted(range)) {
+      [sc, so, ec, eo] = [ec, eo, sc, so];
+    }
+    const nr = document.createRange();
+    nr.setStart(sc, so);
+    nr.setEnd(ec, eo);
+
+    const { nodes, full, norm, pos } = sqBuildTextMap(root);
+    // Inverse Offset-Karte: roher Index → normierter Index (weitere
+    // Whitespace-Zeichen eines Laufs erben den Index des ersten)
+    const inv = new Array(full.length);
+    for (let i = 0; i < pos.length; i++) inv[pos[i]] = i;
+    for (let i = 1; i < full.length; i++) if (inv[i] === undefined) inv[i] = inv[i - 1];
+
+    let running = 0;
+    let start = null;
+    let end = null;
+    let text = '';
+    for (const n of nodes) {
+      const len = n.nodeValue.length;
+      if (nr.intersectsNode(n)) {
+        let a = 0;
+        let b = len;
+        if (nr.startContainer === n) a = nr.startOffset;
+        if (nr.endContainer === n) b = nr.endOffset;
+        if (b > a) {
+          if (start === null) start = running + a;
+          end = running + b;
+          text += n.nodeValue.slice(a, b);
+        }
+      }
+      running += len;
+    }
+    if (start === null || end === null || !text) return null;
+    return { text, start, end, norm, inv };
+  }
+
+  // Atomare Strukturen (KaTeX inkl. Display-Formeln): die internen
+  // Spans sind positioniert und dürfen NICHT angefasst werden —
+  // Aufteilen/Verlegen würde das Rendering zerstören (Formel kollabiert
+  // zu einer Reihe von Zeichen). Berührt ein Mark-Bereich so ein
+  // Element, wird das ganze Element markiert (Bereich leicht geweitet).
+  const SQ_ATOMIC_SELECTOR = '.katex, .katex-display';
+  // Inline-Elemente dürfen als Ganzes umwrapt werden (auch bei nur
+  // teilweiser Abdeckung — Bereich wird auf das Element geweitet).
+  // Blockelemente werden stattdessen betreten (→ ggf. mehrere Marks).
+  const SQ_INLINE_TAGS = new Set([
+    'A', 'ABBR', 'B', 'BR', 'BUTTON', 'CANVAS', 'CODE', 'DEL', 'EM',
+    'EMBED', 'IMG', 'I', 'IFRAME', 'INS', 'KBD', 'LABEL', 'MARK', 'METER',
+    'OBJECT', 'Q', 'S', 'SAMP', 'SMALL', 'SPAN', 'STRONG', 'SUB', 'SUP',
+    'SVG', 'TIME', 'U', 'VAR', 'VIDEO',
+  ]);
+
+  // Wrappt den Bereich [start, end) in <mark class="sq-mark">.
+  // Zerlegt den Bereich in Pieces: Plain-Text-Node (an den Bereichs-
+  // grenzen aufgeteilt — sicher, gleicher Parent) und ganze Elemente
+  // (atomar/inline). Blockelemente werden nie als Ganzes umwrapt.
+  function sqWrapRange(root, start, end, qid) {
+    const R = document.createRange();
+    R.setStart(start.node, start.offset);
+    R.setEnd(end.node, end.offset);
+
+    // Phase 1: Entscheidungen in Dokumentreihenfolge sammeln (keine
+    // DOM-Änderungen — sonst sähe der Live-TreeWalker die neuen Node)
+    const decisions = [];
+    const collected = new Set();
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+      (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const p = node.parentElement;
+          if (p && p.closest(SQ_AUX_SELECTOR)) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+        if (node.closest('.katex-mathml')) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    );
+    let n = walker.nextNode();
+    while (n) {
+      // Schon durch ein gesammeltes Anker-Element abgedeckt?
+      let covered = false;
+      for (let anc = n.parentElement; anc && anc !== root; anc = anc.parentElement) {
+        if (collected.has(anc)) { covered = true; break; }
+      }
+      if (!covered) {
+        if (R.intersectsNode(n)) {
+          // n überlappt den Mark-Bereich
+          if (n.nodeType === Node.TEXT_NODE) {
+            const len = n.nodeValue.length;
+            const a = R.startContainer === n ? R.startOffset : 0;
+            const b = R.endContainer === n ? R.endOffset : len;
+            decisions.push({ node: n, a, b });
+          } else if (n.matches(SQ_ATOMIC_SELECTOR) || SQ_INLINE_TAGS.has(n.tagName.toUpperCase())) {
+            decisions.push({ elem: n });
+            collected.add(n);
+          }
+          // sonst: Blockelement → hinein (Kinder werden separat processed)
+        } else if (sqNodeAtOrAfterRangeEnd(n, R)) {
+          break; // n beginnt ab/nach Bereichsende → n und alle Folgenden liegen hinter dem Bereich
+        }
+      }
+      n = walker.nextNode();
+    }
+
+    // Phase 2: Text-Node aufteilen, Pieces-Liste bauen (Dokumentenreihenfolge)
+    const pieces = [];
+    for (const d of decisions) {
+      if (d.elem) {
+        pieces.push(d.elem);
+        continue;
+      }
+      let mid = d.node;
+      if (d.a > 0) mid = mid.splitText(d.a);
+      const midLen = mid.nodeValue.length;
+      // splitText() liefert den REST nach dem Offset — mid behält das Stück
+      // [0, d.b - d.a). Deshalb NICHT zuweisen (sonst würde der Rest nach
+      // der Auswahl statt der Auswahl selbst markiert).
+      if (d.b - d.a < midLen) mid.splitText(d.b - d.a);
+      if (mid.nodeValue.length > 0) pieces.push(mid);
+    }
+    if (!pieces.length) return;
+
+    // Phase 3: pro zusammenhängendem Piece-Lauf mit gleichem Parent
+    // genau ein Mark (für Bereiche über mehrere Blöcke hinweg)
+    let i = 0;
+    while (i < pieces.length) {
+      const parent = pieces[i].parentNode;
+      let j = i;
+      while (j + 1 < pieces.length && pieces[j + 1].parentNode === parent) j++;
+      const mark = document.createElement('mark');
+      mark.className = 'sq-mark';
+      mark.setAttribute('data-qids', String(qid));
+      parent.replaceChild(mark, pieces[i]);
+      for (let k = i; k <= j; k++) mark.appendChild(pieces[k]);
+      i = j + 1;
+    }
+  }
+
+  // Vorherige Markierungen entfernen (unwrappen) + Text-Node normalisieren
+  function sqUnwrapMarks(contentEl) {
+    contentEl.querySelectorAll('mark.sq-mark').forEach((m) => {
+      const parent = m.parentNode;
+      while (m.firstChild) parent.insertBefore(m.firstChild, m);
+      parent.removeChild(m);
+      parent.normalize();
+    });
+  }
+
+  // Zitierte Stelle einer Frage im Abschnitt suchen.
+  // Mit Kontext: nur dann gefunden, wenn der Kontext noch exakt im Skript
+  // vorkommt — wurde das Skript geändert, bleibt die Stelle unmarkiert
+  // (eine Bare-Quote-Suche würde ggf. an eine falsche Stelle zeigen).
+  // Ohne Kontext (ältere Fragen): bare Quote.
+  function sqFindQuestionQuote(contentEl, q) {
+    if (!q.quote) return null;
+    if (q.quote_ctx) {
+      return sqFindQuoteIn(contentEl, q.quote_ctx, q.quote_off || 0, q.quote.length);
+    }
+    return sqFindQuoteIn(contentEl, q.quote);
+  }
+
+  function sqApplyMarksToSection(contentEl, sectionId) {
+    if (sqFlashState && sqFlashState.mdEl === contentEl) return; // aktives Flash
+    sqUnwrapMarks(contentEl);
+    const mode = sqMarkMode();
+    if (mode === 'none') return;
+    for (const q of sqData) {
+      if (!q.quote) continue;
+      if (mode === 'mine' && !q.is_mine) continue;
+      if (sqFilter !== 'all' && q.status !== sqFilter) continue; // Status-Filter aus dem Dialog gilt auch für die Markierung
+      if (q.section_id != null && q.section_id !== sectionId) continue;
+      const found = sqFindQuestionQuote(contentEl, q);
+      if (found) sqWrapRange(contentEl, found.start, found.end, q.id);
+    }
+  }
+
+  function sqApplyMarks() {
+    document.querySelectorAll('#script-reading .script-chapter-card').forEach((card) => {
+      const body = card.querySelector('.script-chapter-body');
+      const md = body ? body.querySelector('.markdown-preview[data-loaded]') : null;
+      if (body && md && !body.classList.contains('hidden')) {
+        sqApplyMarksToSection(md, parseInt(card.getAttribute('data-section-id')));
+      }
+    });
+  }
+
+  // ─── Navigation zwischen Skript und Fragen ───────────────────
+  function sqFlashEl(el, block = 'start') {
+    // 'start' (Default): Anfang des Elements sichtbar (Fragen-Liste im Dialog);
+    // 'center': Markierte Stelle im Zentrum (Richtung Skript)
+    el.scrollIntoView({ behavior: 'smooth', block });
+    el.style.outline = '2px solid #60a5fa';
+    el.style.outlineOffset = '2px';
+    setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 2000);
+  }
+
+  function sqFindMark(qid) {
+    const s = String(qid);
+    for (const m of document.querySelectorAll('mark.sq-mark')) {
+      if ((m.getAttribute('data-qids') || '').split(',').includes(s)) return m;
+    }
+    return null;
+  }
+
+  // Aktives temporäres Flash (sqTemporaryFlash), falls eines läuft
+  let sqFlashState = null;
+
+  // Genau diese Stelle kurzzeitig markieren (unabhängig vom Markierungs-
+  // Modus, z. B. bei "keine markieren"), aufblitzen und danach den
+  // gewohnten Markierungs-Zustand wiederherstellen.
+  function sqTemporaryFlash(mdEl, sectionId, q, onNotFound) {
+    if (sqFlashState) {
+      clearTimeout(sqFlashState.timer);
+      const old = sqFlashState;
+      sqFlashState = null;
+      sqApplyMarksToSection(old.mdEl, old.sectionId);
+    }
+    sqUnwrapMarks(mdEl);
+    const found = sqFindQuestionQuote(mdEl, q);
+    if (!found) { onNotFound(); return; }
+    sqWrapRange(mdEl, found.start, found.end, q.id);
+    const m = sqFindMark(q.id);
+    if (!m) { onNotFound(); return; }
+    sqFlashEl(m, 'center');
+    const timer = setTimeout(() => {
+      if (sqFlashState && sqFlashState.timer === timer) {
+        sqFlashState = null;
+        sqApplyMarksToSection(mdEl, sectionId);
+      }
+    }, 2000);
+    sqFlashState = { mdEl, sectionId, timer };
+  }
+
+  // Klick auf Frage/Zitat im Dialog → zur markierten Stelle scrollen.
+  // Klappt das Kapitel ggf. auf und wartet (bis ~10 s) auf den Inhalt.
+  function sqScrollToQuestion(q) {
+    if (!q.quote || q.section_id == null) return;
+    const mark = sqFindMark(q.id);
+    if (mark) { sqFlashEl(mark, 'center'); return; }
+    const card = document.querySelector(`#script-reading .script-chapter-card[data-section-id="${q.section_id}"]`);
+    if (!card) {
+      showToast('Kapitel ist nicht (mehr) im Skript sichtbar.', 'error');
+      return;
+    }
+    const body = card.querySelector('.script-chapter-body');
+    if (!body) return;
+    if (body.classList.contains('hidden')) card.querySelector('button').click();
+    const attempt = (left) => {
+      const mdEl = card.querySelector('.markdown-preview[data-loaded]');
+      if (mdEl && !body.classList.contains('hidden')) {
+        sqTemporaryFlash(mdEl, q.section_id, q, () => {
+          // Stelle nicht auffindbar → Skript wurde vermutlich geändert (nur Warnung, kein Scrollen)
+          showToast('Stelle konnte nicht gefunden werden – das Skript wurde vermutlich geändert.', 'error');
+        });
+        return;
+      }
+      if (left <= 0) {
+        showToast('Zur Stelle springen fehlgeschlagen.', 'error');
+        return;
+      }
+      setTimeout(() => attempt(left - 1), 150);
+    };
+    attempt(66);
+  }
+
+  // Klick auf Markierung → Frage-Dialog öffnen + Thread hervorheben
+  document.getElementById('script-reading').addEventListener('click', (e) => {
+    const mark = e.target.closest('mark.sq-mark');
+    if (!mark) return;
+    const first = (mark.getAttribute('data-qids') || '').split(',')[0];
+    if (!first) return;
+    sqOpenDialog();
+    const qid = parseInt(first);
+    const q = sqData.find((x) => x.id === qid);
+    if (!q) return;
+    // Nur wechseln, wenn die Frage im aktiven Tab nicht sichtbar ist
+    // (im Tab „Alle Fragen“ sind alle Fragen sichtbar → dort bleiben)
+    if (sqActiveTab === 'mine' && !q.is_mine) sqSwitchTab('all');
+    setTimeout(() => {
+      // Nur im aktiven Tab suchen: Die eigene Frage steht in beiden Listen,
+      // sqDialog.querySelector fände sonst ggf. die (versteckte) im anderen Tab
+      const list = sqActiveTab === 'mine' ? document.getElementById('sq-threads') : document.getElementById('sq-body-all');
+      const el = list.querySelector(`.sq-thread[data-sq-id="${qid}"]`);
+      if (el) sqFlashEl(el);
+    }, 80);
+  });
+
+  // ─── Polling: nur bei offenem Dialog + sichtbarem Tab ─────────
+  setInterval(async () => {
+    if (sqDialog.classList.contains('hidden') || document.hidden || sqPolling) return;
+    sqPolling = true;
+    try { await sqLoad(); } finally { sqPolling = false; }
+  }, 6000);
 
 {% endif %}
 </script>

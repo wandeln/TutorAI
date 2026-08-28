@@ -43,8 +43,8 @@ if (typeof mermaid !== 'undefined') {
 // GET /api/courses/{courseId}/script-refmap: live-berechnete globale
 // Nummerierung aller fig:/eq:-Labels des Skripts (ohne DB). Wird einmal
 // pro Seite geholt und gecacht. Das globale `courseId` wird auf Kurs-Seiten
-// definiert (course/base.html bzw. direkt in task_detail/task_solve/
-// script_section_edit); fehlt es → null.
+// definiert (course/base.html bzw. direkt in task_detail/task_solve);
+// fehlt es → null.
 let _refMapPromise = null;
 function _getCourseId() {
   try {
@@ -329,8 +329,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
 
   // 6b. Restore cross-references (@fig:label / @eq:label)
   //     Auflösung: 1) in diesem Dokument → In-Page-Anker,
-  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label):
-  //                  Student → Skript-Seite, PROF/TUTOR/Admin → Kapitel-Editseite (via "mode"),
+  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label) auf der
+  //                  Skript-Seite (alle Rollen; das Kapitel wird dort aufgeklappt),
   //               3) unbekannt → ❓
   xrefs.forEach((x, idx) => {
     const text = x.kind === 'fig' ? 'Abb.' : 'Gl.';
@@ -341,10 +341,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       refHtml = `<a href="#${x.kind}:${x.label}" class="tutorai-xref">${text} ${local}</a>`;
     } else if (g && g.kind === x.kind) {
       const cid = (refMap && refMap.courseId) || '';
-      const base = refMap && refMap.mode === 'edit'
-        ? `/courses/${cid}/script/${g.sectionId}`
-        : `/courses/${cid}/script`;
-      refHtml = `<a href="${base}#${x.kind}:${x.label}" class="tutorai-xref">${text} ${g.num}</a>`;
+      refHtml = `<a href="/courses/${cid}/script#${x.kind}:${x.label}" class="tutorai-xref">${text} ${g.num}</a>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehörige Abbildung/Gleichung fehlt">❓ ${x.kind}:${x.label}</span>`;
     }

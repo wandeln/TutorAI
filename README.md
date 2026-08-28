@@ -189,7 +189,6 @@ TutorAI/
 │   │   └── members.html       # Tab 'Mitglieder': Rollen, Einladungen (PROF/Admin)
 │   ├── tutor/
 │   │   ├── task_detail.html # Aufgabe erstellen/bearbeiten (LLM-Aufgabe generieren)
-│   │   ├── script_section_edit.html # Skript-Kapitel anlegen/bearbeiten (LLM-Kapitel generieren)
 │   │   └── submission_review.html # Einzelne Einreichung bewerten
 │   └── student/
 │       └── task_solve.html  # Aufgabe lösen (Editor + Markdown/LaTeX)

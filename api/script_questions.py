@@ -1,22 +1,20 @@
 """
-Skript-Fragen: Studierende stellen Fragen zum Skript — die KI antwortet sofort,
-zusätzlich dürfen alle Kurs-Mitglieder (Studierende/Tutoren/PROFs) menschliche
-Antworten geben, sodass pro Frage ein Dialog entsteht.
+Skript-Fragen: alle Kurs-Mitglieder (Studierende/Tutoren/PROFs) stellen Fragen
+zum Skript — die KI antwortet sofort, zusätzlich dürfen alle Kurs-Mitglieder
+menschliche Antworten geben, sodass pro Frage ein Dialog entsteht.
 
 Die Fragen werden persistiert (inkl. optionaler Text-Auswahl „quote“), damit
 Tutoren/PROFs schwierige Stellen im Skript identifizieren und es verbessern
 können. Der Status ist von Tutoren/PROFs auf „addressed“ umschaltbar.
 
-Sichtbarkeit:
-- Fragesteller: für andere Studierende anonymisiert („Ein Studierender“),
-  für den Autor selbst und für Staff (Tutor/PROF/Admin) mit Name + Rolle.
-- Antwortende: immer mit Name + Rolle (freiwillig geantwortet).
+Sichtbarkeit: Fragesteller und Antwortende werden immer mit Klarnamen, Rolle
+und Avatar angezeigt (siehe load_questions_payload).
 
 Endpoints:
 - GET    /courses/{course_id}/script-questions
-- POST   /courses/{course_id}/script-questions   (nur STUDENT)
+- POST   /courses/{course_id}/script-questions   (alle Kurs-Mitglieder)
 - POST   /script-questions/{question_id}/responses
-- PATCH  /script-questions/{question_id}         (nur Staff: Status)
+- PATCH  /script-questions/{question_id}         (Autor oder Staff: Status)
 - DELETE /script-questions/{question_id}         (Autor oder Staff)
 """
 
@@ -251,12 +249,8 @@ async def create_script_question(
     session: Session = Depends(get_session),
     viewer_and_course: tuple[User, int] = Depends(require_course_access(*_ALL_COURSE_ROLES)),
 ):
-    """Neue Skript-Frage (nur Studierende) — die KI antwortet synchron."""
+    """Neue Skript-Frage (alle Kurs-Mitglieder) — die KI antwortet synchron."""
     viewer, _ = viewer_and_course
-
-    # Nur Studierende fragen (Tutoren/PROFs/Admins antworten, aber nicht fragen)
-    if _role_in_course(session, viewer, course_id) != CourseRole.STUDENT.value:
-        raise HTTPException(403, "Nur Studierende können Fragen stellen.")
 
     question_text = data.question.strip()
     if not question_text:

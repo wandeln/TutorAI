@@ -39,7 +39,7 @@ HTML-Struktur:
   - Chart.js (globale Variable Chart): <script src="/static/vendor/chart.umd.js"></script>
   - Plotly (globale Variable Plotly) für komplexere/interaktive Diagramme (Zoom, Heatmaps, 3D): <script src="/static/vendor/plotly.min.js"></script>
   - Three.js (globale Variable THREE) inkl. Orbit-Controls (THREE.OrbitControls): <script src="/static/vendor/three.min.js"></script> UND <script src="/static/vendor/three.OrbitControls.js"></script>
-  - KaTeX (globale Variable katex) für mathematische Formeln: <link rel="stylesheet" href="/static/vendor/katex/katex.min.css"></link> UND <script src="/static/vendor/katex/katex.min.js"></script>
+  - KaTeX (globale Variable katex) für mathematische Formeln: <link rel="stylesheet" href="/static/vendor/katex/katex.min.css"></link> UND <script src="/static/vendor/katex/katex.min.js"></script> (Achtung: beachte für die CSS und die JS Datei den subfolder /katex/ im Path!)
 - Verwende AUSSCHLIESSLICH diese Bibliotheken plus Vanilla JS, Canvas, SVG und CSS. KEINE anderen externen Ressourcen: keine weiteren CDN-Links, kein fetch/XHR, keine Bilder von URLs, keine ES-Modules (kein type="module"), keine Import-Maps. Bei Plotly: keine „mapbox“/„map“-Traces (MapLibre benötigt Web Worker, die im Sandbox nicht verfügbar sind).
 - KEIN Zugriff auf localStorage, sessionStorage oder Cookies (im Sandbox nicht verfügbar) — den gesamten Zustand in JavaScript-Variablen halten.
 - Mathematische Formeln: KaTeX verwenden (gleiche Library wie die Kursplattform für LaTeX), z. B. katex.renderToString("H(X) = -\\\\sum_i p_i \\\\log_2 p_i", { throwOnError: false, displayMode: true }) in ein Element einbauen — niemals rohen LaTeX-Quelltext anzeigen.

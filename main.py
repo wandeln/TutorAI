@@ -393,17 +393,6 @@ def _course_tab_context(
             "active": active_tab == "tasks",
         }
     )
-    # Fragen: nur für Tutor/PROF/Admin (Studenten sehen Fragen im Skript-Dialog)
-    if is_tutor or is_admin:
-        tabs.append(
-            {
-                "key": "questions",
-                "icon": "❓",
-                "label": "Fragen",
-                "url": f"/courses/{course_id}/script-questions",
-                "active": active_tab == "questions",
-            }
-        )
     # Forum: für alle Kurs-Mitglieder (Student/Tutor/PROF) + Admins
     if membership is not None or is_admin:
         tabs.append(
@@ -833,7 +822,7 @@ async def script_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Kurs-Tab 'Skript': mehrere Markdown-Kapitel (Tutor: Liste, Student: Lesefluss)."""
+    """Kurs-Tab 'Skript': mehrere Markdown-Kapitel (gemeinsame Ansicht; Tutor/PROF mit Bearbeitung)."""
     membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="script")
     if not membership and user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
@@ -860,120 +849,21 @@ async def script_page(
     return templates.TemplateResponse("course/script.html", ctx)
 
 
-@app.get("/courses/{course_id}/script/new")
-async def new_script_section_page(
-    course_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
-):
-    """Neues Skript-Kapitel erstellen."""
-    user, _ = user_and_course
-    course = session.get(Course, course_id)
-    if not course:
-        raise HTTPException(404, "Kurs nicht gefunden.")
-
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
-    course_role = membership.role_in_course.value if membership else "TUTOR"
-    if user.role == GlobalUserRole.ADMIN:
-        course_role = "PROF"
-
-    return templates.TemplateResponse(
-        "tutor/script_section_edit.html",
-        {
-            "request": request,
-            "page_title": "Neues Skript-Kapitel",
-            "current_user": _user_ctx(user, course_role),
-            "courses": _get_user_courses(user, session),
-            "selected_course_id": course_id,
-            "is_admin": user.role == GlobalUserRole.ADMIN,
-            "course": {
-                "id": course.id,
-                "name": course.name,
-            },
-            "section": None,
-            "LLM_TIMEOUT": LLM_TIMEOUT,
-        },
-    )
-
-
 @app.get("/courses/{course_id}/script/{section_id}")
 async def script_section_page(
     course_id: int,
     section_id: int,
-    request: Request,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Skript-Kapitel bearbeiten (nur PROF/TUTOR)."""
+    """Legacy-Link → Skript-Tab (Kapitel wird per #chapter-Hash aufgeklappt)."""
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(404, "Kurs nicht gefunden.")
-
     section = session.get(ScriptSection, section_id)
     if not section or section.course_id != course_id:
         raise HTTPException(404, "Kapitel nicht gefunden.")
-
-    membership = session.exec(
-        select(UserCourse)
-        .where(UserCourse.user_id == user.id)
-        .where(UserCourse.course_id == course_id)
-    ).first()
-    is_tutor = user.role == GlobalUserRole.ADMIN or (
-        membership is not None and membership.role_in_course in (CourseRole.PROF, CourseRole.TUTOR)
-    )
-    if not membership and user.role != GlobalUserRole.ADMIN:
-        raise HTTPException(403, "Kein Zugriff.")
-    if not is_tutor:
-        raise HTTPException(404, "Kapitel nicht gefunden oder noch nicht freigeschaltet.")
-
-    course_role = membership.role_in_course.value if membership else "PROF"
-
-    # Previous and next section in the same course (Tutoren sehen auch versteckte Kapitel)
-    prev_section = session.exec(
-        select(ScriptSection)
-        .where(ScriptSection.course_id == course_id)
-        .where(ScriptSection.display_order < section.display_order)  # type: ignore[operator]
-        .order_by(ScriptSection.display_order.desc())  # type: ignore[attr-defined]
-    ).first()
-
-    next_section = session.exec(
-        select(ScriptSection)
-        .where(ScriptSection.course_id == course_id)
-        .where(ScriptSection.display_order > section.display_order)  # type: ignore[operator]
-        .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
-    ).first()
-
-    return templates.TemplateResponse(
-        "tutor/script_section_edit.html",
-        {
-            "request": request,
-            "page_title": f"{section.title} — Bearbeiten",
-            "current_user": _user_ctx(user, course_role),
-            "courses": _get_user_courses(user, session),
-            "selected_course_id": course_id,
-            "is_admin": user.role == GlobalUserRole.ADMIN,
-            "course": {
-                "id": course.id,
-                "name": course.name,
-            },
-            "section": {
-                "id": section.id,
-                "title": section.title,
-                "content": section.content,
-                "is_visible": section.is_visible,
-                "summary": section.summary or "",
-                "updated_at": section.updated_at.isoformat() if section.updated_at else None,
-            },
-            "prev_section": {"id": prev_section.id, "title": prev_section.title} if prev_section else None,
-            "next_section": {"id": next_section.id, "title": next_section.title} if next_section else None,
-            "LLM_TIMEOUT": LLM_TIMEOUT,
-        },
-    )
+    return RedirectResponse(url=f"/courses/{course_id}/script#chapter-{section_id}", status_code=302)
 
 
 @app.get("/courses/{course_id}/slides")
@@ -1168,33 +1058,6 @@ async def forum_page(
         else []
     )
     return templates.TemplateResponse("course/forum.html", ctx)
-
-
-@app.get("/courses/{course_id}/script-questions")
-async def script_questions_page(
-    course_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Kurs-Tab 'Fragen': alle Studenten-Fragen zum Skript (nur Tutor/PROF/Admin)."""
-    membership, ctx = _course_tab_context(
-        session, user, request, course_id, active_tab="questions"
-    )
-
-    if not ctx["is_tutor"] and not ctx["is_admin"]:
-        raise HTTPException(403, "Nur Tutoren und PROFs können die Fragen einsehen.")
-
-    sections = session.exec(
-        select(ScriptSection)
-        .where(ScriptSection.course_id == course_id)
-        .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
-    ).all()
-
-    ctx["page_title"] = f"Fragen — {ctx['course']['name']}"
-    ctx["questions_payload"] = script_questions.load_questions_payload(session, course_id, user)
-    ctx["script_sections"] = [{"id": s.id, "title": s.title} for s in sections]
-    return templates.TemplateResponse("course/script_questions.html", ctx)
 
 
 @app.get("/courses/{course_id}/members")

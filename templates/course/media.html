@@ -243,7 +243,7 @@
     // Pins sind Deep Links zu den Vorkommnissen (Aufgabe / Skript-Kapitel / Slides).
     const usageHref = u => {
       if (u.task_id) return `/courses/${courseId}/tasks/${u.task_id}`;
-      if (u.section_id) return `/courses/${courseId}/script/${u.section_id}`; // direkt zur Kapitel-Bearbeitung
+      if (u.section_id) return `/courses/${courseId}/script#chapter-${u.section_id}`; // direkt zum Kapitel im Skript
       if (u.material_id) return `/courses/${courseId}/slides`;
       return null;
     };

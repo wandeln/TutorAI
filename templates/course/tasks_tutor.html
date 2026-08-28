@@ -6,20 +6,6 @@
 {% endblock %}
 
 {% block course_content %}
-  <!-- Action Bar (Mitglieder/Übersicht sind jetzt Tabs) -->
-  <div class="flex justify-between items-center mb-6">
-    <div class="flex gap-2">
-      <a href="/courses/{{ course.id }}/tasks/new"
-         class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
-        ✏️ Neue Aufgabe
-      </a>
-    </div>
-  </div>
-
-  <div class="text-sm text-gray-500 mb-3" id="task-count">
-    {{ tasks|length }} Aufgaben
-  </div>
-
   <!-- Task List -->
   <div id="task-list" class="space-y-4">
     {% for task in tasks %}
@@ -88,11 +74,20 @@
   </div>
 
   {% if not tasks %}
-  <div class="text-center py-12 text-gray-400">
-    <p class="text-xl">Noch keine Aufgaben erstellt.</p>
-    <p class="text-sm mt-2">Klicke auf "Neue Aufgabe" um zu starten.</p>
+  <!-- Empty State (analog Skript: Icon + Text, ohne Karte) -->
+  <div class="text-center py-6">
+    <div class="text-4xl mb-3">📋</div>
+    <p class="text-gray-500 text-sm">Noch keine Aufgaben erstellt.</p>
   </div>
   {% endif %}
+
+  <!-- Neue Aufgabe (zentriert unter der Liste) -->
+  <div class="mt-6 sm:mt-6 text-center">
+    <a href="/courses/{{ course.id }}/tasks/new"
+       class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
+      ✏️ Neue Aufgabe
+    </a>
+  </div>
 
 <!-- ═══ Aufgabe-Duplizieren-Modal ═══ -->
 <div id="duplicate-task-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -197,16 +192,6 @@
         row.style.opacity = '0';
         row.style.transition = 'opacity 0.3s';
         setTimeout(() => row.remove(), 300);
-      }
-
-      // Zähler aktualisieren
-      const countEl = document.getElementById('task-count');
-      if (countEl) {
-        const parts = countEl.textContent.trim().split(' ');
-        if (parts.length >= 2) {
-          const count = parseInt(parts[0]) - 1;
-          countEl.textContent = count + ' Aufgaben';
-        }
       }
 
     } catch (err) {

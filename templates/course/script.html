@@ -1,8 +1,10 @@
 {% extends "course/base.html" %}
 
 {% block extra_head %}
-<!-- SortableJS (MIT) — Drag-and-Drop -->
+{% if is_tutor or is_admin %}
+<!-- SortableJS (MIT) — Drag-and-Drop (nur Tutor/PROF) -->
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+{% endif %}
 <style>
   /* Markierungen für Skript-Fragen im Lesefluss (Student) */
   mark.sq-mark { background: #fef08a; border-radius: 3px; cursor: pointer; }
@@ -24,102 +26,31 @@
 {# ─────────────────────────────────────────────────────────────────────
    Kurs-Tab "Skript": Vorlesungsskript aus mehreren Markdown-Kapiteln.
 
-   Tutor/PROF/Admin: Listenansicht (analog Aufgaben) mit Drag-and-Drop,
-   Freischalten (Sichtbarkeit), Bearbeiten (separate Seite) und Löschen.
-   Student: freigeschaltete Kapitel als Liste — Inhalt klappt per Klick
-   auf die Überschrift auf (lazy geladen).
-   ───────────────────────────────────────────────────────────── #}
+   Gemeinsame Ansicht für alle Rollen: Kapitel als Karten, Inhalt klappt
+   per Klick auf die Überschrift auf (lazy geladen). Fragen (Dialog +
+   Markierungen im Lesefluss) sind für alle Rollen verfügbar.
+   Tutor/PROF/Admin zusätzlich: Drag-Handle zur Reihenfolge ändern,
+   Toolbar pro Kapitel (Bearbeiten/Sichtbarkeit/Löschen) und
+   "Neues Kapitel" (Inline-Formular, inkl. LLM-Kapitel-Generierung).
+   ───────────────────────────────────────────────────────────────────── #}
 
 {% block course_content %}
 
-{% if is_tutor or is_admin %}
-
-  <!-- Action Bar -->
-  <div class="flex justify-between items-center mb-6">
-    <div class="flex gap-2">
-      <a href="/courses/{{ course.id }}/script/new"
-         class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
-        ✏️ Neues Kapitel
-      </a>
-    </div>
-  </div>
-
-  <div class="text-sm text-gray-500 mb-3" id="section-count">
-    {{ sections|length }} Kapitel
-  </div>
-
-  <!-- Kapitel-Liste -->
-  <div id="section-list" class="space-y-4">
-    {% for s in sections %}
-    <div class="card flex items-center justify-between" id="section-row-{{ s.id }}" data-section-id="{{ s.id }}">
-      <div class="flex items-center gap-3">
-        <!-- Drag Handle -->
-        <div class="cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-2"
-             title="Ziehen zur Reihenfolge ändern">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="9" cy="6" r="1.5"/>
-            <circle cx="15" cy="6" r="1.5"/>
-            <circle cx="9" cy="12" r="1.5"/>
-            <circle cx="15" cy="12" r="1.5"/>
-            <circle cx="9" cy="18" r="1.5"/>
-            <circle cx="15" cy="18" r="1.5"/>
-          </svg>
-        </div>
-        <div class="flex-1">
-          <a href="/courses/{{ course.id }}/script/{{ s.id }}"
-             class="text-lg font-semibold text-blue-600 hover:underline">
-            {{ s.title }}
-          </a>
-          <div class="text-sm text-gray-500 mt-1">
-            Aktualisiert: {{ s.updated_at[:16].replace("T", " ") if s.updated_at else "–" }}
-          </div>
-        </div>
-      </div>
-      <div class="flex items-center gap-4">
-        <button type="button"
-                onclick="toggleVisibility({{ s.id }}, this)"
-                class="text-gray-400 hover:text-blue-600 transition text-lg p-1 rounded hover:bg-gray-100"
-                title="{% if s.is_visible %}Kapitel verstecken{% else %}Kapitel freischalten{% endif %}">
-          {% if s.is_visible %}
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-          {% else %}
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
-          {% endif %}
-        </button>
-        <button type="button"
-                onclick="confirmDeleteSection(this)"
-                data-section-title="{{ s.title | e }}"
-                class="text-red-500 hover:text-red-700 transition text-sm font-medium"
-                title="Kapitel löschen">
-          🗑️
-        </button>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-
-  {% if not sections %}
-  <div class="bg-white rounded-xl border-2 border-dashed border-gray-300 p-10 text-center">
-    <div class="text-5xl mb-4">📖</div>
-    <h2 class="text-lg font-semibold text-gray-700">Noch keine Kapitel vorhanden</h2>
-    <p class="text-gray-500 text-sm mt-2 max-w-xl mx-auto">
-      Erstelle hier die Kapitel des Vorlesungsskripts (Markdown, mit LaTeX <code>$...$</code> und Mermaid).
-      Jedes Kapitel kann einzeln per LLM bearbeitet und für die Studenten freigeschaltet werden.
-    </p>
-    <a href="/courses/{{ course.id }}/script/new"
-       class="mt-5 inline-block bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-      + Neues Kapitel
-    </a>
-  </div>
-  {% endif %}
-
-{% else %}
-
-  <!-- Student: freigeschaltete Kapitel (Überschriften, Inhalt per Klick ausklappbar) -->
-  <!-- space-y nur ab sm: mobil haben die Karten keinen Vertikalabstand -->
+  <!-- Kapitel (alle Rollen): Überschrift, Inhalt per Klick ausklappbar.
+       space-y nur ab sm: mobil haben die Karten keinen Vertikalabstand -->
   <div id="script-reading" class="sm:space-y-4">
     <p class="text-gray-400 text-sm">Wird geladen…</p>
   </div>
+
+  {% if is_tutor or is_admin %}
+  <!-- Tutor/PROF: neues Kapitel (unterhalb der Kapitelliste, zentriert) -->
+  <div class="mt-4 sm:mt-6 text-center">
+    <button id="new-section-btn" type="button"
+            class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition text-sm">
+      ✏️ Neues Kapitel
+    </button>
+  </div>
+  {% endif %}
 
   <!-- Schwebender Fragen-Button (mousedown preventDefault erhält die Text-Auswahl) -->
   <button id="script-question-fab" type="button" onmousedown="event.preventDefault()"
@@ -168,67 +99,53 @@
     <div id="sq-body-all" class="hidden flex-1 overflow-y-auto p-3 space-y-3"></div>
   </div>
 
-{% endif %}
-
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-{% if is_tutor or is_admin %}
+  // Gemeinsame Ansicht für alle Rollen; Tutor/PROF/Admin zusätzlich mit
+  // Bearbeitung (Drag-Handle, Toolbar, Inline-Formular, neues Kapitel).
+  const SQ_IS_TUTOR = {{ 'true' if is_tutor or is_admin else 'false' }};
 
   function decodeHtml(text) {
     return text.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
   }
 
-  // ─── Deep-Link: #chapter-{id} → zur Kapitel-Zeile scrollen + kurz hervorheben ───
-  function handleChapterHash() {
-    const m = location.hash.match(/^#chapter-(\d+)$/);
-    if (!m) return;
-    const row = document.getElementById('section-row-' + m[1]);
-    if (!row) return;
-    row.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    row.style.outline = '2px solid #60a5fa';
-    row.style.outlineOffset = '2px';
-    setTimeout(() => { row.style.outline = ''; row.style.outlineOffset = ''; }, 2500);
-  }
-  window.addEventListener('hashchange', handleChapterHash);
-  handleChapterHash();
+  // Auge-Icons für die Sichtbarkeits-Buttons (Toolbar)
+  const SQ_EYE_OPEN = '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+  const SQ_EYE_SLASH = '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+  function sqEyeIcon(visible) { return visible ? SQ_EYE_OPEN : SQ_EYE_SLASH; }
 
-  // ─── Drag-and-Drop Reihenfolge ────────────────────────────────
-  document.addEventListener('DOMContentLoaded', () => {
-    const sectionList = document.getElementById('section-list');
-    if (!sectionList || !sectionList.children.length) return;
-
-    Sortable.create(sectionList, {
-      handle: '.cursor-grab',
+  // ─── Tutor: Drag-and-Drop Reihenfolge (Handle in der Karten-Headline) ───
+  // Wird nach loadScript() aufgerufen, wenn die Karten im DOM stehen.
+  function initSortable() {
+    const list = document.getElementById('script-reading');
+    if (!list || !window.Sortable) return;
+    Sortable.create(list, {
+      handle: '.sq-drag-handle',
       animation: 150,
       ghostClass: 'bg-blue-50',
       chosenClass: 'shadow-lg',
       dragClass: 'shadow-xl',
       onEnd: async function() {
-        const newOrder = [];
-        sectionList.querySelectorAll('[data-section-id]').forEach((row, idx) => {
-          newOrder.push({
-            id: parseInt(row.getAttribute('data-section-id')),
-            order: idx,
-          });
+        // Nur Karten mit echter ID (neue Kapitel sind noch nicht in der DB)
+        const ids = [];
+        list.querySelectorAll('.script-chapter-card[data-section-id]').forEach((c) => {
+          ids.push(parseInt(c.getAttribute('data-section-id')));
         });
-
         try {
           const res = await fetch('/api/courses/' + courseId + '/script-sections/reorder', {
             method: 'PATCH',
             credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ section_ids: newOrder.map(t => t.id) }),
+            body: JSON.stringify({ section_ids: ids }),
           });
-
           const data = await res.json();
           if (!res.ok) {
             showToast(data.detail || 'Fehler beim Verschieben.', 'error');
             location.reload(); // Reihenfolge zuruecksetzen bei Fehler
             return;
           }
-
           showToast('Reihenfolge aktualisiert.', 'success');
         } catch (err) {
           showToast('Fehler: ' + err.message, 'error');
@@ -236,45 +153,58 @@
         }
       }
     });
-  });
+  }
 
-  // ─── Sichtbarkeit (freischalten/verstecken) ───────────────────
-  async function toggleVisibility(sectionId, button) {
+  // ─── Tutor: Sichtbarkeit (State pro Karte — kein Title-Hack) ──────
+  async function sqToggleVisibility(card) {
+    const sectionId = card.getAttribute('data-section-id');
+    const nowVisible = !card._visible;
     try {
       const res = await fetch('/api/script-sections/' + sectionId + '/visibility', {
         method: 'PATCH',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_visible: button.title.includes('freischalten') }),
+        body: JSON.stringify({ is_visible: nowVisible }),
       });
-
       const data = await res.json();
       if (!res.ok) {
         showToast(data.detail || 'Fehler beim Umschalten.', 'error');
         return;
       }
-
-      // Icon + Badge aktualisieren
-      const isNowVisible = data.is_visible;
-      const icon = isNowVisible
-        ? '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-        : '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
-      button.innerHTML = icon;
-      button.title = isNowVisible ? 'Kapitel verstecken' : 'Kapitel freischalten';
-
+      sqSetCardVisibility(card, data.is_visible);
       showToast(data.message || 'Sichtbarkeit aktualisiert.', 'success');
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }
   }
 
-  // ─── Löschen ──────────────────────────────────────────────────
-  async function confirmDeleteSection(btn) {
-    const row = btn.closest('[data-section-id]');
-    const sectionId = row.getAttribute('data-section-id');
-    const title = decodeHtml(btn.getAttribute('data-section-title') || '');
+  // „versteckt“-Badge + Auge-Icon einer Karte auf den neuen Zustand setzen
+  function sqSetCardVisibility(card, visible) {
+    card._visible = visible;
+    const titleWrap = card.querySelector('.sq-title-wrap');
+    let badge = card.querySelector('.sq-hidden-badge');
+    if (visible && badge) {
+      badge.remove();
+    } else if (!visible && !badge && titleWrap) {
+      badge = document.createElement('span');
+      badge.className = 'sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
+      badge.textContent = 'versteckt';
+      titleWrap.appendChild(badge);
+    }
+    const visBtn = card.querySelector('.sq-vis-btn');
+    if (visBtn) {
+      visBtn.innerHTML = sqEyeIcon(visible);
+      visBtn.title = visible ? 'Kapitel verstecken' : 'Kapitel freischalten';
+      visBtn.className = 'sq-vis-btn p-1.5 rounded hover:bg-gray-100 transition ' + (visible ? 'text-gray-400 hover:text-blue-600' : 'text-gray-300');
+    }
+  }
 
-    const msg = 'Möchtest du "' + title + '" wirklich löschen?\n\nDer Markdown-Inhalt dieses Kapitels wird endgültig entfernt.';
+  // ─── Tutor: Kapitel löschen (Fragen des Kapitels → „Allgemein“) ──
+  async function sqDeleteSection(card) {
+    const sectionId = card.getAttribute('data-section-id');
+    const title = card.getAttribute('data-section-title') || 'dieses Kapitel';
+
+    const msg = 'Möchtest du "' + title + '" wirklich löschen?\n\nDer Markdown-Inhalt dieses Kapitels wird endgültig entfernt. Zugehörige Fragen bleiben als „Allgemein“ erhalten.';
     if (!confirm(msg)) return;
 
     try {
@@ -291,28 +221,421 @@
 
       showToast(data.message || 'Kapitel gelöscht.', 'success');
 
-      // Eintrag mit Fade-Out entfernen
-      row.style.opacity = '0';
-      row.style.transition = 'opacity 0.3s';
-      setTimeout(() => row.remove(), 300);
-
-      // Zähler aktualisieren
-      const countEl = document.getElementById('section-count');
-      if (countEl) {
-        const parts = countEl.textContent.trim().split(' ');
-        if (parts.length >= 2) {
-          const count = parseInt(parts[0]) - 1;
-          countEl.textContent = count + ' Kapitel';
-        }
-      }
+      // Karte mit Fade-Out entfernen
+      card.style.opacity = '0';
+      card.style.transition = 'opacity 0.3s';
+      setTimeout(() => card.remove(), 300);
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }
   }
 
-  {% else %}
+  // ─── Tutor: Bearbeiten (Inline-Formular) ──────────────────────────
 
-  // ─── Student: Kapitel-Liste (Inhalt per Klick ausklappbar) ────
+  // Formular-HTML; KEY macht alle IDs pro Karte eindeutig
+  function sqEditFormHtml(key) {
+    return `
+      <div class="bg-purple-50 border-2 border-purple-300 rounded-xl p-4 mb-4">
+        <h3 class="font-semibold text-gray-800 mb-3 text-sm">🤖 LLM-Kapitel generieren</h3>
+        <div class="flex flex-wrap gap-x-4 gap-y-2 mb-3">
+          <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+            <input type="checkbox" id="sqe-ft-${key}" checked class="rounded text-purple-600">Titel
+          </label>
+          <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer">
+            <input type="checkbox" id="sqe-fc-${key}" checked class="rounded text-purple-600">Inhalt
+          </label>
+          <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer" title="Interne Zusammenfassung für die LLM-Konsistenz zwischen Kapiteln (nicht für Studenten sichtbar)">
+            <input type="checkbox" id="sqe-fs-${key}" checked class="rounded text-purple-600">Zusammenfassung (intern)
+          </label>
+        </div>
+        <textarea id="sqe-topic-${key}" rows="2" placeholder="Thema / Änderungswunsch (z.B. „Beispiel mit Baumdiagramm ergänzen“, „kürzer fassen“) — leer lassen, wenn das LLM frei überarbeiten soll."
+                  class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm mb-3"></textarea>
+        <div id="sqe-progress-${key}" class="hidden mb-3">
+          <div class="flex items-center gap-2 text-sm text-purple-700">
+            <span id="sqe-pstatus-${key}">⏳ LLM generiert/ändert Kapitel…</span>
+            <span id="sqe-ptimer-${key}" class="font-mono">0s</span>
+          </div>
+          <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
+            <div id="sqe-pbar-${key}" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+          <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
+        </div>
+        <div class="flex items-center justify-end">
+          <button type="button" id="sqe-ai-${key}" class="bg-purple-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-purple-700 transition font-medium">Generieren / Ändern</button>
+        </div>
+      </div>
+      <div class="mb-4">
+        <h3 class="font-semibold text-gray-800 mb-2 text-sm">Titel <span class="text-red-500">*</span></h3>
+        <input type="text" id="sqe-title-${key}" maxlength="300" placeholder="z.B. Kapitel 1: Grundlagen"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div id="sqe-content-${key}" class="mb-4">
+        <h3 class="font-semibold text-gray-800 mb-2 text-sm">Inhalt</h3>
+        <textarea id="sqe-content-ta-${key}" rows="18"
+                  placeholder="Markdown-Inhalt des Kapitels (fett, kursiv, Listen, $Math$, Mermaid)…"
+                  class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        <div class="flex items-center justify-between mt-2">
+          <p class="text-xs text-gray-400">💡 Markdown und LaTeX werden unterstützt.</p>
+          <div id="sqe-content-anchor-${key}"></div>
+        </div>
+      </div>
+      <div id="sqe-summary-${key}" class="mb-2">
+        <h3 class="font-semibold text-gray-800 mb-2 text-sm">Zusammenfassung</h3>
+        <textarea id="sqe-summary-ta-${key}" rows="4"
+                  placeholder="Wird vom LLM erstellt (3-6 Sätze): zentrale Begriffe, Notation, wichtige Definitionen/Sätze."
+                  class="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+        <div class="flex items-center justify-between mt-2">
+          <span class="text-xs text-gray-400">(intern — für die LLM-Konsistenz zwischen Kapiteln, nicht für Studenten)</span>
+          <div id="sqe-summary-anchor-${key}"></div>
+        </div>
+      </div>`;
+  }
+
+  // Edit-Modus: Toolbar-Buttons werden zu Speichern / Abbrechen
+  function sqSetEditToolbar(card) {
+    const toolbar = card.querySelector('.sq-toolbar');
+    if (!toolbar) return;
+    const visible = !!card._visible;
+    // Speichern/Abbrechen links; Auge + Bin bleiben immer rechts
+    toolbar.innerHTML =
+      '<button type="button" class="sq-save-btn bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">💾 Speichern</button>' +
+      '<button type="button" class="sq-cancel-btn bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium transition">Abbrechen</button>' +
+      '<span class="flex-1"></span>' +
+      '<button type="button" class="sq-vis-btn p-1.5 rounded hover:bg-gray-100 transition ' + (visible ? 'text-gray-400 hover:text-blue-600' : 'text-gray-300') + '" title="' + (visible ? 'Kapitel verstecken' : 'Kapitel freischalten') + '">' + sqEyeIcon(visible) + '</button>' +
+      '<button type="button" class="sq-del-btn text-red-500 hover:text-red-700 transition p-1.5 rounded hover:bg-red-50 text-sm" title="Kapitel löschen">🗑️</button>';
+    toolbar.querySelector('.sq-save-btn').addEventListener('click', () => sqSaveSection(card));
+    toolbar.querySelector('.sq-cancel-btn').addEventListener('click', () => sqExitEditMode(card));
+    toolbar.querySelector('.sq-vis-btn').addEventListener('click', () => sqToggleVisibility(card));
+    toolbar.querySelector('.sq-del-btn').addEventListener('click', () => sqDeleteSection(card));
+  }
+
+  // Toolbar im Normalmodus (Bearbeiten / Auge / Bin)
+  function sqSetNormalToolbar(card) {
+    const toolbar = card.querySelector('.sq-toolbar');
+    if (!toolbar) return;
+    const visible = !!card._visible;
+    toolbar.innerHTML =
+      '<button type="button" class="sq-edit-btn bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">✏️ Bearbeiten</button>' +
+      '<span class="flex-1"></span>' +
+      '<button type="button" class="sq-vis-btn p-1.5 rounded hover:bg-gray-100 transition ' + (visible ? 'text-gray-400 hover:text-blue-600' : 'text-gray-300') + '" title="' + (visible ? 'Kapitel verstecken' : 'Kapitel freischalten') + '">' + sqEyeIcon(visible) + '</button>' +
+      '<button type="button" class="sq-del-btn text-red-500 hover:text-red-700 transition p-1.5 rounded hover:bg-red-50 text-sm" title="Kapitel löschen">🗑️</button>';
+    toolbar.querySelector('.sq-edit-btn').addEventListener('click', () => sqEnterEditMode(card));
+    toolbar.querySelector('.sq-vis-btn').addEventListener('click', () => sqToggleVisibility(card));
+    toolbar.querySelector('.sq-del-btn').addEventListener('click', () => sqDeleteSection(card));
+  }
+
+  // Bearbeiten: Markdown-Vorschau wird durch das Formular ersetzt
+  function sqEnterEditMode(card) {
+    if (card._edit) return;
+    const sectionId = card.getAttribute('data-section-id');
+    const key = sectionId;
+    const body = card.querySelector('.script-chapter-body');
+    const md = body.querySelector('.markdown-preview');
+    const editBtn = card.querySelector('.sq-edit-btn');
+    if (editBtn) editBtn.disabled = true;
+
+    const form = document.createElement('div');
+    form.className = 'sq-edit-form';
+    form.innerHTML = sqEditFormHtml(key);
+    body.appendChild(form);
+
+    const contentTa = form.querySelector('#sqe-content-ta-' + key);
+    const summaryTa = form.querySelector('#sqe-summary-ta-' + key);
+
+    // Inhalt + interne Zusammenfassung laden (Tutor-API liefert beides),
+    // dann Markdown-Editoren initialisieren und in den Edit-Modus wechseln.
+    fetch('/api/script-sections/' + sectionId, { credentials: 'same-origin' })
+      .then((r) => { if (!r.ok) throw new Error('Nicht geladen'); return r.json(); })
+      .then((data) => {
+        contentTa.value = data.content || '';
+        summaryTa.value = data.summary || '';
+        const contentEditor = createMarkdownEditor('sqe-content-' + key, {
+          buttonAnchor: 'sqe-content-anchor-' + key,
+          textareaId: 'sqe-content-ta-' + key,
+          startInPreview: true,
+          sectionId: parseInt(sectionId),
+        });
+        const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
+          buttonAnchor: 'sqe-summary-anchor-' + key,
+          textareaId: 'sqe-summary-ta-' + key,
+          startInPreview: true,
+        });
+        card._edit = {
+          sectionId: parseInt(sectionId),
+          form,
+          contentTa,
+          summaryTa,
+          contentEditor,
+          summaryEditor,
+          titleInput: form.querySelector('#sqe-title-' + key),
+          fieldTitle: form.querySelector('#sqe-ft-' + key),
+          fieldContent: form.querySelector('#sqe-fc-' + key),
+          fieldSummary: form.querySelector('#sqe-fs-' + key),
+          topic: form.querySelector('#sqe-topic-' + key),
+          progress: form.querySelector('#sqe-progress-' + key),
+          progressTimer: form.querySelector('#sqe-ptimer-' + key),
+          progressBar: form.querySelector('#sqe-pbar-' + key),
+          aiBtn: form.querySelector('#sqe-ai-' + key),
+          aiTimer: null,
+          aiBarTimer: null,
+        };
+        card._edit.titleInput.value = card.getAttribute('data-section-title') || '';
+        card._edit.aiBtn.addEventListener('click', () => sqAiGenerate(card));
+        md.classList.add('hidden');
+        sqSetEditToolbar(card);
+      })
+      .catch(() => {
+        form.remove();
+        if (editBtn) editBtn.disabled = false;
+        showToast('Fehler beim Laden des Kapitels.', 'error');
+      });
+  }
+
+  function sqExitEditMode(card) {
+    const edit = card._edit;
+    if (!edit) return;
+    card._edit = null;
+    if (edit.form && edit.form.parentNode) edit.form.remove();
+    const md = card.querySelector('.script-chapter-body .markdown-preview');
+    if (md) md.classList.remove('hidden');
+    sqSetNormalToolbar(card);
+  }
+
+  async function sqSaveSection(card) {
+    const edit = card._edit;
+    if (!edit || !edit.titleInput) return;
+    const title = edit.titleInput.value.trim();
+    if (!title) {
+      showToast('Titel darf nicht leer sein.', 'error');
+      return;
+    }
+    const saveBtn = card.querySelector('.sq-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+    const isNew = card.hasAttribute('data-new');
+    const payload = {
+      title,
+      content: edit.contentTa.value,
+      summary: edit.summaryTa.value,
+      is_visible: !!card._visible,
+    };
+    const url = isNew
+      ? `/api/courses/${courseId}/script-sections`
+      : `/api/script-sections/${edit.sectionId}`;
+    try {
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Fehler beim Speichern.');
+      showToast(data.message || (isNew ? 'Kapitel erstellt.' : 'Kapitel gespeichert.'), 'success');
+      if (isNew) {
+        location.reload(); // Reihenfolge/IDs neu laden
+        return;
+      }
+      // Frischen Inhalt + Titel laden und neu rendern
+      try {
+        const r = await fetch(`/api/script-sections/${edit.sectionId}`, { credentials: 'same-origin' });
+        if (r.ok) {
+          const fresh = await r.json();
+          const md = card.querySelector('.script-chapter-body .markdown-preview');
+          if (md) {
+            await renderMarkdown(fresh.content || '', md, { sectionId: edit.sectionId });
+            md.setAttribute('data-loaded', '1');
+          }
+          card.setAttribute('data-section-title', fresh.title);
+          const t = card.querySelector('.sq-title-wrap > span');
+          if (t) t.textContent = fresh.title;
+          sqSetCardVisibility(card, fresh.is_visible);
+        }
+      } catch (e) { /* nicht kritisch — die Änderungen sind gespeichert */ }
+      sqExitEditMode(card);
+      const md = card.querySelector('.script-chapter-body .markdown-preview');
+      if (md) sqApplyMarksToSection(md, edit.sectionId);
+    } catch (err) {
+      showToast(err.message, 'error');
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  }
+
+  // LLM-Generierung (gleicher Endpoint wie die Edit-Seite)
+  async function sqAiGenerate(card) {
+    const edit = card._edit;
+    if (!edit || !edit.aiBtn) return;
+    const generateFields = {
+      title: edit.fieldTitle.checked,
+      content: edit.fieldContent.checked,
+      summary: edit.fieldSummary.checked,
+    };
+    if (!generateFields.title && !generateFields.content && !generateFields.summary) {
+      showToast('Wähle mindestens ein Feld aus.', 'error');
+      return;
+    }
+
+    edit.aiBtn.disabled = true;
+    edit.aiBtn.textContent = '⏳ Generiere…';
+    edit.progress.classList.remove('hidden');
+
+    // Timer + animierte Progressbar (asymptotisch bis ~95 %, dann 100 % bei Fertig)
+    let seconds = 0;
+    edit.progressTimer.textContent = '0s';
+    edit.aiTimer = setInterval(() => { seconds++; edit.progressTimer.textContent = seconds + 's'; }, 1000);
+    let bar = 5;
+    edit.progressBar.style.width = bar + '%';
+    edit.aiBarTimer = setInterval(() => {
+      bar = bar + (95 - bar) * 0.04;
+      edit.progressBar.style.width = bar + '%';
+    }, 300);
+
+    try {
+      const res = await fetch(`/api/courses/${courseId}/script-sections/ai-generate`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: edit.topic.value.trim() || "allgemein",
+          section_id: edit.sectionId,
+          current_title: edit.titleInput.value,
+          current_content: edit.contentTa.value,
+          generate_fields: generateFields,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'LLM-Generierung fehlgeschlagen.');
+
+      if (generateFields.title && data.title) {
+        edit.titleInput.value = data.title;
+      }
+      // Preview sofort aktualisieren (analog task_detail.html)
+      if (generateFields.content && data.content) {
+        edit.contentTa.value = data.content;
+        (async () => {
+          await renderMarkdown(data.content, edit.contentEditor.previewDiv, { preview: true, sectionId: edit.sectionId });
+          if (!edit.contentEditor.isPreview()) edit.contentEditor.toggleBtn.click();
+        })();
+      }
+      if (generateFields.summary && data.summary) {
+        edit.summaryTa.value = data.summary;
+        (async () => {
+          await renderMarkdown(data.summary, edit.summaryEditor.previewDiv, { preview: true });
+          if (!edit.summaryEditor.isPreview()) edit.summaryEditor.toggleBtn.click();
+        })();
+      }
+      // Leere Felder im Response = LLM hat das Feld nicht geändert
+      const changed = [], unchanged = [];
+      if (generateFields.title) (data.title ? changed : unchanged).push('Titel');
+      if (generateFields.content) (data.content ? changed : unchanged).push('Inhalt');
+      if (generateFields.summary) (data.summary ? changed : unchanged).push('Zusammenfassung');
+      let msg = data.edits_applied
+        ? `LLM: ${data.edits_applied} stellenweise Edits angewendet`
+        : 'LLM-Inhalt generiert';
+      if (edit.sectionId !== null && unchanged.length) {
+        msg += ` — ${unchanged.join(' & ')} unverändert gelassen`;
+      }
+      showToast(msg + ' — bitte prüfen und speichern.', 'success');
+      if (Array.isArray(data.warnings) && data.warnings.length) {
+        showToast('⚠️ ' + data.warnings.join(' '), 'warning');
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      clearInterval(edit.aiTimer);
+      clearInterval(edit.aiBarTimer);
+      edit.progressBar.style.width = '100%';
+      edit.aiBtn.disabled = false;
+      edit.aiBtn.textContent = 'Generieren / Ändern';
+      setTimeout(() => edit.progress.classList.add('hidden'), 500);
+    }
+  }
+
+  // ─── Tutor: neues Kapitel (Karte direkt im Edit-Modus) ─────────
+  function sqAddNewSection() {
+    const container = document.getElementById('script-reading');
+    const empty = container.querySelector('.sq-empty-state');
+    if (empty) empty.remove();
+
+    const key = 'new' + Date.now();
+    const card = document.createElement('div');
+    card.className = 'script-chapter-card bg-white border-2 border-dashed border-blue-300 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl';
+    card.setAttribute('data-new', '1');
+    card.setAttribute('data-section-title', 'Neues Kapitel');
+    card._visible = false;
+
+    const header = document.createElement('div');
+    header.className = 'w-full flex items-center gap-3 px-6 py-4';
+    const titleWrap = document.createElement('span');
+    titleWrap.className = 'sq-title-wrap flex items-center gap-2 min-w-0 flex-1';
+    const title = document.createElement('span');
+    title.className = 'text-lg font-semibold text-gray-400 truncate';
+    title.textContent = 'Neues Kapitel';
+    titleWrap.appendChild(title);
+    header.appendChild(titleWrap);
+    card.appendChild(header);
+
+    const body = document.createElement('div');
+    body.className = 'script-chapter-body px-6 pt-0 pb-6 border-t border-gray-100';
+    const toolbar = document.createElement('div');
+    toolbar.className = 'sq-toolbar flex items-center gap-2 pt-4 pb-4';
+    body.appendChild(toolbar);
+    card.appendChild(body);
+    container.appendChild(card);
+
+    const form = document.createElement('div');
+    form.className = 'sq-edit-form';
+    form.innerHTML = sqEditFormHtml(key);
+    body.appendChild(form);
+    const contentEditor = createMarkdownEditor('sqe-content-' + key, {
+      buttonAnchor: 'sqe-content-anchor-' + key,
+      textareaId: 'sqe-content-ta-' + key,
+      startInPreview: true,
+    });
+    const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
+      buttonAnchor: 'sqe-summary-anchor-' + key,
+      textareaId: 'sqe-summary-ta-' + key,
+      startInPreview: true,
+    });
+    card._edit = {
+      sectionId: null,
+      form,
+      contentTa: form.querySelector('#sqe-content-ta-' + key),
+      summaryTa: form.querySelector('#sqe-summary-ta-' + key),
+      contentEditor,
+      summaryEditor,
+      titleInput: form.querySelector('#sqe-title-' + key),
+      fieldTitle: form.querySelector('#sqe-ft-' + key),
+      fieldContent: form.querySelector('#sqe-fc-' + key),
+      fieldSummary: form.querySelector('#sqe-fs-' + key),
+      topic: form.querySelector('#sqe-topic-' + key),
+      progress: form.querySelector('#sqe-progress-' + key),
+      progressTimer: form.querySelector('#sqe-ptimer-' + key),
+      progressBar: form.querySelector('#sqe-pbar-' + key),
+      aiBtn: form.querySelector('#sqe-ai-' + key),
+      aiTimer: null,
+      aiBarTimer: null,
+    };
+    card._edit.aiBtn.addEventListener('click', () => sqAiGenerate(card));
+
+    // Toolbar: Speichern/Abbrechen links + Auge (Sichtbarkeit) rechts —
+    // konsistent zum Edit-Modus bestehender Kapitel
+    toolbar.innerHTML =
+      '<button type="button" class="sq-save-btn bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">💾 Speichern</button>' +
+      '<button type="button" class="sq-cancel-btn bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium transition">Abbrechen</button>' +
+      '<span class="flex-1"></span>' +
+      '<button type="button" class="sq-vis-btn p-1.5 rounded hover:bg-gray-100 transition text-gray-300" title="Kapitel für Studenten sichtbar machen">' + sqEyeIcon(false) + '</button>';
+    toolbar.querySelector('.sq-vis-btn').addEventListener('click', () => {
+      // Neukapitel ist noch nicht in der DB → nur lokalen Zustand umschalten
+      sqSetCardVisibility(card, !card._visible);
+    });
+    toolbar.querySelector('.sq-save-btn').addEventListener('click', () => sqSaveSection(card));
+    toolbar.querySelector('.sq-cancel-btn').addEventListener('click', () => card.remove());
+
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card._edit.titleInput.focus();
+  }
+
+  // ─── Kapitel-Liste (alle Rollen; Inhalt per Klick ausklappbar) ────
   async function loadScript() {
     const container = document.getElementById('script-reading');
     try {
@@ -322,7 +645,17 @@
       container.innerHTML = "";
 
       if (!sections.length) {
-        container.innerHTML = '<p class="text-gray-400 text-sm">Noch keine Kapitel freigeschaltet.</p>';
+        // Nur Hinweistext; das neue Kapitel wird per Button unter der Liste erstellt.
+        // (sq-empty-state: wird von sqAddNewSection() beim Erstellen entfernt)
+        if (SQ_IS_TUTOR) {
+          container.innerHTML =
+            '<div class="sq-empty-state text-center py-6">' +
+            '<div class="text-4xl mb-3">📖</div>' +
+            '<p class="text-gray-500 text-sm">Noch keine Kapitel im Skript.</p>' +
+            '</div>';
+        } else {
+          container.innerHTML = '<p class="text-gray-400 text-sm">Noch keine Kapitel freigeschaltet.</p>';
+        }
         return;
       }
 
@@ -334,14 +667,36 @@
         card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl";
         card.setAttribute("data-section-id", s.id);
         card.setAttribute("data-section-title", s.title);
+        card._visible = !!s.is_visible;
 
         const header = document.createElement("button");
         header.type = "button";
-        header.className = "w-full flex items-center justify-between gap-3 px-6 py-4 text-left hover:bg-gray-50 transition";
+        header.className = "w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition";
 
+        if (SQ_IS_TUTOR) {
+          const handle = document.createElement("div");
+          handle.className = "sq-drag-handle cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-1 -m-1";
+          handle.title = "Ziehen zur Reihenfolge ändern";
+          handle.innerHTML =
+            '<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">' +
+            '<circle cx="9" cy="5" r="1.5"></circle><circle cx="15" cy="5" r="1.5"></circle>' +
+            '<circle cx="9" cy="12" r="1.5"></circle><circle cx="15" cy="12" r="1.5"></circle>' +
+            '<circle cx="9" cy="19" r="1.5"></circle><circle cx="15" cy="19" r="1.5"></circle></svg>';
+          header.appendChild(handle);
+        }
+
+        const titleWrap = document.createElement("span");
+        titleWrap.className = "sq-title-wrap flex items-center gap-2 min-w-0 flex-1";
         const title = document.createElement("span");
-        title.className = "text-lg font-semibold text-blue-600";
+        title.className = "text-lg font-semibold text-blue-600 truncate";
         title.textContent = s.title;
+        titleWrap.appendChild(title);
+        if (SQ_IS_TUTOR && !s.is_visible) {
+          const badge = document.createElement("span");
+          badge.className = "sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0";
+          badge.textContent = "versteckt";
+          titleWrap.appendChild(badge);
+        }
 
         const chevron = document.createElementNS(svgNS, "svg");
         chevron.setAttribute("viewBox", "0 0 24 24");
@@ -353,11 +708,16 @@
         chevron.setAttribute("class", "h-5 w-5 text-gray-400 flex-shrink-0 transition-transform");
         chevron.innerHTML = '<polyline points="6 9 12 15 18 9"></polyline>';
 
-        header.appendChild(title);
+        header.appendChild(titleWrap);
         header.appendChild(chevron);
 
         const body = document.createElement("div");
         body.className = "script-chapter-body hidden px-6 pt-4 pb-6 border-t border-gray-100";
+        if (SQ_IS_TUTOR) {
+          const toolbar = document.createElement("div");
+          toolbar.className = "sq-toolbar flex items-center gap-2 pb-4";
+          body.appendChild(toolbar);
+        }
         const md = document.createElement("div");
         md.className = "markdown-preview";
         md.textContent = "Wird geladen…";
@@ -389,9 +749,12 @@
 
         card.appendChild(header);
         card.appendChild(body);
+        // Toolbar erst nach dem Einbau befüllen (querySelector braucht den DOM-Pfad)
+        if (SQ_IS_TUTOR) sqSetNormalToolbar(card);
         container.appendChild(card);
       }
 
+      if (SQ_IS_TUTOR) initSortable();
       handleChapterHash();
       handleObjectHash();
     } catch (e) {
@@ -445,6 +808,9 @@
   });
 
   loadScript();
+
+  const newSectionBtn = document.getElementById('new-section-btn');
+  if (newSectionBtn) newSectionBtn.addEventListener('click', () => sqAddNewSection());
 
   // ─── Skript-Fragen: Dialog, Auswahl, Markierungen ──────────────────
   const sqMe = {{ current_user | tojson }};
@@ -848,6 +1214,9 @@
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
     const range = sel.getRangeAt(0);
+    // Auswahl in Formularfeldern (Tutor-Edit-Modus) ignorieren
+    const anc = range.commonAncestorContainer;
+    if (anc.nodeType === Node.ELEMENT_NODE && (anc.tagName === 'TEXTAREA' || anc.tagName === 'INPUT')) return;
     const reading = document.getElementById('script-reading');
     if (!reading || !reading.contains(range.commonAncestorContainer)) return;
     let el = range.commonAncestorContainer;
@@ -1349,7 +1718,5 @@
     sqPolling = true;
     try { await sqLoad(); } finally { sqPolling = false; }
   }, 6000);
-
-{% endif %}
 </script>
 {% endblock %}

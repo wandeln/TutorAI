@@ -371,7 +371,8 @@ async def script_refmap(
     „veröffentlichte“ Nummerierung.
 
     Payload:
-        mode:     "reading" (Student → Skript-Seite) bzw. "edit" (PROF/TUTOR/Admin → Kapitel-Editseite)
+        mode:     "reading" (Student) bzw. "edit" (PROF/TUTOR/Admin) — beeinflusst nur das
+                  Layout der @task:-Boxen (Querverweise verlinken alle auf die Skript-Seite)
         courseId: Kurs-ID
         chapters: {id: {title, maxFig, maxEq}}  # Preview-Fallback (neue, ungespeicherte Labels)
         labels:   {label: {kind, sectionId, num}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt

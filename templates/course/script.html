@@ -762,10 +762,13 @@
     // Ganz analog zur Kapitel-Karte: Header-Zeile (Klick = ein-/ausklappen) +
     // darunter (nur Tutor/Prof, im aufgeklappten Zustand) Toolbar rechtsbündig
     // mit dem Auge — wie bei den Kapiteln (sq-toolbar).
+    // Aufbau exakt wie der Kapitel-Header, damit „Inhaltsverzeichnis" am selben
+    // x-Startpunkt steht wie die Kapitel-Titel: [Tutor: 20-px-Platzhalter für das
+    // Drag-Handle] + titlewrap (Icon w-12 = Chip w-12, gap-2) + Chevron.
     card.innerHTML =
       '<button type="button" class="sq-toc-toggle w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition">' +
-      '<span class="text-xl flex-shrink-0" aria-hidden="true">📑</span>' +
-      '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="text-lg font-semibold text-blue-600 truncate">Inhaltsverzeichnis</span>' +
+      (SQ_IS_TUTOR ? '<span class="w-5 flex-shrink-0" aria-hidden="true"></span>' : '') +
+      '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="w-12 text-xl text-center flex-shrink-0" aria-hidden="true">📑</span><span class="text-lg font-semibold text-blue-600 truncate">Inhaltsverzeichnis</span>' +
       (SQ_IS_TUTOR && !tocVisible ? '<span class="sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0">versteckt</span>' : '') +
       '</span>' +
       '<svg class="sq-toc-chevron h-5 w-5 text-gray-400 flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
@@ -953,9 +956,11 @@
 
         const titleWrap = document.createElement("span");
         titleWrap.className = "sq-title-wrap flex items-center gap-2 min-w-0 flex-1";
-        // Kapitelnummer (rollenabhängig; wird von sqUpdateChapterNumbers() gefüllt)
+        // Kapitelnummer (rollenabhängig; wird von sqUpdateChapterNumbers() gefüllt).
+        // Fixe Breite w-12 → Titelanfang ist über alle Kapitel hinweg gleich (und
+        // stimmt mit dem TOC-Icon-Platzhalter überein).
         const chapNum = document.createElement("span");
-        chapNum.className = "sq-chap-num hidden px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-400 shrink-0";
+        chapNum.className = "sq-chap-num hidden w-12 inline-flex items-center justify-center py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-400 shrink-0";
         titleWrap.appendChild(chapNum);
         const title = document.createElement("span");
         title.className = "sq-title text-lg font-semibold text-blue-600";

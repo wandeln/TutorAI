@@ -582,7 +582,7 @@
     const titleWrap = document.createElement('span');
     titleWrap.className = 'sq-title-wrap flex items-center gap-2 min-w-0 flex-1';
     const title = document.createElement('span');
-    title.className = 'sq-title text-lg font-semibold text-gray-400 truncate';
+    title.className = 'sq-title text-lg font-semibold text-gray-400';
     title.textContent = 'Neues Kapitel';
     titleWrap.appendChild(title);
     header.appendChild(titleWrap);
@@ -741,7 +741,8 @@
     // Aufgeklappt/Zuklappt-Zustand über Rebuilds erhalten (TOC soll sich bei
     // Updates nicht neu aufklappen, z.B. nach TOC-Auge oder Reorder)
     const oldBody = old ? old.querySelector('.script-toc-body') : null;
-    const wasCollapsed = !!(oldBody && oldBody.classList.contains('hidden'));
+    // Initialer Load (keine Vorgänger-Karte): TOC eingeklappt; Rebuilds halten den Zustand
+    const wasCollapsed = oldBody ? oldBody.classList.contains('hidden') : true;
     if (old) old.remove();
     const refMap = await getCourseRefMap();
     if (!refMap || !refMap.chapters) return;
@@ -764,7 +765,7 @@
     card.innerHTML =
       '<button type="button" class="sq-toc-toggle w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition">' +
       '<span class="text-xl flex-shrink-0" aria-hidden="true">📑</span>' +
-      '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="text-lg font-semibold text-gray-700 truncate">Inhaltsverzeichnis</span>' +
+      '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="text-lg font-semibold text-blue-600 truncate">Inhaltsverzeichnis</span>' +
       (SQ_IS_TUTOR && !tocVisible ? '<span class="sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0">versteckt</span>' : '') +
       '</span>' +
       '<svg class="sq-toc-chevron h-5 w-5 text-gray-400 flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
@@ -809,7 +810,7 @@
       const ch = refMap.chapters[id];
       const row = document.createElement('div');
       row.className = 'py-0.5 text-sm flex items-center gap-2';
-      row.appendChild(tocLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ' + ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0 truncate'));
+      row.appendChild(tocLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ' + ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0'));
       if (SQ_IS_TUTOR && !ch.visible) {
         const badge = document.createElement('span');
         badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
@@ -957,7 +958,7 @@
         chapNum.className = "sq-chap-num hidden px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-400 shrink-0";
         titleWrap.appendChild(chapNum);
         const title = document.createElement("span");
-        title.className = "sq-title text-lg font-semibold text-blue-600 truncate";
+        title.className = "sq-title text-lg font-semibold text-blue-600";
         title.textContent = s.title;
         titleWrap.appendChild(title);
         if (SQ_IS_TUTOR && !s.is_visible) {

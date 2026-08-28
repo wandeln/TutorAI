@@ -145,6 +145,9 @@
             return;
           }
           showToast('Reihenfolge aktualisiert.', 'success');
+          // Kapitelnummern haben sich verschoben → Refmap + TOC aktualisieren
+          refreshCourseRefMap();
+          sqBuildToc();
         } catch (err) {
           showToast('Fehler: ' + err.message, 'error');
           location.reload();
@@ -171,6 +174,9 @@
       }
       sqSetCardVisibility(card, data.is_visible);
       showToast(data.message || 'Sichtbarkeit aktualisiert.', 'success');
+      // „versteckt“-Badge im TOC aktualisieren
+      refreshCourseRefMap();
+      sqBuildToc();
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }
@@ -218,6 +224,10 @@
       }
 
       showToast(data.message || 'Kapitel gelöscht.', 'success');
+
+      // Nummern verschieben sich → Refmap + TOC + Kapitel-Nummern aktualisieren
+      refreshCourseRefMap();
+      sqBuildToc();
 
       // Karte mit Fade-Out entfernen
       card.style.opacity = '0';
@@ -352,6 +362,7 @@
           textareaId: 'sqe-content-ta-' + key,
           startInPreview: true,
           sectionId: parseInt(sectionId),
+          onPreviewRender: () => sqApplyMarks(), // Fragen-Markierungen auch in der Preview
         });
         const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
           buttonAnchor: 'sqe-summary-anchor-' + key,
@@ -433,6 +444,9 @@
         location.reload(); // Reihenfolge/IDs neu laden
         return;
       }
+      // Nummern/TOC haben sich ggf. geändert → Refmap neu laden (wird vom
+      // Re-Rendering und vom TOC-Aufbau verwendet)
+      refreshCourseRefMap();
       // Frischen Inhalt + Titel laden und neu rendern
       try {
         const r = await fetch(`/api/script-sections/${edit.sectionId}`, { credentials: 'same-origin' });
@@ -444,7 +458,7 @@
             md.setAttribute('data-loaded', '1');
           }
           card.setAttribute('data-section-title', fresh.title);
-          const t = card.querySelector('.sq-title-wrap > span');
+          const t = card.querySelector('.sq-title');
           if (t) t.textContent = fresh.title;
           sqSetCardVisibility(card, fresh.is_visible);
         }
@@ -452,6 +466,7 @@
       sqExitEditMode(card);
       const md = card.querySelector('.script-chapter-body .markdown-preview');
       if (md) sqApplyMarksToSection(md, edit.sectionId);
+      sqBuildToc(); // TOC + Kapitel-Nummern mit der neuen Refmap aktualisieren
     } catch (err) {
       showToast(err.message, 'error');
       if (saveBtn) saveBtn.disabled = false;
@@ -512,6 +527,7 @@
         (async () => {
           await renderMarkdown(data.content, edit.contentEditor.previewDiv, { preview: true, sectionId: edit.sectionId });
           if (!edit.contentEditor.isPreview()) edit.contentEditor.toggleBtn.click();
+          sqApplyMarks(); // Re-Render ersetzt die Preview → Markierungen neu anwenden
         })();
       }
       if (generateFields.summary && data.summary) {
@@ -566,7 +582,7 @@
     const titleWrap = document.createElement('span');
     titleWrap.className = 'sq-title-wrap flex items-center gap-2 min-w-0 flex-1';
     const title = document.createElement('span');
-    title.className = 'text-lg font-semibold text-gray-400 truncate';
+    title.className = 'sq-title text-lg font-semibold text-gray-400 truncate';
     title.textContent = 'Neues Kapitel';
     titleWrap.appendChild(title);
     header.appendChild(titleWrap);
@@ -588,6 +604,7 @@
       buttonAnchor: 'sqe-content-anchor-' + key,
       textareaId: 'sqe-content-ta-' + key,
       startInPreview: true,
+      onPreviewRender: () => sqApplyMarks(), // Fragen-Markierungen auch in der Preview
     });
     const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
       buttonAnchor: 'sqe-summary-anchor-' + key,
@@ -631,6 +648,256 @@
 
     card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     card._edit.titleInput.focus();
+  }
+
+  // ─── Tutor: TOC-Sichtbarkeit für Studenten (Backend-Flag, analog Kapitel) ──
+  let _tocToggling = false;
+  async function sqToggleTocVisibility() {
+    if (_tocToggling) return; // Doppelklick-Schutz (sonst flippt der DB-Stand hin und her)
+    _tocToggling = true;
+    try {
+      const refMap = await getCourseRefMap();
+      // Robust gegen ältere Caches ohne tocVisible-Feld: fehlt → sichtbar annehmen.
+      // WICHTIG: jetzt den ZUSTAND umkehren (vorher wurde derselbe Wert gesetzt →
+      // PATCH war ein No-Op und nichts sichtbar).
+      const currentlyVisible = refMap ? refMap.tocVisible !== false : true;
+      const nowVisible = !currentlyVisible;
+      const res = await fetch('/api/courses/' + courseId + '/script-toc-visibility', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_visible: nowVisible }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Umschalten.', 'error');
+        return;
+      }
+      showToast(data.message || 'Inhaltsverzeichnis aktualisiert.', 'success');
+      // Wie der Kapitel-Toggle: neuen Zustand (authoritativer PATCH-Response) sofort
+      // in die bestehende Karte schreiben, danach TOC aus frischer Refmap aktualisieren.
+      sqApplyTocVisibility(data.is_visible);
+      await refreshCourseRefMap();
+      sqBuildToc();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    } finally {
+      _tocToggling = false;
+    }
+  }
+
+  // Auge-Icon + „versteckt“-Badge der TOC-Karte auf den neuen Zustand setzen (ohne Rebuild)
+  function sqApplyTocVisibility(visible) {
+    if (!SQ_IS_TUTOR) return;
+    const card = document.querySelector('#script-reading .script-toc-card');
+    if (!card) return;
+    const eye = card.querySelector('.sq-toc-eye');
+    if (eye) {
+      eye.innerHTML = sqEyeIcon(visible);
+      eye.title = visible ? 'Inhaltsverzeichnis für Studenten verstecken' : 'Inhaltsverzeichnis für Studenten einblenden';
+      eye.className = 'sq-toc-eye p-1.5 rounded hover:bg-gray-100 transition ' + (visible ? 'text-gray-400 hover:text-blue-600' : 'text-gray-300');
+    }
+    let badge = card.querySelector('.sq-hidden-badge');
+    if (visible) {
+      if (badge) badge.remove();
+    } else if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
+      badge.textContent = 'versteckt';
+      const titleWrap = card.querySelector('.sq-toc-titlewrap');
+      if (titleWrap) titleWrap.appendChild(badge);
+    }
+  }
+
+  // Debug-Hilfe (Console: await __tocDebug()) — TOC-Sichtbarkeit & DOM-Zustand
+  window.__tocDebug = async function() {
+    const fresh = await (await fetch('/api/courses/' + courseId + '/script-refmap', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })).json();
+    const cached = await getCourseRefMap();
+    const cards = document.querySelectorAll('#script-reading .script-toc-card');
+    const card = cards[0] || null;
+    const body = card ? card.querySelector('.script-toc-body') : null;
+    const eye = card ? card.querySelector('.sq-toc-eye') : null;
+    return {
+      dbNow: fresh ? fresh.tocVisible : null,       // frischer DB-Stand (ohne Browser-Cache)
+      cached: cached ? cached.tocVisible : null,     // gecachte Refmap im JS
+      tocCards: cards.length,                        // >1 = Doppelkarten-Bug
+      badge: card ? !!card.querySelector('.sq-hidden-badge') : null,
+      eyeIcon: eye ? (eye.innerHTML.includes('17.94') ? 'versteckt' : 'sichtbar') : null,
+      bodyHidden: body ? body.classList.contains('hidden') : null,
+    };
+  };
+
+  // ─── Inhaltsverzeichnis-Karte (ganz oben) ──────────────
+  // Daten: refmap (rollenabhängige Nummerierung: Student = veröffentlichte).
+  // Kein Drag-Handle und kein data-section-id → Sortable und die
+  // Kapitel-Deep-Links ignorieren die Karte; sie wird immer an der
+  // Spitze wieder eingefügt (auch nach Reorder).
+  async function sqBuildToc() {
+    const container = document.getElementById('script-reading');
+    const old = container.querySelector('.script-toc-card');
+    // Aufgeklappt/Zuklappt-Zustand über Rebuilds erhalten (TOC soll sich bei
+    // Updates nicht neu aufklappen, z.B. nach TOC-Auge oder Reorder)
+    const oldBody = old ? old.querySelector('.script-toc-body') : null;
+    const wasCollapsed = !!(oldBody && oldBody.classList.contains('hidden'));
+    if (old) old.remove();
+    const refMap = await getCourseRefMap();
+    if (!refMap || !refMap.chapters) return;
+    // TOC-Sichtbarkeit für Studenten (Backend-Flag; robust gegen alte Caches ohne Feld)
+    const tocVisible = refMap.tocVisible !== false;
+    // Student: bei verstecktem TOC gar keine TOC-Karte; Tutor/Prof sieht es immer
+    if (!SQ_IS_TUTOR && !tocVisible) return;
+    // Display-Reihenfolge aus chapterOrder — Object.keys(refMap.chapters) geht
+    // NICHT: JSON.parse sortiert numerische Keys ("5","6","7") immer aufsteigend!
+    const ids = (Array.isArray(refMap.chapterOrder) && refMap.chapterOrder.length)
+      ? refMap.chapterOrder
+      : Object.keys(refMap.chapters);
+    if (!ids.length) return;
+
+    const card = document.createElement('div');
+    card.className = 'script-toc-card bg-white border border-gray-200 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl';
+    // Ganz analog zur Kapitel-Karte: Header-Zeile (Klick = ein-/ausklappen) +
+    // darunter (nur Tutor/Prof, im aufgeklappten Zustand) Toolbar rechtsbündig
+    // mit dem Auge — wie bei den Kapiteln (sq-toolbar).
+    card.innerHTML =
+      '<button type="button" class="sq-toc-toggle w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition">' +
+      '<span class="text-xl flex-shrink-0" aria-hidden="true">📑</span>' +
+      '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="text-lg font-semibold text-gray-700 truncate">Inhaltsverzeichnis</span>' +
+      (SQ_IS_TUTOR && !tocVisible ? '<span class="sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0">versteckt</span>' : '') +
+      '</span>' +
+      '<svg class="sq-toc-chevron h-5 w-5 text-gray-400 flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+      '</button>' +
+      '<div class="script-toc-body px-6 pb-5 border-t border-gray-100">' +
+      (SQ_IS_TUTOR
+        ? '<div class="sq-toolbar flex items-center gap-2 pt-4 pb-2"><span class="flex-1"></span>' +
+          '<button type="button" class="sq-toc-eye p-1.5 rounded hover:bg-gray-100 transition ' + (tocVisible ? 'text-gray-400 hover:text-blue-600' : 'text-gray-300') + '" title="' + (tocVisible ? 'Inhaltsverzeichnis für Studenten verstecken' : 'Inhaltsverzeichnis für Studenten einblenden') + '">' + sqEyeIcon(tocVisible) + '</button></div>'
+        : '') +
+      '</div>';
+    const body = card.querySelector('.script-toc-body');
+    const chevron = card.querySelector('.sq-toc-chevron');
+    // Header-Klick = lokales Ein-/Ausklappen (Chevron). Die Studenten-Sichtbarkeit
+    // steuert nur das Auge (Backend-Flag, analog zu den Kapiteln).
+    body.classList.toggle('hidden', wasCollapsed);
+    chevron.style.transform = wasCollapsed ? '' : 'rotate(180deg)';
+    const collapseToc = () => {
+      body.classList.toggle('hidden');
+      chevron.style.transform = body.classList.contains('hidden') ? '' : 'rotate(180deg)';
+    };
+    card.querySelector('.sq-toc-toggle').addEventListener('click', collapseToc);
+    const tocEye = card.querySelector('.sq-toc-eye');
+    if (tocEye) tocEye.addEventListener('click', () => sqToggleTocVisibility());
+
+    const subHead = (text) => {
+      const d = document.createElement('div');
+      d.className = 'font-semibold text-gray-500 text-xs uppercase tracking-wide mt-3 mb-1.5';
+      d.textContent = text;
+      return d;
+    };
+    const tocLink = (href, text, cls) => {
+      const a = document.createElement('a');
+      a.href = href;
+      a.className = cls;
+      a.textContent = text;
+      return a;
+    };
+
+    // Inhalte: Kapitel + eingerückte Sections
+    body.appendChild(subHead('Inhalte'));
+    for (const id of ids) {
+      const ch = refMap.chapters[id];
+      const row = document.createElement('div');
+      row.className = 'py-0.5 text-sm flex items-center gap-2';
+      row.appendChild(tocLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ' + ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0 truncate'));
+      if (SQ_IS_TUTOR && !ch.visible) {
+        const badge = document.createElement('span');
+        badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
+        badge.textContent = 'versteckt';
+        row.appendChild(badge);
+      }
+      body.appendChild(row);
+      for (const sec of (ch.sections || [])) {
+        const srow = document.createElement('div');
+        srow.className = 'py-0.5 pl-5 text-sm';
+        srow.appendChild(tocLink('#' + sec.anchor, sec.num + '\u00a0' + sec.title, 'text-gray-500 hover:text-blue-600 hover:underline'));
+        body.appendChild(srow);
+      }
+    }
+
+    // Abbildungen: nummerierte Figuren (inkl. Applets)
+    body.appendChild(subHead('Abbildungen'));
+    const figs = refMap.figures || [];
+    if (!figs.length) {
+      const p = document.createElement('p');
+      p.className = 'text-gray-400 text-sm py-0.5';
+      p.textContent = 'Noch keine nummerierten Abbildungen.';
+      body.appendChild(p);
+    } else {
+      for (const f of figs) {
+        const frow = document.createElement('div');
+        frow.className = 'py-0.5 text-sm';
+        frow.appendChild(tocLink('#fig:' + encodeURIComponent(f.label), 'Abb. ' + f.num + (f.caption ? ': ' + f.caption : ''), 'text-gray-500 hover:text-blue-600 hover:underline'));
+        body.appendChild(frow);
+      }
+    }
+
+    container.prepend(card);
+    sqUpdateChapterNumbers();
+  }
+
+  // Kapitel-Nummern-Chips in den Kapitel-Headern (rollenabhängig per refmap)
+  async function sqUpdateChapterNumbers() {
+    const refMap = await getCourseRefMap();
+    if (!refMap || !refMap.chapters) return;
+    document.querySelectorAll('#script-reading .script-chapter-card[data-section-id]').forEach((c) => {
+      const entry = refMap.chapters[c.getAttribute('data-section-id')];
+      const el = c.querySelector('.sq-chap-num');
+      if (!el || !entry || entry.num == null) return;
+      el.textContent = 'Kap. ' + entry.num;
+      el.classList.remove('hidden');
+    });
+  }
+
+  // ─── Deep-Link: #sec:label / #sec:{chapterId}-{num} → Section anfahren ───
+  // Wie handleObjectHash: Kapitel ggf. aufklappen, auf das gerenderte
+  // Element warten (bis ~15 s), dann zentriert hinscrollen.
+  async function handleSectionHash() {
+    const m = location.hash.match(/^#sec:(.+)/);
+    if (!m) return;
+    const labelPart = decodeURIComponent(m[1]);
+    const targetId = 'sec:' + labelPart;
+    let sectionId = null;
+    if (/^\d+-/.test(labelPart)) {
+      // Unlabelte Section: Anker ist "sec:{chapterId}-{num}"
+      sectionId = parseInt(labelPart.split('-')[0]);
+    } else {
+      // Labelte Section: Kapitel per refmap ermitteln
+      const refMap = await getCourseRefMap();
+      const entry = refMap && refMap.labels ? refMap.labels[labelPart] : null;
+      if (entry && entry.kind === 'sec' && entry.sectionId != null) sectionId = entry.sectionId;
+    }
+    if (sectionId === null) return;
+    sqSectionHashScroll(targetId, sectionId);
+  }
+
+  function sqSectionHashScroll(targetId, sectionId) {
+    const card = document.querySelector(`#script-reading .script-chapter-card[data-section-id="${sectionId}"]`);
+    if (!card) return;
+    const body = card.querySelector('.script-chapter-body');
+    const header = card.querySelector('button');
+    if (body && header && body.classList.contains('hidden')) header.click();
+    const deadline = Date.now() + 15000;
+    const timer = setInterval(() => {
+      const el = document.getElementById(targetId);
+      if (el) {
+        clearInterval(timer);
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (Date.now() > deadline) {
+        clearInterval(timer);
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 100);
   }
 
   // ─── Kapitel-Liste (alle Rollen; Inhalt per Klick ausklappbar) ────
@@ -685,8 +952,12 @@
 
         const titleWrap = document.createElement("span");
         titleWrap.className = "sq-title-wrap flex items-center gap-2 min-w-0 flex-1";
+        // Kapitelnummer (rollenabhängig; wird von sqUpdateChapterNumbers() gefüllt)
+        const chapNum = document.createElement("span");
+        chapNum.className = "sq-chap-num hidden px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-400 shrink-0";
+        titleWrap.appendChild(chapNum);
         const title = document.createElement("span");
-        title.className = "text-lg font-semibold text-blue-600 truncate";
+        title.className = "sq-title text-lg font-semibold text-blue-600 truncate";
         title.textContent = s.title;
         titleWrap.appendChild(title);
         if (SQ_IS_TUTOR && !s.is_visible) {
@@ -753,8 +1024,10 @@
       }
 
       if (SQ_IS_TUTOR) initSortable();
+      await sqBuildToc();
       handleChapterHash();
       handleObjectHash();
+      handleSectionHash();
     } catch (e) {
       container.innerHTML = '<p class="text-red-500 text-sm">Fehler beim Laden des Skripts.</p>';
     }
@@ -803,6 +1076,7 @@
   window.addEventListener('hashchange', () => {
     handleChapterHash();
     handleObjectHash();
+    handleSectionHash();
   });
 
   loadScript();
@@ -1607,9 +1881,16 @@
   function sqApplyMarks() {
     document.querySelectorAll('#script-reading .script-chapter-card').forEach((card) => {
       const body = card.querySelector('.script-chapter-body');
-      const md = body ? body.querySelector('.markdown-preview[data-loaded]') : null;
-      if (body && md && !body.classList.contains('hidden')) {
+      if (!body || body.classList.contains('hidden')) return;
+      const md = body.querySelector('.markdown-preview[data-loaded]');
+      if (md) {
         sqApplyMarksToSection(md, parseInt(card.getAttribute('data-section-id')));
+      }
+      // Edit-Modus: Markierungen auch in der Markdown-Preview (wenn aktiv)
+      const edit = card._edit;
+      if (edit && edit.contentEditor && edit.contentEditor.isPreview()) {
+        const prev = edit.contentEditor.previewDiv.querySelector('.markdown-preview');
+        if (prev) sqApplyMarksToSection(prev, parseInt(card.getAttribute('data-section-id')));
       }
     });
   }
@@ -1624,9 +1905,9 @@
     setTimeout(() => { el.style.outline = ''; el.style.outlineOffset = ''; }, 2000);
   }
 
-  function sqFindMark(qid) {
+  function sqFindMark(qid, scope = document) {
     const s = String(qid);
-    for (const m of document.querySelectorAll('mark.sq-mark')) {
+    for (const m of scope.querySelectorAll('mark.sq-mark')) {
       if ((m.getAttribute('data-qids') || '').split(',').includes(s)) return m;
     }
     return null;
@@ -1649,7 +1930,7 @@
     const found = sqFindQuestionQuote(mdEl, q);
     if (!found) { onNotFound(); return; }
     sqWrapRange(mdEl, found.start, found.end, q.id);
-    const m = sqFindMark(q.id);
+    const m = sqFindMark(q.id, mdEl);
     if (!m) { onNotFound(); return; }
     sqFlashEl(m, 'center');
     const timer = setTimeout(() => {
@@ -1663,20 +1944,26 @@
 
   // Klick auf Frage/Zitat im Dialog → zur markierten Stelle scrollen.
   // Klappt das Kapitel ggf. auf und wartet (bis ~10 s) auf den Inhalt.
+  // Im Edit-Modus mit aktiver Preview ist die normale Preview ausgeblendet →
+  // die Stelle wird dann in der Preview angefahren.
   function sqScrollToQuestion(q) {
     if (!q.quote || q.section_id == null) return;
-    const mark = sqFindMark(q.id);
-    if (mark) { sqFlashEl(mark, 'center'); return; }
     const card = document.querySelector(`#script-reading .script-chapter-card[data-section-id="${q.section_id}"]`);
     if (!card) {
       showToast('Kapitel ist nicht (mehr) im Skript sichtbar.', 'error');
       return;
     }
+    const edit = card._edit;
+    const previewEl = (edit && edit.contentEditor && edit.contentEditor.isPreview())
+      ? edit.contentEditor.previewDiv.querySelector('.markdown-preview')
+      : null;
+    const mark = sqFindMark(q.id, previewEl || card);
+    if (mark) { sqFlashEl(mark, 'center'); return; }
     const body = card.querySelector('.script-chapter-body');
     if (!body) return;
     if (body.classList.contains('hidden')) card.querySelector('button').click();
     const attempt = (left) => {
-      const mdEl = card.querySelector('.markdown-preview[data-loaded]');
+      const mdEl = previewEl || card.querySelector('.markdown-preview[data-loaded]');
       if (mdEl && !body.classList.contains('hidden')) {
         sqTemporaryFlash(mdEl, q.section_id, q, () => {
           // Stelle nicht auffindbar → Skript wurde vermutlich geändert (nur Warnung, kein Scrollen)

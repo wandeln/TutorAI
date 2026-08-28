@@ -96,6 +96,7 @@ class CourseBase(SQLModel):
     name: str = Field(max_length=200)
     description: str = Field(default="", max_length=2000)
     semester: str = Field(max_length=50)  # z.B. "WS 2025/26"
+    toc_visible: bool = Field(default=True)  # Inhaltsverzeichnis für Studenten sichtbar
 
 
 class Course(CourseBase, table=True):
@@ -281,8 +282,8 @@ class CourseMaterialRead(CourseMaterialBase):
 
 class ScriptSectionBase(SQLModel):
     course_id: int = Field(foreign_key="courses.id", index=True)
-    title: str = Field(max_length=300)         # z.B. "Kapitel 2: Rekursion"
-    content: str = Field(default="")           # Markdown (mit LaTeX/Mermaid)
+    title: str = Field(max_length=300)         # z.B. "Rekursion" (Nummer wird automatisch angezeigt)
+    content: str = Field(default="")           # Markdown (mit LaTeX/Mermaid); Kapitel-Label = {#sec:label} als eigene Zeile am Anfang
     is_visible: bool = Field(default=False)    # für Studenten freigeschaltet
     display_order: int = Field(default=0)      # Reihenfolge im Skript
     summary: str = Field(default="")           # Interne LLM-Zusammenfassung (NICHT für Studenten; Konsistenz zwischen Kapiteln)

@@ -13,7 +13,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional, TypedDict
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlmodel import Session, select
 
 from database.base import get_session
@@ -55,6 +55,91 @@ def _scan_labels(content: str) -> tuple[list[str], list[str]]:
     figs = _FIG_LABEL_RE.findall(text)
     eqs = _EQ_LABEL_RE.findall(text)
     return figs, eqs
+
+
+# Nummerierte Figuren inkl. Caption (Abbildungsverzeichnis)
+_FIG_CAPTION_RE = re.compile(r"!\[([^\]]*)\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
+# Sektions-Label am Ende einer Heading-Zeile: ## Titel {#sec:label}
+_SEC_LABEL_TAIL_RE = re.compile(r"\s*\{#sec:([\w-]+)\}\s*$")
+# Kapitel-Label: {#sec:label} als EIGENE ZEILE = erste nicht-leere Zeile des Inhalts
+_CHAPTER_LABEL_LINE_RE = re.compile(r"\{#sec:([\w-]+)\}")
+_HEADING_NUM_LINE_RE = re.compile(r"^(#{2,4})\s+(.*\S)\s*$", re.MULTILINE)
+
+
+
+def _scan_figures(content: str) -> list[tuple[str, str]]:
+    """(Caption, Label) nummerierter Figuren in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
+    text = _CODE_FENCED_RE.sub("", content or "")
+    text = _CODE_INLINE_RE.sub("", text)
+    return _FIG_CAPTION_RE.findall(text)
+
+
+def _clean_heading_title(title: str) -> str:
+    """Inline-Markdown (LaTeX, Code, Links, Betonung) aus einem Heading-Titel
+    entfernen — für die Plain-Text-Anzeige im Inhaltsverzeichnis."""
+    t = re.sub(r"\$[^$\n]*\$", " ", title)
+    t = re.sub(r"`([^`]*)`", r"\1", t)
+    t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
+    t = re.sub(r"[*_~]+", "", t)
+    return " ".join(t.split())
+
+
+class _ScannedHeading(TypedDict):
+    """Eine erkannte Markdown-Section (h2–h4) mit optionalem {#sec:label}."""
+
+    level: int
+    title: str
+    label: Optional[str]
+
+
+def _scan_headings(content: str) -> list[_ScannedHeading]:
+    """Markdown-Sections h2–h4 (Code-Blöcke ignoriert): level, title, optionales {#sec:label}."""
+    masked = _mask_code_blocks(content or "")
+    out: list[_ScannedHeading] = []
+    for m in _HEADING_NUM_LINE_RE.finditer(masked):
+        title = m.group(2).strip()
+        label: Optional[str] = None
+        lm = _SEC_LABEL_TAIL_RE.search(title)
+        if lm:
+            label = lm.group(1)
+            title = title[: lm.start()].rstrip()
+        out.append({"level": len(m.group(1)), "title": title, "label": label})
+    return out
+
+
+def _local_section_numbers(headings: list[_ScannedHeading]) -> list[str]:
+    """Kapitellokale Nummerierung: h2 → N, h3 → N.M, h4 → N.M.K."""
+    n2 = n3 = n4 = 0
+    nums = []
+    for h in headings:
+        if h["level"] == 2:
+            n2 += 1
+            n3 = n4 = 0
+            nums.append(str(n2))
+        elif h["level"] == 3:
+            n3 += 1
+            n4 = 0
+            nums.append(f"{n2}.{n3}")
+        else:
+            n4 += 1
+            nums.append(f"{n2}.{n3}.{n4}")
+    return nums
+
+
+def _chapter_label(content: str) -> str:
+    """Kapitel-Label = {#sec:label} als eigene Zeile = erste nicht-leere Zeile
+    des Inhalts (sonst "").
+
+    Die Label-Zeile selbst wird nicht gerendert (Renderer entfernt sie).
+    @sec:label verweist aus anderen Kapiteln auf das Kapitel („Kap. N“).
+    """
+    for line in (content or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = _CHAPTER_LABEL_LINE_RE.fullmatch(line)
+        return m.group(1) if m else ""
+    return ""
 
 
 # ─── LLM-Edits: stellenweise Änderungen am bestehenden Inhalt ────────────
@@ -360,6 +445,7 @@ async def get_section(
 @router.get("/courses/{course_id}/script-refmap")
 async def script_refmap(
     course_id: int,
+    response: Response,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
@@ -374,13 +460,25 @@ async def script_refmap(
         mode:     "reading" (Student) bzw. "edit" (PROF/TUTOR/Admin) — beeinflusst nur das
                   Layout der @task:-Boxen (Querverweise verlinken alle auf die Skript-Seite)
         courseId: Kurs-ID
-        chapters: {id: {title, maxFig, maxEq}}  # Preview-Fallback (neue, ungespeicherte Labels)
-        labels:   {label: {kind, sectionId, num}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt
+        chapters: {id: {title, label, num, visible, maxFig, maxEq,
+                        sections: [{num, title, label, anchor}]}}
+                  # num = Kapitelnummer (rollenabhängig), sections = h2–h4-Liste fürs TOC
+                  # maxFig/maxEq = Preview-Fallback (neue, ungespeicherte Labels)
+        labels:   {label: {kind, sectionId, num, chapter?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt
+                  # kinds: fig / eq / sec (num = "N.M…"-String). Kapitel-Label = {#sec:label}
+                  # als erste nicht-leere Zeile im Inhalt → sec-Entry mit chapter: true und num = Kapitelnummer
+        tocVisible: Inhaltsverzeichnis für Studenten sichtbar (Tutor/Prof sehen es immer)
+        chapterOrder: Kapitel-IDs in Display-Reihenfolge (JSON-Keys werden bei
+                  numerischen IDs vom Parser numerisch sortiert → Reihenfolge nur hier)
+        figures:  [{num, caption, label, sectionId}]  # Abbildungsverzeichnis fürs TOC
         tasks:    {id: {id, title, taskType, maxPoints, myPoints, attemptsUsed, maxAttempts, deadline}}
                   # für @task:{id}-Referenzen. Student: nur freigeschaltete Aufgaben +
                   # eigene Punkte (analog Aufgabenübersicht); PROF/TUTOR/Admin: alle.
     """
     _check_member(user, session, course_id)
+    # Live-berechneter abgeleiteter Wert → niemals cachen (Browser/Proxy)
+    response.headers["Cache-Control"] = "no-store"
+    course = session.get(Course, course_id)
     is_tutor = user.role == GlobalUserRole.ADMIN or (
         (m := _get_membership(session, user, course_id))
         is not None
@@ -392,25 +490,55 @@ async def script_refmap(
         q = q.where(ScriptSection.is_visible == True)  # noqa: E712
     sections = session.exec(q.order_by(ScriptSection.display_order.asc())).all()  # type: ignore[attr-defined]
 
-    chapters: dict[str, dict[str, str | int]] = {}
-    labels: dict[str, dict[str, str | int]] = {}
+    chapters: dict[str, dict[str, object]] = {}
+    labels: dict[str, dict[str, object]] = {}
+    figures: list[dict[str, object]] = []
     fig_running = 0
     eq_running = 0
-    for s in sections:
-        figs, eqs = _scan_labels(s.content)
+    for ch_num, s in enumerate(sections, start=1):
+        fig_pairs = _scan_figures(s.content)  # (Caption, Label) in Vorkommensreihenfolge
+        eqs = _scan_labels(s.content)[1]
         max_fig = 0
         max_eq = 0
-        for label in figs:
+        for caption, label in fig_pairs:
             fig_running += 1
             if label not in labels:
                 labels[label] = {"kind": "fig", "sectionId": s.id, "num": fig_running}
             max_fig = max(max_fig, fig_running)
+            figures.append({"num": fig_running, "caption": caption, "label": label, "sectionId": s.id})
         for label in eqs:
             eq_running += 1
             if label not in labels:
                 labels[label] = {"kind": "eq", "sectionId": s.id, "num": eq_running}
             max_eq = max(max_eq, eq_running)
-        chapters[str(s.id)] = {"title": s.title, "maxFig": max_fig, "maxEq": max_eq}
+        # Sections (h2–h4): kapitellokale Nummerierung, Labels, Anker fürs TOC
+        headings = _scan_headings(s.content)
+        ch_label = _chapter_label(s.content)
+        # Kapitel-Label ({#sec:label} als eigene Zeile) wird VOR den Section-Labels
+        # registriert, damit @sec:label auf das Kapitel („Kap. N“) zeigt, falls eine
+        # Section denselben Namen trägt.
+        if ch_label and ch_label not in labels:
+            labels[ch_label] = {"kind": "sec", "sectionId": s.id, "num": ch_num, "chapter": True}
+        sec_entries = []
+        for h, local in zip(headings, _local_section_numbers(headings)):
+            full_num = f"{ch_num}.{local}"
+            sec_entries.append({
+                "num": full_num,
+                "title": _clean_heading_title(h["title"]),
+                "label": h["label"],
+                "anchor": f"sec:{h['label']}" if h["label"] else f"sec:{s.id}-{full_num}",
+            })
+            if h["label"] and h["label"] not in labels:
+                labels[h["label"]] = {"kind": "sec", "sectionId": s.id, "num": full_num}
+        chapters[str(s.id)] = {
+            "title": s.title,
+            "label": ch_label,
+            "num": ch_num,
+            "visible": s.is_visible,
+            "maxFig": max_fig,
+            "maxEq": max_eq,
+            "sections": sec_entries,
+        }
 
     # Aufgaben für @task:{id}-Referenzen (Datenquelle der Aufgaben-Box).
     tasks_map: dict[str, dict] = {}
@@ -455,8 +583,11 @@ async def script_refmap(
     return {
         "mode": "edit" if is_tutor else "reading",
         "courseId": course_id,
+        "tocVisible": course.toc_visible,
+        "chapterOrder": [str(s.id) for s in sections],
         "chapters": chapters,
         "labels": labels,
+        "figures": figures,
         "tasks": tasks_map,
     }
 
@@ -554,6 +685,28 @@ async def toggle_section_visibility(
     session.refresh(section)
 
     return {"message": "Sichtbarkeit aktualisiert.", "is_visible": section.is_visible}
+
+
+@router.patch("/courses/{course_id}/script-toc-visibility")
+async def toggle_toc_visibility(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Inhaltsverzeichnis für Studenten ein-/ausblenden."""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+    _check_course_tutor(user, course_id, session)
+    body = await request.json()
+
+    course.toc_visible = bool(body.get("is_visible", not course.toc_visible))
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+
+    return {"message": "Inhaltsverzeichnis aktualisiert.", "is_visible": course.toc_visible}
 
 
 @router.delete("/script-sections/{section_id}")
@@ -665,11 +818,19 @@ async def ai_generate_section(
         if s.id == section_id:
             continue
         figs, eqs = _scan_labels(s.content)
+        # Section-Labels fürs @sec:-Referenzieren; das Kapitel-Label
+        # ({#sec:label} als eigene Zeile) wird gekennzeichnet, damit das LLM
+        # es als Kapitel-Referenz erkennt und nicht doppelt belegt.
+        sec_labels = [h["label"] for h in _scan_headings(s.content) if h["label"]]
+        ch_label = _chapter_label(s.content)
+        if ch_label and ch_label in sec_labels:
+            sec_labels.remove(ch_label)
+            sec_labels.insert(0, ch_label + " (Kapitel-Label)")
         other_chapters.append(
             {
                 "title": s.title,
                 "summary": (s.summary or "").strip(),
-                "labels": [f"@fig:{l}" for l in figs] + [f"@eq:{l}" for l in eqs],
+                "labels": [f"@fig:{l}" for l in figs] + [f"@eq:{l}" for l in eqs] + [f"@sec:{l}" for l in sec_labels],
             }
         )
     other_chapters = other_chapters[:20]

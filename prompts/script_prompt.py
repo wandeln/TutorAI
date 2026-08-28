@@ -30,7 +30,7 @@ Außerdem: Bei rein lokalen Änderungen an vorhandenem Inhalt darf der Schlüsse
 {% endif %}
 
 Mögliche Schlüssel und deren Bedeutung:
-- "title": Kurzer, prägnanter Kapiteltitel (z.B. „Kapitel 3: Rekursion")
+- "title": Kurzer, prägnanter Kapiteltitel OHNE Nummer (z.B. „Rekursion“ — die Kapitelnummer wird automatisch angezeigt)
 - "content": Vollständiger Markdown-Inhalt des Kapitels
 {% if current_content and '"content"' in generate_list %}
 - "content_edits": NUR als Alternative zu "content" (nie beide zusammen in einer Antwort), wenn die Anweisung nur lokale Änderungen am vorhandenen Inhalt verlangt — eine Liste stellenweiser Edit-Objekte (Format siehe unten, „Stellenweise Bearbeitung“)
@@ -114,18 +114,25 @@ Regeln:
   @endbox
   Verfügbare Typen: merksatz, hinweis, bemerkung, warnung, beispiel. Setze Boxen SPARSAM ein (max. 2-3 pro Kapitel) — nur für wirklich besonders hervorzuhebende Stellen, nicht für normalen Fließtext.
   WICHTIG: Die Marker @box:… und @endbox sind KEIN Code — NIEMALS in Backticks oder Code-Blöcke setzen, sonst wird die Box NICHT gerendert.
-- Nummerierung & Querverweise (wie in LaTeX):
+- Nummerierung & Querverweise (wie in LaTeX — die Nummerierung wird AUTOMATISCH berechnet, du schreibst NIEMALS Nummern):
+  - Keine manuellen Nummern in Überschriften (Falsch: „## 3.1 Grundlagen“, Richtig: „## Grundlagen“) — die Abschnittsnummer (z.B. „3.1“) wird automatisch vor die Überschrift gesetzt.
 {% raw %}
   - Abbildung, auf die du im Text Bezug nehmen möchtest: Snippet um ein Label ergänzen, z.B.
     ![Entropieverteilung](/media/1/abc.png){#fig:entropie}  →  wird als „Abb. N: Entropieverteilung“ gerendert.
   - Formel, auf die du Bezug nehmen möchtest: Label direkt nach dem Display-Math, z.B.
     $$H(X) = -\\sum_i p_i \\log_2 p_i$$ {#eq:shannon}  →  wird als „(N)“ neben der Formel gerendert.
-  - Bezugnahme im Fließtext: @fig:entropie bzw. @eq:shannon → wird durch die klickbare Referenz („Abb. N“ bzw. „Gl. N“) ersetzt.
-  - @fig:/@eq:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
+  - Section (Überschrift): Label am Zeilenende der Überschrift, z.B.
+    ## Grundlagen {#sec:grundlagen}  →  wird als „N.M Grundlagen“ gerendert.
+    LABELLE JEDER ÜBERSCHRIFT (##/###/####) mit einem {#sec:label} — auch solche, auf die im Text kein Bezug genommen wird.
+  - Kapitel-Label: Ganz am Anfang des Kapitels steht als EIGENE ZEILE (die erste nicht-leere Zeile des Inhalts, VOR der ersten Überschrift) das {#sec:label} des Kapitels, z.B.
+    {#sec:statistik}
+    Diese Zeile wird NICHT gerendert — sie dient nur als Label des Kapitels. Aus ANDEREN Kapiteln referenziert man das ganze Kapitel mit @sec:statistik (wird als „Kap. N“ gerendert).
+  - Bezugnahme im Fließtext: @fig:entropie / @eq:shannon / @sec:grundlagen → wird durch die klickbare Referenz („Abb. N“ / „Gl. N“ / „Abs. N.M“ bzw. „Kap. N“) ersetzt.
+  - @fig:/@eq:/@sec:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
     Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“.
 {% endraw %}
   - Beschrifte alle Objekte, auf die du im Text Bezug nimmst, UND wichtige Definitionen, Sätze und Formeln — auch ohne unmittelbare Bezugnahme im Text, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können. Labels klein, snake_case, eindeutig im GESAMTEN Skript (siehe die „Labels“ bei den anderen Kapiteln — benutze bereits vorhandene Labels nicht neu und erfinde keine Labels, die dort bereits vergeben sind).
-  - Querverweise auf Abbildungen/Gleichungen in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie).
+  - Querverweise auf Abbildungen/Gleichungen/Sections/Kapitel in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie, @sec:statistik).
   - Alle wichtigen Labels müssen in der Zusammenfassung ("summary") vorkommen, damit sie später referenziert werden können. Erfinde aber auch keine Labels, die nicht im Inhalt vorkommen.
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
   Wichtig: Knotentexte mit Sonderzeichen (z.B. runde Klammern oder <, > in Formeln) MÜSSEN in doppelte

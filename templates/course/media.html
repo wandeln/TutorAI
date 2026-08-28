@@ -16,19 +16,17 @@
   <!-- Upload -->
   <div>
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-      <h2 class="font-bold text-gray-800 mb-3">🖼️ Medium hochladen</h2>
+      <h2 class="font-bold text-gray-800 mb-3">🖼️ Medien erstellen</h2>
       <div class="space-y-3">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Datei</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Datei hochladen</label>
           <input type="file" id="media-file" accept=".png,.jpg,.jpeg,.webp,.gif"
                  class="block w-full text-sm text-gray-600
                         file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0
                         file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700
                         hover:file:bg-blue-100">
           <p class="text-xs text-gray-400 mt-1">
-            PNG, JPG, WebP, GIF — max. 5 MB.<br>
-            Upload & LLM-Beschreibung starten automatisch nach der Dateiauswahl
-            (Titel/Beschreibung können später im Modal geändert werden).
+            PNG, JPG, WebP, GIF — max. 5 MB.
           </p>
         </div>
 
@@ -46,21 +44,20 @@
 
         <button id="media-llm-generate" type="button"
                 class="w-full bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-semibold">
-          🤖 Medium mit LLM generieren (Applet)
+          🤖 Applet mit LLM generieren
         </button>
-        <p class="text-xs text-gray-400">
-          Erzeugt ein interaktives Applet (Chart.js / Three.js) im Applet-Studio.
+        <p class="text-xs text-gray-400" style="margin-top: 4px">
+          Erzeugt ein interaktives Medium im Applet-Studio.
         </p>
+      </div>
+
+      <!-- Hinweis: Einbinden -->
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-4 text-xs text-blue-900 leading-relaxed">
+        <strong>Einbinden:</strong> Kopiere das Markdown-Snippet eines Mediums in Aufgaben,
+        Skript oder Slides.
       </div>
     </div>
 
-    <!-- Hinweis: Einbinden -->
-    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-4 text-xs text-blue-900 leading-relaxed">
-      <strong>Einbinden:</strong> Kopiere das Markdown-Snippet eines Mediums in Aufgaben,
-      Skript oder Slides. Die Verwendungs-Orte werden automatisch erkannt und hier
-      aktualisiert. Jede Abbildung sollte idealerweise nur <em>einmal</em> pro
-      Skript/Slides vorkommen (doppelte Referenzen werden markiert).
-    </div>
   </div>
 
   <!-- Medien-Grid -->

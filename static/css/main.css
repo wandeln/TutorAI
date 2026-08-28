@@ -307,6 +307,12 @@
   color: #6b7280;
 }
 
+/* Nummerierte Sections (h2–h4) im Skript: dezente Nummer vor der Überschrift */
+.markdown-preview .tutorai-sec-num {
+  color: #9ca3af;
+  font-weight: 600;
+}
+
 .tutorai-xref {
   color: #2563eb !important;
   text-decoration: none !important;

@@ -13,8 +13,15 @@
  * Escaped dollar: \$                              → literal $ (no LaTeX)
  * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
- * Querverweise:       @fig:label / @eq:label      → klickbares "Abb. N" bzw. "Gl. N"
+ * Nummerierte Section: ## Titel {#sec:label}      → "K.N[.M]" vor der Überschrift (h2–h4,
+ *                                                            kapitellokal; Kapitelnummer aus dem refmap);
+ *                                                            Anker sec:label bzw. sec:{sectionId}-{num}
+ * Querverweise:       @fig:label / @eq:label / @sec:label
+ *                                                            → klickbares "Abb. N" / "Gl. N" / "Abs. N.M"
  *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
+ *                    @kap:label = Legacy-Alias für @sec:label. Kapitel-Label = {#sec:label}
+ *                    als EIGENE ZEILE (erste nicht-leere Zeile) am Kapitelanfang → "Kap. N"
+ *                    (verlinkt auf #chapter-{id}); die Label-Zeile wird selbst nicht gerendert
  * Aufgaben-Box:       @task:{id}                  → Aufgaben-Box (Student: Punkte/Medaille analog
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
  * Hinweis-Boxen:      @box:{typ} … @endbox        → farbig markierte Box (merksatz/hinweis/bemerkung/
@@ -68,6 +75,13 @@ function getCourseRefMap() {
   return _refMapPromise;
 }
 
+// GeCachten Refmap verwerfen (nach Kapitel-Änderungen: speichern/löschen/
+// verschieben) und neu laden — Nummern/TOC ändern sich sonst erst beim Reload.
+function refreshCourseRefMap() {
+  _refMapPromise = null;
+  return getCourseRefMap();
+}
+
 function _chapterRef(refMap, sectionId) {
   if (!refMap || !refMap.chapters || sectionId === null || sectionId === undefined) return null;
   return refMap.chapters[String(sectionId)] || null;
@@ -114,6 +128,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const refMap = await getCourseRefMap();
   const globalLabels = (refMap && refMap.labels) || {};
   const chapterRef = _chapterRef(refMap, sectionId);
+
+  // 0. Kapitel-Label ({#sec:label} als erste nicht-leere Zeile) → kein Content, entfernen
+  text = text.replace(/^(?:[ \t]*\n)*[ \t]*\{#sec:[\p{L}0-9_-]+\}[ \t]*(?:\r?\n|$)/u, '');
 
   // ── Pre-extraction phase ──────────────────────────────────────────
   // Order matters: extract code blocks FIRST so LaTeX extraction never
@@ -239,9 +256,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
   });
 
-  // 1i. Extract cross-references: @fig:label / @eq:label
+  // 1i. Extract cross-references: @fig:label / @eq:label / @sec:label / @kap:label
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -327,23 +344,80 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%APPLETFIG_${idx}%%`, iframeHtml.replace(/\$/g, '$$$$'));
   });
 
-  // 6b. Restore cross-references (@fig:label / @eq:label)
+  // 6a3. Heading-Nummerierung (h2–h4) + {#sec:label}-Anker
+  //      Kapitelnummer aus dem refmap (rollenabhängig: Student = veröffentlichte
+  //      Nummerierung). Ohne Kapitel-Kontext (Aufgaben-Seiten, Antwort-Previews)
+  //      → keine Nummer; labelte Sections bekommen trotzdem ihren Anker.
+  const chapterNum = chapterRef && chapterRef.num != null ? chapterRef.num : null;
+  const secLabelNumbers = {};
+  {
+    const frag = document.createElement('div');
+    frag.innerHTML = html;
+    let n2 = 0;
+    let n3 = 0;
+    let n4 = 0;
+    frag.querySelectorAll('h2, h3, h4').forEach((h) => {
+      let num = null;
+      if (h.tagName === 'H2') {
+        n2 += 1; n3 = 0; n4 = 0;
+        num = chapterNum != null ? `${chapterNum}.${n2}` : null;
+      } else if (h.tagName === 'H3') {
+        n3 += 1; n4 = 0;
+        num = chapterNum != null ? `${chapterNum}.${n2}.${n3}` : null;
+      } else {
+        n4 += 1;
+        num = chapterNum != null ? `${chapterNum}.${n2}.${n3}.${n4}` : null;
+      }
+      let label = null;
+      const lm = h.innerHTML.match(/\s*\{#sec:([\p{L}0-9_-]+)\}\s*$/u);
+      if (lm) {
+        label = lm[1];
+        h.innerHTML = h.innerHTML.slice(0, lm.index).replace(/\s+$/, '');
+        if (num != null) secLabelNumbers[label] = num;
+      }
+      if (label) {
+        h.id = `sec:${label}`;
+      } else if (num != null && sectionId != null) {
+        h.id = `sec:${sectionId}-${num}`;
+      }
+      if (num != null) {
+        const span = document.createElement('span');
+        span.className = 'tutorai-sec-num';
+        span.textContent = num;
+        const space = document.createTextNode('\u00a0');
+        h.insertBefore(span, h.firstChild);
+        h.insertBefore(space, span.nextSibling);
+      }
+    });
+    html = frag.innerHTML;
+  }
+
+  // 6b. Restore cross-references (@fig:label / @eq:label / @sec:label;
+  //     @kap:label = Legacy-Alias für @sec:label)
   //     Auflösung: 1) in diesem Dokument → In-Page-Anker,
-  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label) auf der
-  //                  Skript-Seite (alle Rollen; das Kapitel wird dort aufgeklappt),
+  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label / #sec:label)
+  //                  auf der Skript-Seite (alle Rollen; das Kapitel wird dort aufgeklappt);
+  //                  Kapitel-Labels (chapter: true) verlinken auf #chapter-{id} und
+  //                  werden als „Kap. N“ angezeigt,
   //               3) unbekannt → ❓
   xrefs.forEach((x, idx) => {
-    const text = x.kind === 'fig' ? 'Abb.' : 'Gl.';
-    const local = x.kind === 'fig' ? figLabelNumbers[x.label] : eqLabelNumbers[x.label];
+    const kind = x.kind === 'kap' ? 'sec' : x.kind;
+    const local =
+      kind === 'fig' ? figLabelNumbers[x.label]
+      : kind === 'eq' ? eqLabelNumbers[x.label]
+      : secLabelNumbers[x.label];
     const g = globalLabels[x.label];
     let refHtml;
     if (local) {
-      refHtml = `<a href="#${x.kind}:${x.label}" class="tutorai-xref">${text} ${local}</a>`;
-    } else if (g && g.kind === x.kind) {
+      const text = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : 'Abs.';
+      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref">${text} ${local}</a>`;
+    } else if (g && g.kind === kind) {
       const cid = (refMap && refMap.courseId) || '';
-      refHtml = `<a href="/courses/${cid}/script#${x.kind}:${x.label}" class="tutorai-xref">${text} ${g.num}</a>`;
+      const text = g.chapter ? 'Kap.' : kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : 'Abs.';
+      const anchor = g.chapter ? `chapter-${g.sectionId}` : `${kind}:${x.label}`;
+      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref">${text} ${g.num}</a>`;
     } else {
-      refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehörige Abbildung/Gleichung fehlt">❓ ${x.kind}:${x.label}</span>`;
+      refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
     html = html.replace(`%%XREF_${idx}%%`, refHtml);
   });
@@ -622,6 +696,13 @@ function createMarkdownEditor(containerId, options = {}) {
   // Markdown-Optionen für Preview + Auto-Update (sectionId → globale Nummerierung)
   const mdRenderOptions = { preview: true, sectionId: options.sectionId || null };
 
+  // Preview rendern; options.onPreviewRender wird danach aufgerufen
+  // (z. B. um Skript-Fragen-Markierungen im Edit-Modus neu anzuwenden)
+  const renderPreview = async () => {
+    await renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
+    if (options.onPreviewRender) options.onPreviewRender();
+  };
+
   toggleBtn.addEventListener('click', () => {
     isPreview = !isPreview;
     if (isPreview) {
@@ -629,7 +710,7 @@ function createMarkdownEditor(containerId, options = {}) {
       previewDiv.classList.remove('hidden');
       toggleBtn.innerHTML = '<span>✏️</span> <span>Edit</span>';
       toggleBtn.classList.add('bg-blue-50', 'border-blue-300', 'text-blue-700');
-      renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
+      renderPreview();
     } else {
       previewDiv.classList.add('hidden');
       textarea.classList.remove('hidden');
@@ -642,9 +723,7 @@ function createMarkdownEditor(containerId, options = {}) {
   textarea.addEventListener('input', () => {
     if (isPreview) {
       clearTimeout(updateTimeout);
-      updateTimeout = setTimeout(() => {
-        renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
-      }, 300);
+      updateTimeout = setTimeout(renderPreview, 300);
     }
     if (options.onValueChange) {
       options.onValueChange(textarea.value);

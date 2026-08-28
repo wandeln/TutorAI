@@ -114,6 +114,9 @@ def migrate_schema():
             "quote_ctx": "VARCHAR(2000)",  # Kontext um die Quote (eindeutige Ortung)
             "quote_off": "INTEGER",  # Startoffset der Quote innerhalb von quote_ctx
         },
+        "courses": {
+            "toc_visible": "BOOLEAN DEFAULT 1",  # Inhaltsverzeichnis für Studenten sichtbar
+        },
     }
     column_drops = {
         "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt

@@ -60,7 +60,6 @@
   <!-- Fragen-Dialog: eigene + alle Fragen, Composer mit Auswahl-Bezug, Markierungs-Modus -->
   <div id="sq-dialog" class="hidden fixed bottom-24 right-6 z-40 w-[440px] max-w-[calc(100vw-2rem)] h-[70vh] max-h-[640px] bg-white rounded-2xl shadow-2xl border border-gray-200 flex flex-col overflow-clip">
     <div class="flex items-center gap-2 px-4 py-2.5 border-b border-gray-100 bg-gray-50">
-      <span class="text-sm font-bold text-gray-700 shrink-0">❓ Fragen</span>
       <label class="flex items-center gap-1.5 cursor-pointer select-none shrink-0" title="Fragen im Skript markieren – ob eigene oder alle hängt von der Registerkarte ab">
         <span class="text-xs text-gray-600">Markierungen</span>
         <span class="relative inline-block w-9 h-5">
@@ -78,25 +77,24 @@
       <button id="sq-close" type="button" class="text-gray-400 hover:text-gray-700 text-lg leading-none px-1" title="Schließen">✕</button>
     </div>
     <div class="flex border-b border-gray-100 shrink-0">
-      <button id="sq-tab-mine" type="button" class="flex-1 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 transition">Meine Fragen</button>
-      <button id="sq-tab-all" type="button" class="flex-1 py-2 text-sm font-semibold text-gray-400 border-b-2 border-transparent hover:text-gray-600 transition">Alle Fragen</button>
+      <button id="sq-tab-mine" type="button" class="flex-1 py-2 text-sm font-semibold text-gray-400 border-b-2 border-transparent hover:text-gray-600 transition">Meine Fragen</button>
+      <button id="sq-tab-all" type="button" class="flex-1 py-2 text-sm font-semibold text-blue-600 border-b-2 border-blue-600 transition">Alle Fragen</button>
     </div>
-    <!-- Tab „Meine“: Threads + Composer -->
-    <div id="sq-body-mine" class="flex-1 flex flex-col min-h-0">
-      <div id="sq-threads" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
-      <div class="border-t border-gray-100 p-3 shrink-0">
-        <div id="sq-quote-chip" class="hidden mb-2 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
-          <span class="flex-1 min-w-0 break-words">📖 <span id="sq-quote-text"></span> <span id="sq-quote-section" class="text-gray-400"></span></span>
-          <button id="sq-quote-clear" type="button" class="text-gray-400 hover:text-gray-600 leading-none" title="Auswahl entfernen">✕</button>
-        </div>
-        <div class="flex items-end gap-2">
-          <textarea id="sq-input" rows="2" maxlength="2000" placeholder="Frage zum Skript stellen…" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
-          <button id="sq-send" type="button" class="bg-blue-600 hover:bg-blue-700 text-white w-10 h-10 rounded-lg text-lg transition shrink-0" title="Frage stellen">➤</button>
-        </div>
+    <!-- Tab „Meine“: Threads -->
+    <div id="sq-body-mine" class="hidden flex-1 overflow-y-auto p-3 space-y-3"></div>
+    <!-- Tab „Alle“ -->
+    <div id="sq-body-all" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
+    <!-- Composer: in beiden Tabs sichtbar -->
+    <div class="border-t border-gray-100 p-3 shrink-0">
+      <div id="sq-quote-chip" class="hidden mb-2 flex items-start gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-2.5 py-1.5 text-xs text-gray-700">
+        <span class="flex-1 min-w-0 break-words">📖 <span id="sq-quote-text"></span> <span id="sq-quote-section" class="text-gray-400"></span></span>
+        <button id="sq-quote-clear" type="button" class="text-gray-400 hover:text-gray-600 leading-none" title="Auswahl entfernen">✕</button>
+      </div>
+      <div class="flex items-end gap-2">
+        <textarea id="sq-input" rows="2" maxlength="2000" placeholder="Frage zum Skript stellen…" class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+        <button id="sq-send" type="button" class="bg-blue-600 hover:bg-blue-700 text-white w-10 h-10 rounded-lg text-lg transition shrink-0" title="Frage stellen">➤</button>
       </div>
     </div>
-    <!-- Tab „Alle“ -->
-    <div id="sq-body-all" class="hidden flex-1 overflow-y-auto p-3 space-y-3"></div>
   </div>
 
 {% endblock %}
@@ -889,7 +887,7 @@
   }
 
   async function sqRenderTab(which) {
-    const list = which === 'mine' ? document.getElementById('sq-threads') : document.getElementById('sq-body-all');
+    const list = which === 'mine' ? document.getElementById('sq-body-mine') : document.getElementById('sq-body-all');
     const scrollTop = list.scrollTop; // Sonst springt die Liste beim Re-Render (Status ändern, Polling) nach oben
     list.innerHTML = '';
     let items = which === 'mine' ? sqData.filter((q) => q.is_mine) : sqData;
@@ -989,7 +987,7 @@
     input.value = '';
     input.style.height = 'auto';
 
-    const list = document.getElementById('sq-threads');
+    const list = document.getElementById('sq-body-mine');
     const tempId = 'temp-' + Date.now();
     const empty = list.querySelector('p');
     if (empty) empty.remove();
@@ -1035,7 +1033,7 @@
   }
 
   // ─── Antworten + Löschen (Event-Delegation in beiden Tabs) ────
-  for (const container of [document.getElementById('sq-threads'), document.getElementById('sq-body-all')]) {
+  for (const container of [document.getElementById('sq-body-mine'), document.getElementById('sq-body-all')]) {
     // Status-Dropdown (offen / behandelt) — Chip selbst ist das Select
     container.addEventListener('change', async (e) => {
       const sel = e.target.closest('.sq-status-select');
@@ -1118,18 +1116,20 @@
   }
 
   // ─── Dialog: öffnen/schließen, Tabs ───────────────────────────
-  function sqOpenDialog() {
+  // focusInput: nur der "?"-Button fokussiert den Input (sonst springt auf
+  // mobilen Geräten bei Markierungsklick die Tastatur auf)
+  function sqOpenDialog(focusInput = false) {
     sqDialog.classList.remove('hidden');
     if (!sqLoaded) {
       sqLoaded = true;
       sqLoad();
     }
-    setTimeout(() => document.getElementById('sq-input').focus(), 50);
+    if (focusInput) setTimeout(() => document.getElementById('sq-input').focus(), 50);
   }
 
   // "?"-Button togglet den Dialog (zweiter Klick blendet ihn wieder aus)
   document.getElementById('script-question-fab').addEventListener('click', () => {
-    if (sqDialog.classList.contains('hidden')) sqOpenDialog();
+    if (sqDialog.classList.contains('hidden')) sqOpenDialog(true);
     else sqDialog.classList.add('hidden');
   });
   document.getElementById('sq-close').addEventListener('click', () => sqDialog.classList.add('hidden'));
@@ -1137,6 +1137,7 @@
   function sqSwitchTab(which) {
     const mine = which === 'mine';
     sqActiveTab = which; // Markierungs-Modus hängt vom aktiven Tab ab
+    localStorage.setItem('tutorai-script-tab-' + courseId, which);
     const tabMine = document.getElementById('sq-tab-mine');
     const tabAll = document.getElementById('sq-tab-all');
     const activeCls = 'flex-1 py-2 text-sm font-semibold transition text-blue-600 border-b-2 border-blue-600';
@@ -1149,6 +1150,8 @@
   }
   document.getElementById('sq-tab-mine').addEventListener('click', () => sqSwitchTab('mine'));
   document.getElementById('sq-tab-all').addEventListener('click', () => sqSwitchTab('all'));
+  // Tab-Wahl pro Kurs persistieren (Default: „Alle Fragen“)
+  sqSwitchTab(localStorage.getItem('tutorai-script-tab-' + courseId) === 'mine' ? 'mine' : 'all');
 
   // Status-Filter für beide Fragenlisten (offen / behandelt / alle)
   const sqFilterSelect = document.getElementById('sq-status-filter');
@@ -1706,11 +1709,16 @@
     setTimeout(() => {
       // Nur im aktiven Tab suchen: Die eigene Frage steht in beiden Listen,
       // sqDialog.querySelector fände sonst ggf. die (versteckte) im anderen Tab
-      const list = sqActiveTab === 'mine' ? document.getElementById('sq-threads') : document.getElementById('sq-body-all');
+      const list = sqActiveTab === 'mine' ? document.getElementById('sq-body-mine') : document.getElementById('sq-body-all');
       const el = list.querySelector(`.sq-thread[data-sq-id="${qid}"]`);
       if (el) sqFlashEl(el);
     }, 80);
   });
+
+  // Fragen direkt beim Seitenaufbau laden → die passenden Markierungen
+  // sind schon vor dem ersten Dialog-Klick im Skript sichtbar.
+  sqLoaded = true;
+  sqLoad();
 
   // ─── Polling: nur bei offenem Dialog + sichtbarem Tab ─────────
   setInterval(async () => {

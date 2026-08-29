@@ -135,6 +135,29 @@
   </div>
 </div>
 
+<!-- Applet-Duplizieren-Modal -->
+<div id="media-duplicate-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4">
+    <h2 class="text-xl font-bold text-gray-800 mb-2">Applet duplizieren</h2>
+    <p id="duplicate-source" class="text-sm text-gray-500 mb-4"></p>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">Titel des neuen Applets</label>
+      <input id="duplicate-media-title" type="text" maxlength="300"
+             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+    </div>
+    <div class="flex items-center justify-end gap-3 mt-6">
+      <button id="duplicate-modal-cancel" type="button"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+        Abbrechen
+      </button>
+      <button id="duplicate-modal-confirm" type="button"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed">
+        Duplizieren
+      </button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block extra_scripts %}
@@ -274,9 +297,14 @@
 
     const actions = document.createElement("div");
     actions.className = "flex gap-2 px-4 pb-3";
+    const dupBtn = m.media_type === "applet"
+      ? `<button type="button" class="text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-gray-600 hover:bg-gray-50 transition"
+              data-dup="${m.id}" title="Applet duplizieren">📋</button>`
+      : "";
     actions.innerHTML = `
       <button type="button" class="flex-1 text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-gray-600 hover:bg-gray-50 transition"
               data-edit="${m.id}">✏️ Bearbeiten</button>
+      ${dupBtn}
       <button type="button" class="text-xs border border-red-200 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 transition"
               data-del="${m.id}">🗑️</button>`;
 
@@ -319,7 +347,7 @@
   // ─── Aktionen (Event-Delegation) ──────────────────────────────
 
   document.getElementById("media-grid").addEventListener("click", (e) => {
-    const target = e.target.closest("button[data-copy], button[data-edit], button[data-del]");
+    const target = e.target.closest("button[data-copy], button[data-edit], button[data-del], button[data-dup]");
     if (!target) return;
 
     if (target.dataset.copy) {
@@ -339,6 +367,10 @@
     }
     if (target.dataset.del) {
       deleteMedia(parseInt(target.dataset.del));
+    }
+    if (target.dataset.dup) {
+      const m = mediaList.find(x => x.id === parseInt(target.dataset.dup));
+      if (m) openDuplicateAppletModal(m.id, m.title);
     }
   });
 
@@ -418,9 +450,54 @@
     }
   }
 
+  // ─── Applet duplizieren ───────────────────────────────────────
+
+  let duplicatingId = null;
+
+  function openDuplicateAppletModal(id, title) {
+    duplicatingId = id;
+    document.getElementById("duplicate-source").textContent = "Original: " + title;
+    document.getElementById("duplicate-media-title").value = title + " (Kopie)";
+    document.getElementById("media-duplicate-modal").classList.remove("hidden");
+    document.getElementById("duplicate-media-title").focus();
+  }
+
+  function closeDuplicateAppletModal() {
+    duplicatingId = null;
+    document.getElementById("media-duplicate-modal").classList.add("hidden");
+  }
+
+  async function duplicateApplet() {
+    if (duplicatingId === null) return;
+    const title = document.getElementById("duplicate-media-title").value.trim();
+    if (!title) {
+      showToast("Titel darf nicht leer sein.", "error");
+      return;
+    }
+    const btn = document.getElementById("duplicate-modal-confirm");
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media/${duplicatingId}/duplicate`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Fehler beim Duplizieren.");
+      showToast(data.message || "Applet dupliziert.", "success");
+      window.location.reload();
+    } catch (err) {
+      showToast(err.message, "error");
+      btn.disabled = false;
+    }
+  }
+
   // Modal-Buttons per addEventListener verdrahten (inline onclick ginge nicht —
   // die Funktionen liegen im IIFE-Scope und sind nicht global sichtbar)
   document.getElementById("edit-modal-cancel").addEventListener("click", closeMediaModal);
+  document.getElementById("duplicate-modal-cancel").addEventListener("click", closeDuplicateAppletModal);
+  document.getElementById("duplicate-modal-confirm").addEventListener("click", duplicateApplet);
   document.getElementById("edit-modal-save").addEventListener("click", saveMediaEdit);
   document.getElementById("edit-modal-generate").addEventListener("click", (e) => generateEditMetadata(e.currentTarget));
   document.getElementById("media-llm-generate").addEventListener("click", () => {

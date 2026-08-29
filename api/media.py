@@ -452,3 +452,48 @@ async def delete_media(
 
     media_service.delete_file(media.file_path)
     return {"message": f"Medium '{media.title}' gelöscht."}
+
+
+@router.post("/courses/{course_id}/media/{media_id}/duplicate")
+async def duplicate_applet_media(
+    course_id: int,
+    media_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF)),
+):
+    """Applet duplizieren (neue Datei mit neuem UUID-Namen → Markdown-Referenzen
+    des Originals bleiben unangetastet).
+
+    Body: {"title": str (optional, Default: „<Original-Titel> (Kopie)“)}
+    """
+    user, _ = user_and_course
+    media = _get_media(session, course_id, media_id)
+    if media.media_type != "applet":
+        raise HTTPException(400, "Nur Applets können dupliziert werden.")
+    body = await request.json()
+    title = (body.get("title") or "").strip() or media.title + " (Kopie)"
+    if not title:
+        raise HTTPException(400, "Titel darf nicht leer sein.")
+
+    path = media_service.MEDIA_DIR / media.file_path
+    if not path.is_file():
+        raise HTTPException(404, "Datei nicht gefunden.")
+    rel_path, mime, size = media_service.save_applet(course_id, path.read_text(encoding="utf-8"))
+
+    new_media = CourseMedia(
+        course_id=course_id,
+        title=title,
+        file_path=rel_path,
+        media_type="applet",
+        mime_type=mime,
+        file_size=size,
+        llm_description=media.llm_description,
+        created_by=user.id,  # type: ignore[arg-type]
+    )
+    session.add(new_media)
+    session.commit()
+    session.refresh(new_media)
+
+    counts = media_service.reference_counts(session, course_id)
+    return {"message": f"Applet '{new_media.title}' dupliziert.", "media": _media_to_dict(new_media, [], counts)}

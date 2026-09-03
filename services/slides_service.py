@@ -5,6 +5,10 @@ Format „Markdown plus":
 - Markdown ist die Single Source of Truth.
 - Folientrenner = eine eigene Zeile ``---`` (fence-aware: Codeblöcke werden
   nicht gespalten).
+- Unterfolien-Trenner = eine eigene Zeile ``--`` (fence-aware), NUR innerhalb
+  einer Folie: teilt sie in vertikal gestapelte Unterfolien (Reveal-Nest
+  <section><section>…</section></section>). Jeder Segment wird wie eine
+  normale Folie geparsed (eigene Direktiven/Notiz/Hintergrund).
 - Pro Folie dürfen am Anfang (aufeinanderfolgende Zeilen) Richtlinien stehen:
     layout: center | topleft | twocol
     transition: fade | slide | zoom | none | autoanimate   (Default: autoanimate)
@@ -85,7 +89,11 @@ class SlideError(ValueError):
 
 @dataclass
 class Slide:
-    """Eingeparste Folie: Direktiven + Spalten (Markdown je Spalte)."""
+    """Eingeparste Folie: Direktiven + Spalten (Markdown je Spalte).
+
+    Ein Block mit ≥2 ``--``-Segmenten wird zu einem Stack: ``children`` ist
+    dann die Liste der (vertikalen) Unterfolien, der Stack selbst ist ein
+    leerer Container (``columns == [""]``, keine Direktiven)."""
 
     layout: str = "topleft"  # Default: Inhalt oben links (konstante Titel-Höhe)
     transition: Optional[str] = None
@@ -96,6 +104,7 @@ class Slide:
     # twocol: Überschrift der ersten (nicht-leeren) Zeile der linken Spalte
     # wird als eigener, vollbreiter Header über beiden Spalten gerendert.
     header: Optional[str] = None
+    children: list["Slide"] = field(default_factory=list)  # nur bei Stacks (`--`)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -138,6 +147,38 @@ def _split_slides(content: str) -> list[str]:
 
     blocks.append("\n".join(current))
     return blocks
+
+
+def _split_vertical(block: str) -> list[str]:
+    """Teilt einen Folien-Block an Zeilen mit exakt ``--`` (fence-aware) in
+    Segmente: 1 Segment = normale Folie, ≥2 = vertikal gestapelte
+    Unterfolien. Exakter Zeilenabgleich, damit ``--`` nie die ersten beiden
+    Zeichen von ``---`` matcht (dafür ist ``_split_slides`` zuständig)."""
+    segments: list[str] = []
+    current: list[str] = []
+    fence_char = ""
+    fence_len = 0
+
+    for line in block.splitlines():
+        if fence_char:
+            current.append(line)
+            lead = len(line) - len(line.lstrip(" "))
+            rest = line.strip()
+            if lead <= 3 and len(rest) >= fence_len and set(rest) == {fence_char}:
+                fence_char = ""
+        else:
+            if line.strip() == "--":
+                segments.append("\n".join(current))
+                current = []
+                continue
+            m = _FENCE_OPEN.match(line)
+            if m:
+                fence_char = m.group(1)[0]
+                fence_len = len(m.group(1))
+            current.append(line)
+
+    segments.append("\n".join(current))
+    return segments
 
 
 def _parse_block(block: str, index: int) -> Slide:
@@ -222,17 +263,33 @@ def _parse_block(block: str, index: int) -> Slide:
 
 
 def parse_slides(content: str) -> list[Slide]:
-    """Parst ein Slide-Deck (strikt). Leerer Inhalt → leere Liste."""
+    """Parst ein Slide-Deck (strikt). Leerer Inhalt → leere Liste.
+
+    Ein Block mit ≥2 ``--``-Segmenten wird zu einem Stack: leerer
+    Eltern-Slide mit ``children`` (jedes Segment = eine Unterfolie; die
+    Fehlernummer bezieht sich auf die umgebende Folie, d.h. den
+    ``---``-Block)."""
     if not content or not content.strip():
         return []
-    return [_parse_block(block, i + 1) for i, block in enumerate(_split_slides(content))]
+    slides: list[Slide] = []
+    for i, block in enumerate(_split_slides(content), start=1):
+        segments = _split_vertical(block)
+        if len(segments) == 1:
+            slides.append(_parse_block(segments[0], i))
+        else:
+            stack = _parse_block("", i)
+            stack.children = [_parse_block(seg, i) for seg in segments]
+            slides.append(stack)
+    return slides
 
 
 def slide_count(content: str) -> int:
-    """Anzahl Folien (fehlerverzeihend — für Kachel-Badges & Listen)."""
+    """Anzahl anzeigbarer (Blatt-)Folien, fehlerverzeihend — für
+    Kachel-Badges & Listen. Ein Stack zählt jede ``--``-Unterfolie
+    (stimmt mit Reveal's Folienzähler überein)."""
     if not content or not content.strip():
         return 0
-    return len(_split_slides(content))
+    return sum(len(_split_vertical(b)) for b in _split_slides(content))
 
 
 def strip_slide_notes(content: str) -> str:
@@ -242,7 +299,8 @@ def strip_slide_notes(content: str) -> str:
     nicht im DOM). Die Richtlinie wird nur in ihrer gültigen Position
     (Richtlinienkette am Folienanfang, aufeinanderfolgende Zeilen) entfernt;
     alles andere bleibt unverändert — auch ``notes: …`` im Fließtext oder
-    in Codeblöcken.
+    in Codeblöcken. ``--``-Zeilen sind ebenfalls Blockgrenzen (die
+    Richtlinienkette einer Unterfolie wird so korrekt erkannt).
     """
     if not content:
         return ""
@@ -281,6 +339,10 @@ def strip_slide_notes(content: str) -> str:
             if line.strip() == "---":
                 flush_block()
                 out_lines.append("---")
+                continue
+            if line.strip() == "--":
+                flush_block()
+                out_lines.append("--")
                 continue
             m = _FENCE_OPEN.match(line)
             if m:
@@ -342,14 +404,16 @@ def _normalize_ws(text: str) -> tuple[str, list[int]]:
 
 def _resolve_span(content: str, old: str, edit_no: int) -> tuple[int, int]:
     """Span eines kurzen Snippets, das EXAKT EINMAL im Inhalt vorkommt und
-    innerhalb EINER Folie bleibt (kein Folientrenner, fence-aware).
-    Zuerst exakte Suche; als Fallback whitespace-insensitive Suche
-    (Zeilenumbrüche/mehrere Leerzeichen normalisiert)."""
+    innerhalb EINER (Unter-)Folie bleibt (kein Folien- oder Unterfolien-
+    trenner, fence-aware). Zuerst exakte Suche; als Fallback
+    whitespace-insensitive Suche (Zeilenumbrüche/mehrere Leerzeichen
+    normalisiert)."""
     if not (old or "").strip():
         raise SlideError(f"Edit {edit_no} („replace_span“): „old“ ist leer.")
-    if len(_split_slides(old)) > 1:
+    old_blocks = _split_slides(old)
+    if len(old_blocks) > 1 or any(len(_split_vertical(b)) > 1 for b in old_blocks):
         raise SlideError(
-            f"Edit {edit_no} („replace_span“): „old“ darf keinen Folientrenner („---“) enthalten."
+            f"Edit {edit_no} („replace_span“): „old“ darf keinen Trenner („---“/„--“) enthalten."
         )
     idx = content.find(old)
     if idx >= 0:
@@ -397,9 +461,13 @@ def apply_slide_edits(content: str, edits: object) -> str:
       neue Folie nach N (0 = als erste Folie)
     - {"op": "delete_slide", "slide": N}                       Folie N löschen
     - {"op": "replace_span", "old": "...", "new": "..."}
-      kurzes, eindeutig vorkommendes Snippet innerhalb EINER Folie ersetzen
+      kurzes, eindeutig vorkommendes Snippet innerhalb EINER (Unter-)Folie
+      ersetzen (darf weder „---“ noch „--“ überspannen)
 
-    Die Foliennummern beziehen sich auf das Deck VOR der Bearbeitung.
+    Die Foliennummern beziehen sich auf das Deck VOR der Bearbeitung. Eine
+    Folie kann „--“-Unterfolien enthalten: replace_slide/delete_slide wirken
+    auf die ganze Folie (inkl. aller Unterfolien); der „content“ von
+    replace_slide/insert_slide_after darf selbst „--“-Unterfolien enthalten.
     Gibt den neuen Inhalt zurück; wirft SlideError, wenn ein Edit ungültig
     oder mehrdeutig ist (unbekanntes op, Foliennummer außerhalb des Bereichs,
     „old“ nicht eindeutig) — dann wird nichts angewendet.

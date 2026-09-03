@@ -23,6 +23,9 @@
 <style>:root { {{ slides_theme_css | safe }} }</style>
 <script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
 <script src="{{ asset('js/slides.js') }}"></script>
+{# Highlight-Plugin (Code-Highlighting + data-line-numbers; nutzt das
+   global geladene highlight.js aus base.html) #}
+<script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
 {% endblock %}
 
 {% block course_content %}
@@ -156,6 +159,10 @@
           width: TILE_W,
           height: TILE_H,
           autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+          // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
+          // Renderer liefert bereits HTML-escapten Code).
+          highlight: { escapeHTML: false },
+          plugins: [RevealHighlight],
         });
         await reveal.initialize();
       })
@@ -339,6 +346,10 @@
         width: W,
         height: H,
         autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+        // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
+        // Renderer liefert bereits HTML-escapten Code).
+        highlight: { escapeHTML: false },
+        plugins: [RevealHighlight],
       });
       await previewReveal.initialize();
     }

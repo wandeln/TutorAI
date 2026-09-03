@@ -34,8 +34,13 @@
    Reveal läuft mit center:false — es wird kein inline style.top gesetzt und
    der Inhalt bleibt oben angedockt (konstante Titel-Höhe auf allen Folien).
    height:100% sorgt zusätzlich dafür, dass die Fußzeile (position:absolute,
-   bottom) immer am Folien-Rand sitzt. */
-.reveal .slides > section {
+   bottom) immer am Folien-Rand sitzt.
+   Auch die unteren Folien von „--“-Stacks (children von .slides-stack):
+   Reveal positioniert sie absolute (width:100%, keine Höhe) → ohne
+   height:100% wäre justify-content:center in der Zentrierungsregel unten
+   wirkungslos (Section wäre nur so hoch wie der Inhalt). */
+.reveal .slides > section,
+.reveal .slides section.slides-stack > section {
   height: 100% !important;
   padding: 1.5em 2.5em;
   box-sizing: border-box;
@@ -45,8 +50,11 @@
 /* layout: center (Titelfolien) — vertikal + horizontal zentriert.
    Nur .present, damit Reveal's display:none für inaktive Folien erhalten
    bleibt. display:flex braucht !important: Reveal setzt auf der aktiven
-   Folie inline "display: block" (überschreibt die CSS-Regel ohne !important). */
-.reveal .slides > section.present.layout-center {
+   Folie inline "display: block" (überschreibt die CSS-Regel ohne !important).
+   .slides-stack > section: „--“-Unterfolien — der Child-Selektor „> section"
+   allein trifft sie nicht (ihr Parent ist der Stack-Container). */
+.reveal .slides > section.present.layout-center,
+.reveal .slides section.slides-stack > section.present.layout-center {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
@@ -54,7 +62,8 @@
   text-align: center;
 }
 
-.reveal .slides > section.layout-center {
+.reveal .slides > section.layout-center,
+.reveal .slides section.slides-stack > section.layout-center {
   text-align: center;
 }
 
@@ -63,8 +72,8 @@
    Das <li> muss MITSCHRUMPEN: sonst behält der kürzere Eintrag die Breite
    der ganzen Liste und der Bullet steht detached links neben dem
    zentrierten Text. */
-:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ul,
-:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ol {
+:is(.reveal .slides > section.layout-center, .reveal .slides section.slides-stack > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ul,
+:is(.reveal .slides > section.layout-center, .reveal .slides section.slides-stack > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ol {
   width: fit-content;
   margin-inline: auto;
   /* !important: schlägt die generische Slide-Listenregel (padding-left: 1.4em
@@ -72,7 +81,7 @@
   padding-inline: 0 !important;
 }
 
-:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview li {
+:is(.reveal .slides > section.layout-center, .reveal .slides section.slides-stack > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview li {
   width: fit-content;
   margin-inline: auto;
 }
@@ -147,11 +156,11 @@ html.print-pdf .reveal .slides .pdf-page > section[data-footer]::after {
 html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section::before {
   content: "";
   position: absolute;
-  top: 0.6em;
-  right: 2.5em;
+  top: 0.144em;
+  right: 0.8em;
   width: calc(2.6em * var(--slides-logo-scale, 1));
   height: calc(2.6em * var(--slides-logo-scale, 1));
-  background: var(--slides-logo) center / contain no-repeat;
+  background: var(--slides-logo) top right / contain no-repeat;
   pointer-events: none;
   z-index: 1; /* im PDF über dem Folien-Hintergrund (.tutorai-slide-bg, z-index:0); live: natives Bg liegt hinter .slides */
 }
@@ -163,27 +172,31 @@ html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section > * {
   z-index: 1;
 }
 
-/* Eckpositionen (Default = oben rechts, s. Basisregel). Bottom-Varianten
-   sitzen unter der Footer-Zeile (bottom: 0.45em). */
+/* Eckpositionen (Default = oben rechts, s. Basisregel). Alle Eck-Varianten
+   sitzen auf derselben Ränder-Distanz wie die Footer-Zeile (0.144em vertikal,
+   0.8em horizontal). */
 .reveal.slides-logo-top-left .slides > section::before,
 html.print-pdf .reveal.slides-logo-top-left .slides .pdf-page > section::before {
-  top: 0.6em;
-  left: 2.5em;
+  top: 0.144em;
+  left: 0.8em;
   right: auto;
+  background-position: top left;
 }
 
 .reveal.slides-logo-bottom-right .slides > section::before,
 html.print-pdf .reveal.slides-logo-bottom-right .slides .pdf-page > section::before {
   top: auto;
-  bottom: 0.9em;
+  bottom: 0.144em;
+  background-position: bottom right;
 }
 
 .reveal.slides-logo-bottom-left .slides > section::before,
 html.print-pdf .reveal.slides-logo-bottom-left .slides .pdf-page > section::before {
   top: auto;
-  bottom: 0.9em;
-  left: 2.5em;
+  bottom: 0.144em;
+  left: 0.8em;
   right: auto;
+  background-position: bottom left;
 }
 
 /* ─── Folien-Hintergrund (Richtlinie background: ![Titel](…)) ─────
@@ -220,13 +233,13 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
    Primärfarbe + Blur. @boxcolor:<farbe> übersteuert die Farbe per
    Inline-Style (background-color), das hier diese Regel überlagert.
    backdrop-filter übersteht echte PDF-Drucke nicht — der Farbton
-   (20 % Alpha) bleibt sichtbar. */
+   (30 % Alpha) bleibt sichtbar. */
 :is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-highlight {
   border: 0;
   border-radius: 0.6em;
   padding: 1em 1.5em;
   margin: 0.4em 0;
-  background: color-mix(in srgb, var(--slides-primary, #1d4ed8) 20%, transparent);
+  background: color-mix(in srgb, var(--slides-primary, #1d4ed8) 30%, transparent);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
@@ -346,6 +359,16 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
 :is(.reveal .slides, .slides-canvas) .markdown-preview pre code {
   font-size: 1em !important;
   padding: 0.9em 1.1em !important;
+}
+
+/* Code-Box (@box:code) in Slides: das <pre> sitzt nahtlos in der dunklen
+   Box (s. main.css) — die generischen Slide-Regeln (margin/padding) dürfen
+   dort nicht greifen. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-code pre {
+  margin: 0 !important;
+}
+:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-code pre code {
+  padding: 0.5em 1em 0.7em !important;
 }
 
 :is(.reveal .slides, .slides-canvas) .markdown-preview blockquote {

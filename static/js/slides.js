@@ -1,10 +1,15 @@
 /*
  * Folien: Client-Spiegel von services/slides_service.py.
  *
- * - parseSlides(content)   → lenientes Parsen (Folientrenner `---` fence-aware,
- *                            Direktiven, Spaltentrenner `||`). Ungültige
- *                            Direktiven bleiben als Text stehen (der Server
- *                            meldet bei Speichern die genaue Fehlermeldung).
+ * - parseSlides(content)   → lenientes Parsen (Folientrenner `---` und
+ *                            Unterfolien-Trenner `--` fence-aware, Direktiven,
+ *                            Spaltentrenner `||`). Ein Block mit ≥2 `--`-Seg-
+ *                            menten wird zu einem Stack: leere Eltern-Folie mit
+ *                            `children` (vertikale Unterfolien für Reveal).
+ *                            Ungültige Direktiven bleiben als Text stehen (der
+ *                            Server meldet bei Speichern die genaue Meldung).
+ * - countSlides(slides)    → Anzahl anzeigbarer (Blatt-)Folien: jeder Stack
+ *                            zählt seine Unterfolien (wie Reveal's Zähler).
  * - renderSlideInto(slide, el) → rendert eine Folie (Markdown via
  *                            renderMarkdown, bleibt in .markdown-preview).
  * - renderSlideThumb(slide, thumbEl, themeClass) → Kachel-Vorschau:
@@ -40,11 +45,33 @@ const SLIDE_BG_IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
 // nicht pro Seite.
 const SLIDES_IS_PRINT_PDF = /print-pdf/.test(window.location.search);
 
+/**
+ * Teilt den Inhalt an Zeilen mit exakt `---` (Folientrenner) und exakt `--`
+ * (Unterfolien-Trenner, nur innerhalb einer Folie) — beides fence-aware.
+ * Liefert eine Liste von Folien-Blöcken; jeder Block ist eine Liste von
+ * Segmente-Strings (1 Segment = normale Folie, ≥2 = vertikal gestapelte
+ * Unterfolien). Exakter Zeilenabgleich (trim === "--"/"---"), damit `--`
+ * nie die ersten beiden Zeichen von `---` matcht.
+ */
 function _splitSlideBlocks(content) {
   const blocks = [];
+  let segments = [];
   let current = [];
   let fenceChar = "";
   let fenceLen = 0;
+
+  // Invariante: `segments` = abgeschlossene Segmente des aktuellen Blocks,
+  // `current` = aktive (noch nicht in segments enthaltene) Zeilen.
+  const newSegment = () => {
+    segments.push(current);
+    current = [];
+  };
+  const newBlock = () => {
+    segments.push(current);
+    blocks.push(segments);
+    segments = [];
+    current = [];
+  };
 
   for (const line of (content || "").split(/\r?\n/)) {
     if (fenceChar) {
@@ -61,9 +88,13 @@ function _splitSlideBlocks(content) {
         fenceChar = "";
       }
     } else {
-      if (line.trim() === "---") {
-        blocks.push(current.join("\n"));
-        current = [];
+      const t = line.trim();
+      if (t === "---") {
+        newBlock();
+        continue;
+      }
+      if (t === "--") {
+        newSegment();
         continue;
       }
       const m = line.match(SLIDE_FENCE_OPEN);
@@ -74,8 +105,9 @@ function _splitSlideBlocks(content) {
       current.push(line);
     }
   }
-  blocks.push(current.join("\n"));
-  return blocks;
+  segments.push(current);
+  blocks.push(segments);
+  return blocks.map((segs) => segs.map((l) => l.join("\n")));
 }
 
 function _parseSlideBlock(block, index) {
@@ -86,6 +118,7 @@ function _parseSlideBlock(block, index) {
     notes: null,
     background: null,
     columns: [""],
+    children: [], // nur bei Stacks (`--`) befüllt
   };
   const lines = block.split("\n");
   const seen = new Set();
@@ -148,7 +181,27 @@ function _parseSlideBlock(block, index) {
 
 function parseSlides(content) {
   if (!content || !content.trim()) return [];
-  return _splitSlideBlocks(content).map((b, i) => _parseSlideBlock(b, i + 1));
+  return _splitSlideBlocks(content).map((segs, i) =>
+    segs.length === 1
+      ? _parseSlideBlock(segs[0], i + 1)
+      : _parseStackBlock(segs, i + 1)
+  );
+}
+
+/** Block mit ≥2 `--`-Segmenten → Stack: reiner (leerer) Container-Eltern
+ *  mit `children` — jede Unterfolie wird wie eine normale Folie geparsed
+ *  (eigene Direktiven, Layout, Notiz, Hintergrund; Spiegel von parse_slides
+ *  in slides_service.py). */
+function _parseStackBlock(segments, index) {
+  const stack = _parseSlideBlock("", index);
+  stack.children = segments.map((seg) => _parseSlideBlock(seg, index));
+  return stack;
+}
+
+/** Anzahl anzeigbarer (Blatt-)Folien: normale Folie zählt 1, Stack zählt
+ *  seine Unterfolien (stimmt mit Reveal's Folienzähler überein). */
+function countSlides(slides) {
+  return slides.reduce((n, s) => n + (s.children.length > 0 ? s.children.length : 1), 0);
 }
 
 /** Rendert eine Folie in ein Element (<section> oder .slides-canvas).
@@ -227,6 +280,19 @@ async function renderSlideThumb(slide, thumbEl, themeClass) {
  * und in der Speaker-View nie angezeigt.
  */
 async function buildSlideSection(slide, footerText) {
+  // Vertikaler Stack (`--`-Unterfolien): Reveal-Nest <section>
+  // <section>…</section>…</section>. Der Eltern-Section ist ein reiner
+  // (inhaltloser) Container ohne Layout-Klasse — Reveal erkennt am
+  // <section>-Kind automatisch den Stack; jede Unterfolie wird wie eine
+  // normale Folie gebaut (eigene Transition/Notiz/Hintergrund).
+  if (slide.children && slide.children.length > 0) {
+    const stack = document.createElement("section");
+    stack.className = "slides-stack";
+    for (const child of slide.children) {
+      stack.appendChild(await buildSlideSection(child, footerText));
+    }
+    return stack;
+  }
   const section = document.createElement("section");
   section.className = "layout-" + slide.layout + (slide.css_class ? " " + slide.css_class : "");
   // Standard-Transition: Auto-Animate (Inhalte animieren zwischen den
@@ -242,22 +308,24 @@ async function buildSlideSection(slide, footerText) {
   // - Präsentation/Vorschau: Reveal's natives Hintergrund-System
   //   (data-background-image / data-background-iframe) → deckt den ganzen
   //   Viewport ab, auch die Letterbox, in die Reveal .slides skaliert.
-  //   .html-Applets bleiben per data-background-interactive klickbar
-  //   (Reveal-Design: dann ist der Folieninhalt dieser Folie nicht
-  //   klickbar).
+  //   .html-Applets UND externe Websites bleiben per
+  //   data-background-interactive klickbar (Reveal-Design: dann ist der
+  //   Folieninhalt dieser Folie nicht klickbar).
   // - ?print-pdf: Element IN der Folie (pro PDF-Seite; Applet ist
   //   interaktiv, damit Einstellungen vor dem Druck angepasst werden
   //   können) — Reveal's Bg-System ist im Print-Modus ausgeblendet.
   //   NUR NACH renderSlideInto bauen — die setzt innerHTML und würde das
   //   Element sonst löschen.
   if (slide.background) {
-    const isApplet = /\.html?$/i.test(slide.background.src);
+    // .html-Applet oder externe Website (http(s)-URL ohne Bild-Endung)
+    // → Iframe; Erkennung/Sandbox-Regeln wie in markdown-renderer.js.
+    const isApplet = isAppletSrc(slide.background.src);
     if (SLIDES_IS_PRINT_PDF) {
       const bg = document.createElement(isApplet ? "iframe" : "img");
       bg.className = "tutorai-slide-bg";
       bg.src = slide.background.src;
       if (isApplet) {
-        bg.setAttribute("sandbox", "allow-scripts");
+        bg.setAttribute("sandbox", appletSandboxAttr(slide.background.src));
         bg.title = slide.background.alt;
         bg.loading = "lazy";
       } else {
@@ -302,4 +370,75 @@ function tutoraiAutoAnimateMatcher(fromSlide, toSlide) {
   return pairs.filter(
     (pair) => !pair.from.hasAttribute("data-zoom") && !pair.to.hasAttribute("data-zoom")
   );
+}
+
+/**
+ * Fragment-Schritte neu ableiten, sobald eine Folie gelayoutet ist (s.
+ * tutoraiResortFragments in markdown-renderer.js). Beim Markdown-Render
+ * sind die Sections noch display:none (Reveal-CSS), daher kann die
+ * visuelle Fragment-Reihenfolge (z. B. KaTeX-Underbraces) erst richtig
+ * sortiert werden, wenn die Folie sichtbar ist — bzw. im Print-Modus,
+ * noch bevor Reveal's setupPDF die Fragments auf PDF-Seiten paginiert.
+ *
+ * MÜSSE NACH `await reveal.initialize()` aufgerufen werden: Der Aufruf
+ * läuft dann exakt zu dem Zeitpunkt, an dem Reveal's "ready" gerade
+ * gefeuert hat — ein `.on("ready")`-Listener wäre zu spät registriert
+ * (Reveal feuert es via setTimeout(1ms) aus start(); das Rennen mit
+ * setupPDF's erstem rAF geht je nach Umgebung unterschiedlich aus, s. unten).
+ *
+ * @param {object} reveal initialisierte Reveal-Instanz
+ * @param {HTMLElement} slidesEl Element, das die Sections enthält (.slides)
+ */
+function wireKatexFragmentResort(reveal, slidesEl) {
+  const resort = (slide, resync) => {
+    if (!slide || !slide.querySelector(".markdown-preview")) return;
+    tutoraiResortFragments(slide);
+    // Sichtbarkeit an die (ggf. neuen) Indizes anpassen: Ohne angezeigte
+    // Fragments ist data-fragment=-1 (Ausgangszustand); bei einem Deep-Link
+    // (#/2/1) zeigt der alte Index auf den zugehörigen visuellen Schritt.
+    // Im Print-Modus resync=false — Reveal's setupPDF verwaltet den
+    // Fragment-Visibility-Zustand pro PDF-Seite selbst (ein vorheriges
+    // .visible würde in die per Fragment-State geklonten Seiten wandern).
+    if (resync) {
+      try {
+        reveal.fragments.update(
+          parseInt(slide.getAttribute("data-fragment") || "-1", 10)
+        );
+      } catch (e) { /* ignore */ }
+    }
+  };
+  if (/print-pdf/.test(window.location.search)) {
+    // Die Ableitung muss VOR setupPDF's Fragment-Paginierung laufen (die
+    // erfolgt 2 Animation-Frame nach dem Setzen von html.print-pdf).
+    // Zwei Timing-Varianten: Unter Headless kann setupPDF's erster rAF
+    // VOR Reveal's 1ms-Ready-Timer kommen → die Klasse ist dann beim
+    // Aufruf bereits gesetzt (→ jetzt synchron ableiten; die Sections
+    // sind gelayoutet und die Rects gültig). Andernfalls fängt der
+    // MutationObserver das Class-Set synchron (Microtask) ab — ebenfalls
+    // noch vor der Paginierung.
+    const doPrintResort = () => {
+      slidesEl.querySelectorAll("section").forEach((s) => resort(s, false));
+    };
+    if (document.documentElement.classList.contains("print-pdf")) {
+      doPrintResort();
+    } else {
+      const mo = new MutationObserver(() => {
+        if (!document.documentElement.classList.contains("print-pdf")) return;
+        mo.disconnect();
+        doPrintResort();
+      });
+      mo.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    }
+  } else {
+    // Präsentation/Vorschau: "ready" hat beim Aufruf bereits gefeuert
+    // (initialize() löst genau dort auf) → direkt für die aktuelle Folie
+    // ableiten; ein .on("ready")-Listener wäre zu spät registriert. Das
+    // deckt auch Deep-Links (#/2/1) ab — das initiale slidechanged feuert
+    // während start(), also VOR der Listener-Registrierung.
+    resort(reveal.getCurrentSlide(), true);
+    reveal.on("slidechanged", (e) => resort(e.currentSlide, true));
+  }
 }

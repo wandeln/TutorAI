@@ -45,6 +45,9 @@
 {% block extra_scripts %}
 <script src="{{ asset('js/slides.js') }}"></script>
 <script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
+{# Highlight-Plugin (Code-Highlighting + data-line-numbers/Per-Line-Reveal;
+   nutzt das global geladene highlight.js aus base.html) #}
+<script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
 {# Notes-Plugin nur für Dozenten/Tutoren: für Studenten ist die Taste „S"
    inaktiv, und die Notizen werden zusätzlich serverseitig aus dem API-
    Content gefiltert (slides_service.strip_slide_notes) → nicht im DOM. #}
@@ -130,9 +133,20 @@
     // Gezoomte Applets ({zoom=X}) überspringt das Auto-Animate — der
     // Inline-Transform bleibt erhalten (s. tutoraiAutoAnimateMatcher).
     autoAnimateMatcher: tutoraiAutoAnimateMatcher,
-    plugins: HAS_NOTES ? [RevealNotes] : [],
+    // Code-Blöcke: Syntax-Highlighting + Zeilennummern/Per-Line-Reveal
+    // (tutorai-highlight.js). escapeHTML: false — der Renderer liefert
+    // bereits HTML-escapten Code (mit true würde das Plugin doppelte
+    // Entities setzen und die Highlight-Spans kaputt machen).
+    highlight: { escapeHTML: false },
+    plugins: [RevealHighlight, ...(HAS_NOTES ? [RevealNotes] : [])],
   });
   await reveal.initialize();
+
+  // Visuelle Fragment-Reihenfolge (KaTeX-Underbraces): neu ableiten,
+  // sobald eine Folie gelayoutet ist (beim Markdown-Render sind die
+  // Sections noch display:none). Print-Modus: alle Folien, sobald
+  // html.print-pdf gesetzt ist (vor der Fragment-PDF-Paginierung).
+  wireKatexFragmentResort(reveal, slidesEl);
 
   // Toolbar nur in der Reveal-Overview (Esc) anzeigen — die Präsentation
   // selbst läuft ohne die dunkle Leiste, nur die Folien sind sichtbar.

@@ -30,7 +30,31 @@
  *                                                            Primärfarbe), z.B. für Titel auf Deckslides;
  *                                                            @boxcolor:<farbe> als ERSTE Zeile übersteuert
  *                                                            die Boxfarbe (#hex/rgb()/CSS-Farbname)
+ *                                                            code: dunkle Code-Box mit 💻-Kopf
+ *                                                            (Inhalt = fenced Code-Block)
+ * Code-Blöcke:        ```<sprache> … ```           → Syntax-Highlighting (hljs, alle Sprachen;
+ *                                                            ohne Sprache = Auto-Detection)
+ *                                                            ```<sprache> {#lines:1,3-5} → (Slides) Zeilennummern
+ *                                                            + Zeilen-Highlight, "|" = weiterer Schritt
+ *                                                            (Per-Line-Reveal, Reveal-Highlight-Plugin)
+ * AutoAnimate-IDs:    {#aaid:label}                → (nur Slides) explizites Auto-Animate-Element-
+ *                                                            Matching: Elemente mit demselben Label auf
+ *                                                            zwei Folien animieren per ID ineinander
+ *                                                            (Reveal 4.6: data-id; in Reveal 5 heißt es
+ *                                                            data-auto-animate-id). Am Zeilenende (nach
+ *                                                            Bullet/Absatz/Formel/Figur) oder als Token
+ *                                                            nach $$…$$ {#eq:…} bzw. Bild-Snippets.
+ * LaTeX-Fragmente:    \fragment{…}                 → (Slides) der eingewickelte Teil der Formel
+ *                                                            (Kurzform von \htmlClass{fragment}{…})
+ *                                                            erscheint mit einem extra Klick;
+ *                                                            \fragment{id}{…} = ID-Gruppe
+ *                                                            (gleichzeitig, = \htmlClass{fragment:id}{…}).
+ *                                                            Andere Trust-Kommandos
+ *                                                            (\href, \includegraphics, …) bleiben
+ *                                                            abgelehnt (Security).
  * Applet-Abbildung:   ![caption](src.html)         → interaktives (sandboxed) Iframe;
+ *                    ![caption](https://…)          → dito für externe Websites
+ *                                                            (http(s)-URL ohne Bild-Endung);
  *                                                            mit {#fig:label} nummeriert wie Bilder
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
@@ -100,6 +124,7 @@ const CALLOUT_TYPES = {
   bemerkung: { icon: 'ℹ️', title: 'Nebenbemerkung' },
   warnung: { icon: '⚠️', title: 'Warnung' },
   beispiel: { icon: '📎', title: 'Beispiel' },
+  code: { icon: '💻', title: 'Code' },
 };
 
 // ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
@@ -110,7 +135,7 @@ const CALLOUT_TYPES = {
 // emittiert eine normalisierte rgba()-Zeile als Inline-Style (überlebt
 // DOMPurify, s. Applet-Styling); ungültige Werte → CSS-Default
 // (Primärfarbe mit HIGHLIGHT_BOX_ALPHA).
-const HIGHLIGHT_BOX_ALPHA = 0.2;
+const HIGHLIGHT_BOX_ALPHA = 0.3;
 const BOX_COLOR_NAMES = {
   white: [255, 255, 255], black: [0, 0, 0], red: [220, 38, 38], green: [22, 163, 74],
   blue: [37, 99, 235], yellow: [234, 179, 8], orange: [249, 115, 22], purple: [147, 51, 234],
@@ -149,11 +174,31 @@ function _boxColorToRgba(value) {
   return null;
 }
 
+// ─── Applet-/Website-Erkennung ──────────────────────────────────────────
+// Ein „Applet“ ist ein .html-Medium (eigene /media-Applets) ODER eine
+// externe Website (http(s)-URL ohne Bild-Endung) — beide werden als
+// Iframe gerendert. Die Sandbox unterscheidet sich:
+// - eigene Applets: allow-scripts OHNE allow-same-origin — sie laufen
+//   unter eigener (App-)Origin, mit same-origin könnten kompromittierte
+//   Applets via window.parent auf das Parent-DOM zugreifen;
+// - externe Websites: + allow-same-origin — ohne Storage/Subresource-
+//   Zugriffe läuft kaum eine reale Site; sie haben eine fremde Origin
+//   und erreichen das Parent-DOM daher nicht.
+const APPLET_IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg|bmp|avif|ico)(?:[?#].*)?$/i;
+function isAppletSrc(src) {
+  return /\.html?$/i.test(src) ||
+    (/^https?:\/\//i.test(src) && !APPLET_IMAGE_EXT.test(src));
+}
+function appletSandboxAttr(src) {
+  return /^https?:\/\//i.test(src) ? "allow-scripts allow-same-origin" : "allow-scripts";
+}
+
 // ─── Applet-Auto-Sizing ───────────────────────────────────────────────
-// Applets (.html-Medien) melden ihre Inhaltshöhe per postMessage — das
+// Eigene Applets (.html-Medien) melden ihre Inhaltshöhe per postMessage — das
 // Boilerplate wird serverseitig in jeden Applet-Versand injiziert (siehe
 // serve_media in main.py). Das Iframe passt sich an (150–600 px);
 // darüber hinaus scrollt das Applet im Iframe intern.
+// Externe Websites senden keine solche Nachricht → Default-Höhe bleibt.
 const APPLET_MIN_H = 150;
 const APPLET_MAX_H = 600;
 window.addEventListener('message', (event) => {
@@ -322,7 +367,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         pos += bm[0].length;
       }
       // Tokens validieren: nur bekannte Typen, je Attribut höchstens einmal.
-      const a = { label: null, frag: null, height: null, zoom: null };
+      const a = { label: null, frag: null, height: null, zoom: null, aaid: null };
       let valid = true;
       for (const inner of tokens) {
         let t;
@@ -332,6 +377,10 @@ async function renderMarkdown(text, targetElement, options = {}) {
         } else if ((t = inner.match(/^#([Ff])ragment(?::([\p{L}0-9_-]+))?$/u))) {
           if (a.frag) { valid = false; break; } // Duplikat-Fragment
           a.frag = { type: _fragType(t[1], t[2]), id: t[2] || null };
+        } else if ((t = inner.match(/^#aaid:([\p{L}0-9_-]+)$/u))) {
+          // Auto-Animate-Element-ID (nur Slides; Reveal 4.6: data-id)
+          if (a.aaid !== null) { valid = false; break; } // Duplikat
+          a.aaid = t[1];
         } else if ((t = inner.match(/^\.?height=([\d.]+)([a-z]*)$/))) {
           // Führender Punkt optional (beide Formen valid): {height=X} /
           // {.height=X}. Suffix-Check separat (einfacher als `px?` im Regex
@@ -367,9 +416,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
             }
             figLabelNumbers[a.label] = num;
           }
-          figures.push({ alt, src, label: a.label, num, frag: a.frag, height: a.height, zoom: a.zoom });
+          figures.push({ alt, src, label: a.label, num, frag: a.frag, height: a.height, zoom: a.zoom, aaid: a.aaid });
           repl = `%%FIG_${figures.length - 1}%%`;
-        } else if (/\.html?$/i.test(src) && !a.frag) {
+        } else if (isAppletSrc(src) && !a.frag) {
           appletFigures.push({ alt, src, zoom: a.zoom, height: a.height });
           repl = `%%APPLETFIG_${appletFigures.length - 1}%%`;
         } else if (a.height !== null && !a.frag && a.zoom === null) {
@@ -396,6 +445,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //     → nummerierte Gleichung "(N)" mit Anker, latex-artig verlinkbar)
   const latexBlocks = [];
   const latexLabels = [];
+  const latexAaids = [];
   const eqLabelNumbers = {};
   const eqFallbackBase = chapterRef ? (chapterRef.maxEq || 0) : 0;
   let eqFallbackCount = 0;
@@ -404,8 +454,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
   let slideEqCount = 0;
   const latexFragments = [];
   processed = processed.replace(
-    /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?(?:\s*\{#([Ff])ragment(?::([\p{L}0-9_-]+))?\})?/gu,
-    (match, latex, label, fchar, id) => {
+    /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?(?:\s*\{#([Ff])ragment(?::([\p{L}0-9_-]+))?\})?(?:\s*\{#aaid:([\p{L}0-9_-]+)\})?/gu,
+    (match, latex, label, fchar, id, aaid) => {
       latexBlocks.push(latex.trim());
       if (label && !(label in eqLabelNumbers)) {
         const g = globalLabels[label];
@@ -421,6 +471,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       }
       latexLabels.push(label || null);
       latexFragments.push(fchar !== undefined ? { type: _fragType(fchar, id), id: id || null } : null);
+      latexAaids.push(aaid || null);
       return `%%LATEX_BLOCK_${latexBlocks.length - 1}%%`;
     }
   );
@@ -464,6 +515,14 @@ async function renderMarkdown(text, targetElement, options = {}) {
         return `<span class="tutorai-frag-marker" data-frag="${_fragType(fchar, id)}"${idAttr}></span>`;
       }
     );
+    // {#aaid:label} → Sentinel: _applyFragmentMarkers setzt data-id auf das
+    // umgebende Block-Element (Reveal 4.6: explizites Auto-Animate-Element-
+    // Matching per data-id; in Reveal 5 heißt das Attribut
+    // data-auto-animate-id). eq/fig nehmen {#aaid:…} oben bereits direkt.
+    processed = processed.replace(
+      /\{#aaid:([\p{L}0-9_-]+)\}/gu,
+      (m, label) => `<span class="tutorai-aaid-marker" data-aaid="${label}"></span>`
+    );
   }
 
   // 1l. Literal-Image-Tails wiederherstellen (nach 1k, damit enthaltene
@@ -481,20 +540,30 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 3. Restore fenced code blocks
+  //    Öffnende Zeile: optionale Sprache + optionales {#lines:…} (Slides:
+  //    Zeilennummern + Per-Line-Reveal, Reveal-Highlight-Plugin; "|" =
+  //    weiterer Schritt). Ohne {#lines}-Token bleibt das Altbewährte:
+  //    die erste Zeile ist Sprache NUR wenn rein (sonst Code-Teil).
   fencedCodeBlocks.forEach((content, idx) => {
     const safe = content.replace(escapedDollar, '$');
     const lines = safe.split('\n');
     let language = '';
+    let lineNumbers = null;
     let codeBody;
-    if (lines.length > 1 && lines[0].trim().match(/^[a-zA-Z][a-zA-Z0-9+-]*$/)) {
-      language = lines[0].trim();
-      codeBody = lines.slice(1).join('\n');
-    } else {
-      codeBody = safe;
+    if (lines.length > 1) {
+      const head = lines[0].trim();
+      const hm = head.match(/^([a-zA-Z][a-zA-Z0-9+-]*)?(?:\s+\{#lines:([\d,| -]+)\})?$/);
+      if (hm && (hm[1] || hm[2])) {
+        language = hm[1] || '';
+        lineNumbers = hm[2] || null;
+        codeBody = lines.slice(1).join('\n');
+      }
     }
+    if (codeBody === undefined) codeBody = safe;
     const escaped = codeBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\$\$/g, '$$$$$$$$');
     const langAttr = language ? ` class="language-${language}"` : '';
-    html = html.replace(`%%FC${idx}%%`, `<pre><code${langAttr}>${escaped}</code></pre>`);
+    const linesAttr = lineNumbers ? ` data-line-numbers="${escapeHtml(lineNumbers.trim())}"` : '';
+    html = html.replace(`%%FC${idx}%%`, `<pre><code${langAttr}${linesAttr}>${escaped}</code></pre>`);
   });
 
   // 4. Restore inline code spans
@@ -511,9 +580,12 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const rendered = renderLatexBlock(latex);
     const label = latexLabels[idx];
     const frag = latexFragments[idx];
+    const aaid = latexAaids[idx];
     const fragAttrs = frag
       ? ` data-frag="${frag.type}"${frag.id ? ` data-frag-id="${frag.id}"` : ''}`
       : '';
+    // Auto-Animate-Element-ID (Reveal 4.6: data-id, s. {#aaid:…})
+    const aaidAttr = aaid ? ` data-id="${aaid}"` : '';
     if (label) {
       const num = eqLabelNumbers[label];
       const g = globalLabels[label];
@@ -527,14 +599,14 @@ async function renderMarkdown(text, targetElement, options = {}) {
         numHtml = `<span class="tutorai-eq-num">(${num})</span>`;
       }
       const wrapped =
-        `<div id="eq:${label}" class="tutorai-equation"${fragAttrs}>${rendered}${numHtml}</div>`;
+        `<div id="eq:${label}" class="tutorai-equation"${fragAttrs}${aaidAttr}>${rendered}${numHtml}</div>`;
       html = html.replace(`%%LATEX_BLOCK_${idx}%%`, wrapped.replace(/\$/g, '$$$$'));
-    } else if (frag) {
+    } else if (frag || aaid) {
       // Unlabeled + Fragment: Katex' <span class="katex-display"> in ein
       // fragmentierbares Block-Element verpacken (wird beim innerHTML-Parse
       // aus dem umgebenden <p> gehoistet, wie beim labeled Fall). Die
       // Reveal-Klasse + Index vergibt _applyFragmentMarkers (slideMode).
-      html = html.replace(`%%LATEX_BLOCK_${idx}%%`, `<div${fragAttrs}>${rendered}</div>`.replace(/\$/g, '$$$$'));
+      html = html.replace(`%%LATEX_BLOCK_${idx}%%`, `<div${fragAttrs}${aaidAttr}>${rendered}</div>`.replace(/\$/g, '$$$$'));
     } else {
       html = html.replace(`%%LATEX_BLOCK_${idx}%%`, rendered.replace(/\$/g, '$$$$'));
     }
@@ -556,7 +628,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //     Breite, interne Scrollbar, wenn die Max-Höhe überschritten wird.
   figures.forEach((f, idx) => {
     const safeAlt = escapeHtml(f.alt);
-    const isApplet = /\.html?$/i.test(f.src);
+    const isApplet = isAppletSrc(f.src);
     const parts = [];
     let dataZoom = '';
     if (f.height != null) {
@@ -586,7 +658,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
     const dataMaxH = isApplet && f.height != null ? ` data-max-h="${f.height}"` : '';
     const mediaTag = isApplet
-      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
+      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="${appletSandboxAttr(f.src)}" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
       : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}"${mediaStyle}>`;
     // Gezoomte Applets in einen overflow:hidden-Wrapper (sichtbare =
     // geskalte Höhe; transform ändert die Iframe-Layout-Box nicht). Initiale
@@ -607,8 +679,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const figFragAttrs = f.frag
       ? ` data-frag="${f.frag.type}"${f.frag.id ? ` data-frag-id="${f.frag.id}"` : ''}`
       : '';
+    const figAaidAttr = f.aaid ? ` data-id="${f.aaid}"` : '';
     const figHtml =
-      `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}>` +
+      `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}${figAaidAttr}>` +
       innerMedia +
       `<figcaption>Abb. ${f.num}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
@@ -636,7 +709,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
     const dataMaxH = f.height != null ? ` data-max-h="${f.height}"` : '';
     const iframeTag =
-      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
+      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="${appletSandboxAttr(f.src)}" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
     const zoomInitH = f.height != null
       ? `min(calc(150px * ${f.zoom}), ${f.height}px)`
       : `calc(150px * ${f.zoom})`;
@@ -831,12 +904,16 @@ async function renderMarkdown(text, targetElement, options = {}) {
 }
 
 // Fragment-Marker (Reveal) auflösen: {#fragment}, {#fragment:id} (ID-Gruppe),
-// {#Fragment} (Gate). Der Sentinel ist ein Inline-<span>, das marked in das
-// nächste Block-Element einbettet; eq/fig tragen data-frag bereits aus der
-// Restore-Phase. Phasen:
+// {#Fragment} (Gate), {#aaid:label} (Auto-Animate-Element-ID → data-id) und
+// \htmlClass{fragment…} in Formeln (s. _katexFragRewrite). Der Sentinel ist
+// ein Inline-<span>, das marked in das nächste Block-Element einbettet;
+// eq/fig tragen data-frag/data-id bereits aus der Restore-Phase. Phasen:
 //   1: Sentinel → umgebendes Block-Element (p/li/h*/pre/…) als Host
-//      (data-frag/data-frag-id vom Span auf den Host kopiert; Sonderfälle:
-//      leeres <p> nach Codeblock, Marker direkt im Wrapper).
+//      (data-frag/data-frag-id bzw. data-id vom Span auf den Host kopiert;
+//      Sonderfälle: leeres <p> nach Codeblock, Marker direkt im Wrapper).
+//   1b: \htmlClass{fragment…}-Spans in gerenderten Formeln als Fragment-
+//      Hosts markieren (group/normal aus der ID-Klasse) — die inerten
+//      tutorai-katex-frag*-Klassen werden entfernt, „enclosing“ bleibt.
 //   2: Alle [data-frag]-Elemente + Top-Level-Elemente der Folie (direkte
 //      Kinder der .markdown-preview-Wrapper, bei twocol je ein Wrapper pro
 //      Spalte) in Dokumentreihenfolge sammeln.
@@ -847,15 +924,18 @@ async function renderMarkdown(text, targetElement, options = {}) {
 //      eigenes Fragment davor bekommen denselben Schritt — explizite
 //      Fragments nach dem Gate werden also vom Gate "verschlungen"
 //      (ein späteres Gate übertrumpft ein früheres).
-//   4: data-frag*-Attribute entfernen ("fragment"-Klasse + Index bleiben).
+//   4: data-frag*-Attribute entfernen ("fragment"-Klasse + Index bleiben;
+//      data-id bleibt — es ist Reveal's Auto-Animate-Matching-Key).
 function _applyFragmentMarkers(container) {
   const blockRe = /^(P|LI|H[1-6]|PRE|BLOCKQUOTE|FIGURE|TABLE|DIV)$/;
   const isPreviewWrap = (el) => el && el.classList && el.classList.contains('markdown-preview');
 
-  // Phase 1: Sentinel auflösen
-  container.querySelectorAll('span.tutorai-frag-marker').forEach((span) => {
+  // Phase 1: Sentinel auflösen (Fragmente + Auto-Animate-IDs)
+  container.querySelectorAll('span.tutorai-frag-marker, span.tutorai-aaid-marker').forEach((span) => {
+    const isAaid = span.classList.contains('tutorai-aaid-marker');
     const fragType = span.getAttribute('data-frag') || 'normal';
     const fragId = span.getAttribute('data-frag-id');
+    const aaid = span.getAttribute('data-aaid');
     let el = span.parentElement;
     while (
       el &&
@@ -879,8 +959,13 @@ function _applyFragmentMarkers(container) {
       host = sib && blockRe.test(sib.tagName) ? sib : null;
     }
     if (host) {
-      host.setAttribute('data-frag', fragType);
-      if (fragId) host.setAttribute('data-frag-id', fragId);
+      if (isAaid) {
+        // Auto-Animate-Element-ID (bleibt dauerhaft, s. Phase-4-Kommentar)
+        host.setAttribute('data-id', aaid);
+      } else {
+        host.setAttribute('data-frag', fragType);
+        if (fragId) host.setAttribute('data-frag-id', fragId);
+      }
     }
     // Vom Sentinel getrenntes <br> (marked, breaks:true) wieder entfernen
     if (span.previousElementSibling && span.previousElementSibling.tagName === 'BR') {
@@ -889,9 +974,47 @@ function _applyFragmentMarkers(container) {
     span.remove();
   });
 
+  // Phase 1b: \htmlClass{fragment…} in Formeln (via _katexFragRewrite nach
+  // tutorai-katex-frag(-id-<label>) umgeschrieben, s. renderLatex*): die
+  // Spans als Fragment-Hosts markieren (ID → Gruppe), inerte Klassen
+  // entfernen — ab Phase 2 laufen sie wie jedes [data-frag]-Element.
+  container.querySelectorAll('span.tutorai-katex-frag').forEach((span) => {
+    let fragId = null;
+    for (const c of span.classList) {
+      if (c.startsWith('tutorai-katex-fragid-')) fragId = c.slice('tutorai-katex-fragid-'.length);
+    }
+    span.classList.remove('tutorai-katex-frag');
+    if (fragId) span.classList.remove('tutorai-katex-fragid-' + fragId);
+    span.setAttribute('data-frag', fragId ? 'group' : 'normal');
+    if (fragId) span.setAttribute('data-frag-id', fragId);
+    // Marker für Phase 2b (visuelle Lesereihenfolge innerhalb der
+    // Gleichung), in Phase 4 wieder entfernt.
+    span.setAttribute('data-tutorai-katexfrag', '');
+  });
+
   // Phase 2: Fragment-Elemente + Top-Level-Elemente, Dokumentreihenfolge
   const fragEls = Array.from(container.querySelectorAll('[data-frag]'));
   if (fragEls.length === 0) return;
+  const allEls = _collectFragmentEls(container, fragEls);
+
+  // Phase 2b: Katex-Fragmente in visueller Lesereihenfolge (s. Hilf).
+  // Beim ersten Render sind die Reveal-Sections noch display:none (Rects=0)
+  // → no-op; tutoraiResortFragments() macht es später noch einmal.
+  _visualKatexRunSort(allEls);
+
+  // Phase 3: Schritt-Indizes
+  _assignFragmentSteps(allEls);
+
+  // Phase 4: Die Marker data-frag/data-frag-id/data-tutorai-katexfrag
+  // bleiben bewusst stehen: tutoraiResortFragments() (slides.js ruft sie
+  // auf ready/slidechanged bzw. bei ?print-pdf auf) läuft dieselbe
+  // Ableitung erneut, sobald die Folie gelayoutet ist, und braucht sie.
+}
+
+// Fragment-Elemente + Top-Level-Elemente der .markdown-preview-Blöcke in
+// Dokumentreihenfolge sammeln (die Gate-Logik in _assignFragmentSteps
+// braucht die Top-Level-Elemente).
+function _collectFragmentEls(container, fragEls) {
   const topLevel = [];
   container.querySelectorAll('.markdown-preview').forEach((mp) => {
     Array.from(mp.children).forEach((c) => topLevel.push(c));
@@ -903,8 +1026,46 @@ function _applyFragmentMarkers(container) {
     if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
     return 0;
   });
+  return allEls;
+}
 
-  // Phase 3: Schritt-Indizes
+// Katex-Fragment-Elemente in visueller Lesereihenfolge sortieren.
+// KaTeX rendert z. B. \underbrace{a+b}_{c} als munder-Vlist, in dem die
+// Subscript-Zelle DOM-mäßig VOR der Haupt-Zelle steht — die Schrittnummern
+// würden sonst c→a→b statt a→b→c vergeben. Deshalb NUR aufeinanderfolgende
+// katex-Frag-Elemente derselben Gleichung (gleiche .katex-Root) per
+// Bounding-Box (top, dann left; Toleranz 2px) neu sortieren. Stabiler Sort
+// hält bei Ties die DOM-Reihenfolge. Nicht global visuell: würde z. B.
+// Twocol-Spaltenreihenfolge brechen. Ungelayoutete Slides (Rects=0) → no-op.
+function _visualKatexRunSort(allEls) {
+  for (let i = 0; i < allEls.length; ) {
+    const first = allEls[i];
+    if (!first.hasAttribute('data-tutorai-katexfrag')) { i++; continue; }
+    const root = first.closest ? first.closest('.katex') : null;
+    let j = i + 1;
+    while (
+      j < allEls.length &&
+      allEls[j].hasAttribute('data-tutorai-katexfrag') &&
+      root && allEls[j].closest && allEls[j].closest('.katex') === root
+    ) j++;
+    if (j - i > 1) {
+      const run = allEls.slice(i, j).map((el) => ({ el, r: el.getBoundingClientRect() }));
+      run.sort((x, y) => {
+        const dTop = x.r.top - y.r.top;
+        if (Math.abs(dTop) > 2) return dTop; // erst Zeile
+        const dLeft = x.r.left - y.r.left;
+        if (Math.abs(dLeft) > 2) return dLeft; // dann Spalte
+        return 0; // Tie → DOM-Order (stabil)
+      });
+      run.forEach((item, k) => { allEls[i + k] = item.el; });
+    }
+    i = j;
+  }
+  return allEls;
+}
+
+// Fragment-Schritt-Indizes vergeben (Gate-Logik + ID-Gruppen).
+function _assignFragmentSteps(allEls) {
   let nextStep = 0;
   let activeGateStep = null;
   const idToStep = {};
@@ -933,12 +1094,21 @@ function _applyFragmentMarkers(container) {
     el.setAttribute('data-fragment-index', String(step));
     el.classList.add('fragment');
   }
+}
 
-  // Phase 4: Zwischenmarker aufräumen
-  container.querySelectorAll('[data-frag]').forEach((el) => {
-    el.removeAttribute('data-frag');
-    el.removeAttribute('data-frag-id');
-  });
+// Fragment-Schritte neu ableiten, sobald der Container (Folie) gelayoutet
+// ist. Beim ersten Render sind die Reveal-Sections noch display:none
+// (Reveal-CSS), daher kann die visuelle Run-Sortierung (KaTeX-Underbraces)
+// dort nur ein no-op sein. slides.js (wireKatexFragmentResort) ruft das auf
+// Reveal's ready/slidechanged (Präsentation/Vorschau) und — im ?print-pdf-
+// Modus — synchron auf, sobald html.print-pdf gesetzt ist (noch vor
+// Reveal's setupPDF-Fragment-Paginierung). Setzt dieselben Attribute/Klassen
+// wie der erste Durchlauf (idempotent).
+function tutoraiResortFragments(container) {
+  if (!container || !container.querySelectorAll) return;
+  const fragEls = Array.from(container.querySelectorAll('[data-frag]'));
+  if (fragEls.length === 0) return;
+  _assignFragmentSteps(_visualKatexRunSort(_collectFragmentEls(container, fragEls)));
 }
 
 // Fragment-Typ aus der Markersyntax: {#Fragment} (Groß, ohne ID) = Gate,
@@ -973,10 +1143,10 @@ function sanitizeLatex(latex) {
 
 function renderLatexBlock(latex) {
   try {
-    return katex.renderToString(sanitizeLatex(latex), {
+    return katex.renderToString(_katexFragRewrite(sanitizeLatex(latex)), {
       displayMode: true,
       throwOnError: false,
-      trust: false,
+      trust: _katexTrust,
     });
   } catch (e) {
     return `<pre class="text-red-500 bg-red-50 p-2 rounded">KaTeX Error: ${escapeHtml(e.message)}</pre>`;
@@ -985,16 +1155,59 @@ function renderLatexBlock(latex) {
 
 function renderLatexInline(latex) {
   try {
-    return katex.renderToString(sanitizeLatex(latex), {
+    return katex.renderToString(_katexFragRewrite(sanitizeLatex(latex)), {
       displayMode: false,
       throwOnError: false,
-      trust: false,
+      trust: _katexTrust,
     });
   } catch (e) {
     return `<span class="text-red-500">\(${escapeHtml(latex)}\)</span>`;
   }
 }
 
+// ─── LaTeX-Fragmente (\fragment{…} bzw. \htmlClass{fragment…}) ───────────
+// Formelteile schrittweise einblenden (Slides): \fragment{…} (Kurzform)
+// bzw. \htmlClass{fragment}{…}, mit ID: \fragment{id}{…} bzw.
+// \htmlClass{fragment:id}{…} (ID-Gruppe = gleichzeitig). KaTeX's
+// htmlClass setzt die Klassen ROH auf den Wrapper-Span — aber „fragment"
+// wäre Reveal's Fragment-Klasse (falsche Semantik), und „fragment:label"
+// ist keine gültige CSS-Klasse → deshalb hier umschreiben auf eigene,
+// inerte Klassen. _applyFragmentMarkers (Phase 1b) übernimmt die Spans
+// dann als normale Fragment-Hosts (group/normal) und entfernt die
+// Klassen; „enclosing“ (KaTeX-Styling) bleibt. Im Skript (ohne slideMode)
+// bleiben die Spans inaktive Elemente — kein visueller Unterschied.
+const KATEX_FRAG_CLASS = 'tutorai-katex-frag';
+const KATEX_FRAG_ID_PREFIX = 'tutorai-katex-fragid-';
+
+function _katexFragRewrite(latex) {
+  return latex
+    // Kurzform \fragment{…}: zuerst die ID-Variante (zwei Argumente:
+    // {id} + {content}, erkennbar am { direkt nach der ID-Gruppe), dann
+    // die plain-Variante als reiner Prefix-Tausch (Content bleibt
+    // unangetastet, auch mit geschachtelten Klammern).
+    .replace(/\\fragment\{([\p{L}0-9_-]+)\}(?=\{)/gu, '\\htmlClass{fragment:$1}')
+    .replace(/\\fragment\{/g, '\\htmlClass{fragment}{')
+    .replace(/\\htmlClass\{fragment:([\p{L}0-9_-]+)\}/gu, '\\htmlClass{' + KATEX_FRAG_CLASS + ' ' + KATEX_FRAG_ID_PREFIX + '$1}')
+    .replace(/\\htmlClass\{fragment\}/g, '\\htmlClass{' + KATEX_FRAG_CLASS + '}');
+}
+
+// KaTeX-Trust-Funktion (ersetzt trust:false): erlaubt NUR \htmlClass mit
+// genau unseren Fragment-Klassen — alle anderen Trust-Kommandos
+// (\htmlClass mit fremden Klassen, \href, \url, \includegraphics,
+// \htmlId/\htmlStyle/\htmlData) bleiben abgelehnt (roter
+// Unsupported-Command-Text, Rest der Formel rendert normal).
+const KATEX_FRAG_TRUST_RE = new RegExp('^' + KATEX_FRAG_CLASS + '( ' + KATEX_FRAG_ID_PREFIX + '[\\p{L}0-9_-]+)?$', 'u');
+function _katexTrust(ctx) {
+  return !!ctx && ctx.command === '\\htmlClass' && KATEX_FRAG_TRUST_RE.test(String(ctx.class || ''));
+}
+
+// Syntax-Highlighting (hljs, global aus base.html): alle Sprachen mit
+// language-<lang>-Klasse; ohne/unknown Sprache = Auto-Detection. Die
+// übrigen Attribute (data-line-numbers für Slides) überleben den Rebuild;
+// das class-Attribut wird neu gesetzt (Sprache + hljs-Markierung).
+// Im Slide-Modus überstreicht das Reveal-Highlight-Plugin das Ergebnis
+// idempotent (gleiche hljs-Version) und baut zusätzlich die
+// data-line-numbers-Tabelle/Fragmente auf.
 function highlightCodeBlocks(html) {
   return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (match, attrs, code) => {
     const decoded = code
@@ -1004,14 +1217,25 @@ function highlightCodeBlocks(html) {
       .replace(/&#39;/g, "'")
       .replace(/&quot;/g, '"');
 
-    const isPython = attrs.includes('python') || !attrs.trim();
+    const otherAttrs = attrs.replace(/\s*class="[^"]*"/, '').trim();
+    const langMatch = /class="language-([\w+-]+)"/.exec(attrs);
+    const language = langMatch ? langMatch[1] : null;
 
-    if (isPython && typeof hljs !== 'undefined') {
+    if (typeof hljs !== 'undefined') {
+      let highlighted = null;
       try {
-        const highlighted = hljs.highlight(decoded.trim(), { language: 'python' }).value;
-        return `<pre><code class="language-python">${highlighted}</code></pre>`;
+        const src = decoded.trim();
+        if (src) {
+          highlighted = (language && hljs.getLanguage(language))
+            ? hljs.highlight(src, { language }).value
+            : hljs.highlightAuto(src).value;
+        }
       } catch (e) {
-        // Fallback: re-escape and return as-is
+        highlighted = null; // Fallback unten: escaped, unverändert
+      }
+      if (highlighted !== null) {
+        const cls = (language ? `language-${language} ` : '') + 'hljs';
+        return `<pre><code${otherAttrs ? ` ${otherAttrs}` : ''} class="${cls}">${highlighted}</code></pre>`;
       }
     }
 

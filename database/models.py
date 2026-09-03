@@ -12,7 +12,7 @@ Das hält die API sauber und typisiert.
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, JSON
 from sqlmodel import SQLModel, Field, Relationship
 
 
@@ -247,11 +247,11 @@ class CourseMaterialBase(SQLModel):
     material_type: MaterialType
     content: str = Field(default="")              # Markdown (Slides: Folien mit `---` getrennt)
     is_visible: bool = Field(default=True)        # Für Studenten sichtbar
+    display_order: int = Field(default=0)         # Reihenfolge (wichtig für mehrere Slide-Decks)
 
 
 class CourseMaterial(CourseMaterialBase, table=True):
     __tablename__ = "course_materials"
-    __table_args__ = (UniqueConstraint("course_id", "material_type", name="uq_material_course_type"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     created_by: int = Field(foreign_key="users.id")
@@ -274,6 +274,15 @@ class CourseMaterialRead(CourseMaterialBase):
     created_by: int
     created_at: datetime
     updated_at: datetime
+
+
+class CourseSlidesTheme(SQLModel, table=True):
+    """Design (Theme) für die Slide-Decks eines Kurses (eine Zeile pro Kurs)."""
+    __tablename__ = "course_slides_theme"
+
+    course_id: int = Field(foreign_key="courses.id", primary_key=True)
+    theme: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.now)
 
 
 # ═══════════════════════════════════════════════════════════════════

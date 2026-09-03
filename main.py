@@ -39,6 +39,7 @@ from database.models import (
     CourseMaterial,
     CourseMedia,
     CourseRole,
+    CourseSlidesTheme,
     FeedbackSource,
     ForumChannel,
     ForumMessage,
@@ -53,8 +54,15 @@ from database.models import (
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
 from services import media_service
+from services.slides_service import (
+    ASPECT_LABELS,
+    ASPECT_RATIOS,
+    THEME_TEMPLATES,
+    resolve_theme,
+    slide_count,
+)
 
-from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, script_questions, student, tutor, user_settings, course_members
+from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, script_questions, slides as slides_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -261,6 +269,7 @@ app.include_router(course_members.router)
 app.include_router(student.router)
 app.include_router(media_api.router)
 app.include_router(materials_api.router)
+app.include_router(slides_api.router)
 app.include_router(script_api.router)
 app.include_router(forum.router)
 app.include_router(script_questions.router)
@@ -354,10 +363,12 @@ def _course_tab_context(
     is_tutor = role in (CourseRole.PROF, CourseRole.TUTOR)
     is_prof = role == CourseRole.PROF
 
-    # Kurs-Materialien (Slides): für Studenten nur, wenn vorhanden & sichtbar;
+    # Slide-Decks: für Studenten nur, wenn mindestens eines sichtbar;
     # für Tutor/PROF/Admin immer (ggf. mit Empty-State + Anlegen-CTA)
-    materials = session.exec(
-        select(CourseMaterial).where(CourseMaterial.course_id == course_id)
+    slides_decks = session.exec(
+        select(CourseMaterial)
+        .where(CourseMaterial.course_id == course_id)
+        .where(CourseMaterial.material_type == MaterialType.SLIDES)
     ).all()
 
     # Skript-Kapitel: für Studenten erst, wenn mindestens eines freigeschaltet ist
@@ -378,11 +389,16 @@ def _course_tab_context(
                 "active": active_tab == "script",
             }
         )
-    # Slides-Tab vorerst deaktiviert (reveal.js folgt):
-    # slides_mat = next((m for m in materials if m.material_type == MaterialType.SLIDES), None)
-    # if is_tutor or is_admin or (slides_mat is not None and slides_mat.is_visible):
-    #     tabs.append({"key": "slides", "icon": "📽️", "label": "Slides",
-    #                  "url": f"/courses/{course_id}/slides", "active": active_tab == "slides"})
+    if is_tutor or is_admin or any(d.is_visible for d in slides_decks):
+        tabs.append(
+            {
+                "key": "slides",
+                "icon": "📽️",
+                "label": "Folien",
+                "url": f"/courses/{course_id}/slides",
+                "active": active_tab == "slides",
+            }
+        )
 
     tabs.append(
         {
@@ -453,8 +469,6 @@ def _course_tab_context(
         "tabs": tabs,
         "active_tab": active_tab,
         "has_visible_sections": bool(visible_sections),
-        # für _material_page_context() (Skript/Slides-Tabs)
-        "materials": {m.material_type: m for m in materials},
     }
     return membership, ctx
 
@@ -784,37 +798,6 @@ async def tasks_page(
     return templates.TemplateResponse(template, ctx)
 
 
-def _material_page_context(ctx: dict, mtype: MaterialType) -> dict:
-    """Skript-/Slides-Tab: Material aus ctx laden + Rollen-Sichtbarkeit.
-
-    Studenten: nur sichtbares Material, sonst 404.
-    Tutor/PROF/Admin: immer (leerer Kurs → Empty-State zum Anlegen).
-    """
-    label = "Skript" if mtype == MaterialType.SCRIPT else "Slides"
-    material = ctx["materials"].get(mtype)
-    can_view_all = ctx["is_tutor"] or ctx["is_admin"]
-
-    if material is None and not can_view_all:
-        raise HTTPException(404, f"Kein {label} für diesen Kurs vorhanden.")
-    if material and not material.is_visible and not can_view_all:
-        raise HTTPException(404, f"Kein {label} für diesen Kurs vorhanden.")
-
-    ctx["material"] = (
-        {
-            "id": material.id,
-            "title": material.title,
-            "material_type": material.material_type.value,
-            "is_visible": material.is_visible,
-        }
-        if material
-        else None
-    )
-    ctx["material_kind"] = mtype.value
-    ctx["material_label"] = label
-    ctx["page_title"] = f"{label} — {ctx['course']['name']}"
-    return ctx
-
-
 @app.get("/courses/{course_id}/script")
 async def script_page(
     course_id: int,
@@ -866,6 +849,51 @@ async def script_section_page(
     return RedirectResponse(url=f"/courses/{course_id}/script#chapter-{section_id}", status_code=302)
 
 
+def _slides_theme_ctx(session: Session, course_id: int) -> dict:
+    """Aufgelöstes Folien-Theme für Template-Kontexte (Folien-Seiten).
+
+    Liefert:
+      slides_theme        – aufgelöstes Theme-JSON (für JS/Modals)
+      slides_theme_css    – CSS-Variablen als Deklarationen (für <style>:root{…})
+      slides_theme_templates – Template-Defaults (für Design-Modal)
+      slides_aspect_ratios  – Seitenverhältnis-Map Key→Wert (für Design-Modal/JS)
+      slides_aspect_labels  – Seitenverhältnis-Labels (für Design-Modal)
+      slides_footer_text  – Fußzeilen-Text („Kurs — Semester")
+    """
+    row = session.get(CourseSlidesTheme, course_id)
+    theme = resolve_theme(row.theme if row else None)
+    course = session.get(Course, course_id)
+
+    logo_url = None
+    if theme["logo_media_id"]:
+        media = session.get(CourseMedia, theme["logo_media_id"])
+        if media and media.course_id == course_id and media.media_type == "image":
+            logo_url = media_service.media_url(media)
+
+    colors = theme["colors"]
+    css = (
+        f"--slides-primary: {colors['primary']}; "
+        f"--slides-accent: {colors['accent']}; "
+        f"--slides-bg: {colors['background']}; "
+        f"--slides-text: {colors['text']}; "
+        f"--slides-font-scale: {theme['font_scale']}; "
+        f"--slides-aspect: {theme['aspect_value']:.4f}; "
+        f"--slides-logo-scale: {theme['logo_scale']}"
+    )
+    if logo_url:
+        css += f"; --slides-logo: url(\"{logo_url}\")"
+
+    return {
+        "slides_theme": theme,
+        "slides_theme_css": css,
+        "slides_theme_templates": THEME_TEMPLATES,
+        "slides_aspect_ratios": ASPECT_RATIOS,
+        "slides_aspect_labels": ASPECT_LABELS,
+        "slides_footer_text": f"{course.name} — {course.semester}" if course else "",
+        "slides_has_logo": logo_url is not None,
+    }
+
+
 @app.get("/courses/{course_id}/slides")
 async def slides_page(
     course_id: int,
@@ -873,12 +901,124 @@ async def slides_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Kurs-Tab 'Slides': Vorlesungs-Slides (Markdown, Folien mit `---` getrennt)."""
+    """Kurs-Tab 'Folien': Slide-Decks als Kacheln (Anlegen, Präsentieren, PDF, Design)."""
     membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="slides")
     if not membership and user.role != GlobalUserRole.ADMIN:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
-    _material_page_context(ctx, MaterialType.SLIDES)
-    return templates.TemplateResponse("course/material.html", ctx)
+
+    is_tutor = ctx["is_tutor"] or ctx["is_admin"]
+    decks = session.exec(
+        select(CourseMaterial)
+        .where(CourseMaterial.course_id == course_id)
+        .where(CourseMaterial.material_type == MaterialType.SLIDES)
+        .order_by(CourseMaterial.display_order.asc(), CourseMaterial.id.asc())  # type: ignore[attr-defined]
+    ).all()
+    if not is_tutor:
+        decks = [d for d in decks if d.is_visible]
+
+    ctx["decks"] = [
+        {
+            "id": d.id,
+            "title": d.title,
+            "is_visible": d.is_visible,
+            "slide_count": slide_count(d.content),
+            "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+        }
+        for d in decks
+    ]
+    ctx.update(_slides_theme_ctx(session, course_id))
+    ctx["page_title"] = f"Folien — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/slides.html", ctx)
+
+
+@app.get("/courses/{course_id}/slides/{deck_id}")
+async def slides_deck_page(
+    course_id: int,
+    deck_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Slide-Deck-Ansicht (Vorschau aller Folien + Markdown-Editor)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="slides")
+    if not membership and user.role != GlobalUserRole.ADMIN:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+
+    deck = session.get(CourseMaterial, deck_id)
+    if not deck or deck.course_id != course_id or deck.material_type != MaterialType.SLIDES:
+        raise HTTPException(404, "Slide-Deck nicht gefunden.")
+    is_tutor = ctx["is_tutor"] or ctx["is_admin"]
+    if not deck.is_visible and not is_tutor:
+        raise HTTPException(404, "Slide-Deck nicht gefunden.")
+    # Studenten brauchen den Editor nicht → direkt in die Präsentation.
+    if not is_tutor:
+        return RedirectResponse(f"/courses/{course_id}/slides/{deck_id}/present")
+
+    ctx["material"] = {
+        "id": deck.id,
+        "title": deck.title,
+        "material_type": deck.material_type.value,
+        "is_visible": deck.is_visible,
+    }
+    ctx["material_kind"] = MaterialType.SLIDES.value
+    ctx["material_label"] = "Folien"
+    ctx.update(_slides_theme_ctx(session, course_id))
+    ctx["page_title"] = f"{deck.title} — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/slides_edit.html", ctx)
+
+
+@app.get("/courses/{course_id}/slides/{deck_id}/present")
+async def slides_present_page(
+    course_id: int,
+    deck_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Präsentation (Reveal.js) / PDF-Export (mit ?print-pdf)."""
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(404, "Kurs nicht gefunden.")
+    deck = session.get(CourseMaterial, deck_id)
+    if not deck or deck.course_id != course_id or deck.material_type != MaterialType.SLIDES:
+        raise HTTPException(404, "Slide-Deck nicht gefunden.")
+
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    is_admin = user.role == GlobalUserRole.ADMIN
+    if not membership and not is_admin:
+        raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
+    role = membership.role_in_course if membership else None
+    is_tutor = is_admin or role in (CourseRole.PROF, CourseRole.TUTOR)
+    if not deck.is_visible and not is_tutor:
+        raise HTTPException(404, "Slide-Deck nicht gefunden.")
+
+    # Volleigenständige Seite (ohne Kurs-Tab-Leiste): Kontext manuell bauen
+    ctx = {
+        "request": request,
+        "page_title": f"{deck.title} — Präsentation",
+        "current_user": _user_ctx(user, role.value if role else "ADMIN"),
+        "courses": _get_user_courses(user, session),
+        "selected_course_id": course_id,
+        "is_admin": is_admin,
+        "course": {
+            "id": course.id,
+            "name": course.name,
+            "description": course.description,
+            "semester": course.semester,
+        },
+        "deck": {
+            "id": deck.id,
+            "title": deck.title,
+            "is_visible": deck.is_visible,
+        },
+        "is_tutor": is_tutor,
+    }
+    ctx.update(_slides_theme_ctx(session, course_id))
+    return templates.TemplateResponse("course/slides_present.html", ctx)
 
 
 @app.get("/courses/{course_id}/media")

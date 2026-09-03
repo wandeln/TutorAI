@@ -1,0 +1,781 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Folien (Reveal.js): Theme-Variablen, Folien-Layout, Typografie,
+   Kacheln (Deck-Übersicht), Präsentations-Shell + PDF-Druck.
+
+   Die Theme-Variablen (--slides-*) werden pro Seite inline gesetzt
+   (<style>:root { … }</style>, siehe main._slides_theme_ctx()).
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --slides-primary: #1d4ed8;
+  --slides-accent: #2563eb;
+  --slides-bg: #ffffff;
+  --slides-text: #1f2937;
+  --slides-font-scale: 1;
+  --slides-aspect: 1.7778; /* 16:9 — pro Kurs per Theme überschrieben */
+}
+
+/* ─── Reveal-Basis (Canvas 960×700 wird von Reveal gemaßstabskalibriert) ─── */
+
+.reveal {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: calc(28px * var(--slides-font-scale, 1));
+  color: var(--slides-text, #1f2937);
+  background-color: var(--slides-bg, #ffffff);
+}
+
+.reveal.theme-serif,
+.slides-canvas.theme-serif {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+/* Folien-Sections: volle Höhe + Innenabstand.
+   Reveal läuft mit center:false — es wird kein inline style.top gesetzt und
+   der Inhalt bleibt oben angedockt (konstante Titel-Höhe auf allen Folien).
+   height:100% sorgt zusätzlich dafür, dass die Fußzeile (position:absolute,
+   bottom) immer am Folien-Rand sitzt. */
+.reveal .slides > section {
+  height: 100% !important;
+  padding: 1.5em 2.5em;
+  box-sizing: border-box;
+  text-align: left; /* Default-Layout (topleft): linksbündig */
+}
+
+/* layout: center (Titelfolien) — vertikal + horizontal zentriert.
+   Nur .present, damit Reveal's display:none für inaktive Folien erhalten
+   bleibt. display:flex braucht !important: Reveal setzt auf der aktiven
+   Folie inline "display: block" (überschreibt die CSS-Regel ohne !important). */
+.reveal .slides > section.present.layout-center {
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.reveal .slides > section.layout-center {
+  text-align: center;
+}
+
+/* Listen im Center-Layout: Shrink-to-fit + zentriert → Bullet-Punkte
+   stehen direkt neben dem (zentrierten) Text statt linksbündig.
+   Das <li> muss MITSCHRUMPEN: sonst behält der kürzere Eintrag die Breite
+   der ganzen Liste und der Bullet steht detached links neben dem
+   zentrierten Text. */
+:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ul,
+:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview ol {
+  width: fit-content;
+  margin-inline: auto;
+  /* !important: schlägt die generische Slide-Listenregel (padding-left: 1.4em
+     !important) — das asymmetrische Padding würde die Zentrierung verschieben. */
+  padding-inline: 0 !important;
+}
+
+:is(.reveal .slides > section.layout-center, .slides-canvas.layout-center, html.print-pdf .reveal .slides .pdf-page > section.layout-center) .markdown-preview li {
+  width: fit-content;
+  margin-inline: auto;
+}
+
+/* Zweispaltige Folien (layout: twocol). Die Überschrift (falls vorhanden)
+   steht als .slides-twocol-header VOR dem Grid und spannt so über beide
+   Spalten (renderSlideInto in slides.js). */
+.slides-twocol {
+  display: flex;
+  gap: 2.5em;
+  width: 100%;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.slides-twocol .slides-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* ─── Fußzeile & Logo ─────────────────────────────────────────── */
+
+/* Fußzeile am .slides-Canvas statt am Section: Reveal skaliert das
+   .slides-Element selbst (Transform + width/height), während Sections bei
+   Transitions transformiert werden — so wandert der Footer nie mit.
+   Die Sections behalten data-footer für den PDF-Export (s. print-pdf unten). */
+.reveal .slides[data-footer]::after {
+  content: attr(data-footer);
+  position: absolute;
+  bottom: 0.45em;
+  left: 2.5em;
+  right: 2.5em;
+  font-size: 0.32em;
+  line-height: 1.2;
+  color: var(--slides-text, #1f2937);
+  opacity: 0.55;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* On-Screen: Section-::after aus (das Canvas-::after zeigt den Footer) */
+.reveal .slides > section[data-footer]::after {
+  content: none;
+}
+
+/* PDF-Export: .slides wird static und die Sections in .pdf-page-Boxen
+   umgehängt → Canvas-::after fehlplatziert; Footer wieder am Section
+   (.pdf-page ist position:relative → Bezugspunkt für die absolute Position). */
+html.print-pdf .reveal .slides[data-footer]::after {
+  content: none;
+}
+html.print-pdf .reveal .slides .pdf-page > section[data-footer]::after {
+  content: attr(data-footer);
+  position: absolute;
+  bottom: 0.45em;
+  left: 2.5em;
+  right: 2.5em;
+  font-size: 0.32em;
+  line-height: 1.2;
+  color: var(--slides-text, #1f2937);
+  opacity: 0.55;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Logo (Section-::before): Größe per --slides-logo-scale (Theme), Ecke per
+   .slides-logo-<ecke>-Klasse auf .reveal (Theme logo_position, Default:
+   oben rechts). Das Logo liegt hinter dem Folieninhalt (s. z-Index-Regel).
+   Die html.print-pdf-Variante gilt für den PDF-Export, wo die Sections in
+   .pdf-page-Boxen hängen (setupPDF) und ".slides > section" nicht matcht. */
+.reveal.slides-has-logo .slides > section::before,
+html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section::before {
+  content: "";
+  position: absolute;
+  top: 0.6em;
+  right: 2.5em;
+  width: calc(2.6em * var(--slides-logo-scale, 1));
+  height: calc(2.6em * var(--slides-logo-scale, 1));
+  background: var(--slides-logo) center / contain no-repeat;
+  pointer-events: none;
+  z-index: 1; /* im PDF über dem Folien-Hintergrund (.tutorai-slide-bg, z-index:0); live: natives Bg liegt hinter .slides */
+}
+
+/* Folieninhalt über dem Logo (Logo ganz im Hintergrund). */
+.reveal.slides-has-logo .slides > section > *,
+html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Eckpositionen (Default = oben rechts, s. Basisregel). Bottom-Varianten
+   sitzen unter der Footer-Zeile (bottom: 0.45em). */
+.reveal.slides-logo-top-left .slides > section::before,
+html.print-pdf .reveal.slides-logo-top-left .slides .pdf-page > section::before {
+  top: 0.6em;
+  left: 2.5em;
+  right: auto;
+}
+
+.reveal.slides-logo-bottom-right .slides > section::before,
+html.print-pdf .reveal.slides-logo-bottom-right .slides .pdf-page > section::before {
+  top: auto;
+  bottom: 0.9em;
+}
+
+.reveal.slides-logo-bottom-left .slides > section::before,
+html.print-pdf .reveal.slides-logo-bottom-left .slides .pdf-page > section::before {
+  top: auto;
+  bottom: 0.9em;
+  left: 2.5em;
+  right: auto;
+}
+
+/* ─── Folien-Hintergrund (Richtlinie background: ![Titel](…)) ─────
+   Präsentation/Vorschau: Reveal's natives Hintergrund-System
+   (data-background-image / data-background-iframe) → deckt den ganzen
+   Viewport ab, auch die Letterbox. .html-Applets sind per
+   data-background-interactive klickbar (Reveal blendet dafür die
+   Pointer-Interaktion mit dem Folieninhalt auf dieser Folie aus).
+   ?print-pdf: Reveal's Bg-System ist im Druck ausgeblendet → dort liegt
+   das Bg als Element in der Folie (pro PDF-Seite, object-fit: cover;
+   .html = interaktives Applet, damit vor dem Druck Einstellungen
+   angepasst werden können). Absolute Position → nicht Flex-Item der
+   Zentrierung (layout: center). */
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border: 0;
+  z-index: 0;
+}
+
+/* Folieninhalt über dem Hintergrund (ein positioniertes Element würde
+   sonst in-flow-Content übermalen). */
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutorai-slide-bg) {
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── Highlight-Box (@box:highlight) ────────────────────────────────
+   Headless-Variante der Hinweis-Boxen (kein Icon/Überschrift-Kopf),
+   z. B. um Titel auf Deckslides hervorzuheben: transparente Box in der
+   Primärfarbe + Blur. @boxcolor:<farbe> übersteuert die Farbe per
+   Inline-Style (background-color), das hier diese Regel überlagert.
+   backdrop-filter übersteht echte PDF-Drucke nicht — der Farbton
+   (20 % Alpha) bleibt sichtbar. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-highlight {
+  border: 0;
+  border-radius: 0.6em;
+  padding: 1em 1.5em;
+  margin: 0.4em 0;
+  background: color-mix(in srgb, var(--slides-primary, #1d4ed8) 20%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* ─── Typografie innerhalb der Folien ─────────────────────────────
+   Überschreibt die hellen rem-basierten .markdown-preview-Regeln aus
+   main.css — hier: em-basiert (skaliert mit --slides-font-scale) und
+   theme-farben via CSS-Variablen (funktioniert für alle Templates). */
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview {
+  font-size: 1em !important;
+  font-weight: 400 !important;
+  color: var(--slides-text, #1f2937) !important;
+  line-height: 1.45 !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview > :first-child {
+  margin-top: 0 !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h1 {
+  font-size: 2em !important;
+  font-weight: 800 !important;
+  color: var(--slides-primary, #1d4ed8) !important;
+  margin-top: 0 !important;
+  margin-bottom: 0.4em !important;
+  line-height: 1.25 !important;
+  border-bottom: 0.05em solid var(--slides-accent, #2563eb) !important;
+  padding-bottom: 0.15em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h2 {
+  font-size: 1.6em !important;
+  font-weight: 700 !important;
+  color: var(--slides-primary, #1d4ed8) !important;
+  margin-top: 0.6em !important;
+  margin-bottom: 0.35em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h3 {
+  font-size: 1.3em !important;
+  font-weight: 700 !important;
+  color: var(--slides-text, #1f2937) !important;
+  margin-top: 0.5em !important;
+  margin-bottom: 0.3em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h4 {
+  font-size: 1.1em !important;
+  font-weight: 700 !important;
+  color: var(--slides-text, #1f2937) !important;
+}
+
+/* h5/h6: dezent (Titelunterschriften wie „Autor — Datum"); je tiefer
+   das Heading, desto blasser (h5 → 0.6, h6 → 0.45). */
+:is(.reveal .slides, .slides-canvas) .markdown-preview h5,
+:is(.reveal .slides, .slides-canvas) .markdown-preview h6 {
+  font-size: 1em !important;
+  font-weight: 600 !important;
+  color: var(--slides-text, #1f2937) !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h5 {
+  opacity: 0.6;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview h6 {
+  opacity: 0.45;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview p {
+  font-size: 0.95em !important;
+  margin-bottom: 0.55em !important;
+  color: var(--slides-text, #1f2937) !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview ul,
+:is(.reveal .slides, .slides-canvas) .markdown-preview ol {
+  font-size: 0.95em !important;
+  margin-bottom: 0.55em !important;
+  margin-top: 0.15em !important;
+  padding-left: 1.4em !important;
+  color: var(--slides-text, #1f2937) !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview li {
+  margin-bottom: 0.25em !important;
+  color: var(--slides-text, #1f2937) !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview li::marker {
+  color: var(--slides-accent, #2563eb) !important;
+}
+
+/* Formel-Nummern-Links (.tutorai-eq-num) ausgenommen — die sehen wie
+   normale (nicht verlinkte) Formel-Nummern aus, s. u. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview a:not(.tutorai-eq-num) {
+  color: var(--slides-accent, #2563eb) !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview code {
+  font-size: 0.8em !important;
+  background: rgba(127, 127, 127, 0.15) !important;
+  border: 1px solid rgba(127, 127, 127, 0.35) !important;
+  border-radius: 0.25em !important;
+  padding: 0.1em 0.35em !important;
+  color: var(--slides-accent, #2563eb) !important;
+  font-weight: 400 !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview pre {
+  font-size: 0.78em !important;
+  margin-top: 0.4em !important;
+  margin-bottom: 0.55em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview pre code {
+  font-size: 1em !important;
+  padding: 0.9em 1.1em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview blockquote {
+  border-left: 0.12em solid var(--slides-primary, #1d4ed8) !important;
+  background: rgba(127, 127, 127, 0.1) !important;
+  color: var(--slides-text, #1f2937) !important;
+  padding: 0.5em 1em !important;
+  margin: 0.3em 0 0.55em !important;
+  font-size: 0.95em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview hr {
+  border: none !important;
+  border-top: 0.05em solid rgba(127, 127, 127, 0.5) !important;
+  margin: 0.8em 0 !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview table {
+  font-size: 0.85em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview th {
+  background: rgba(127, 127, 127, 0.15) !important;
+  border: 1px solid rgba(127, 127, 127, 0.4) !important;
+  color: var(--slides-text, #1f2937) !important;
+  padding: 0.4em 0.7em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview td {
+  border: 1px solid rgba(127, 127, 127, 0.4) !important;
+  color: var(--slides-text, #1f2937) !important;
+  padding: 0.4em 0.7em !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview img {
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 7em !important;
+  border-radius: 0.3em !important;
+}
+
+/* Applet-Iframes: Höhe dämpfen (Renderer setzt inline 150–600 px) */
+:is(.reveal .slides, .slides-canvas) .tutorai-applet {
+  width: 100% !important;
+  max-height: 9em !important;
+  border-radius: 0.4em;
+}
+
+/* Gezoomtes Applet OHNE explizites {.height}: dieselbe Default-Max-Höhe
+   wie ohne Zoom (9em). Die Cap gilt für die Iframe-Layout-Box; transform:
+   scale(--tz) vergrößert sie sichtbar, daher Teilung durch den Faktor
+   (--tz setzt der Renderer inline). Ergebnis: sichtbare Höhe = 9em,
+   identisch zum zoomlosen Default; darüber scrollt das Applet intern. */
+:is(.reveal .slides, .slides-canvas) .tutorai-applet[data-zoom]:not([data-max-h]) {
+  max-height: calc(9em / var(--tz, 1)) !important;
+}
+
+/* Wrapper für gezoomte Applets ({.zoom=X}): transform skaliert den Iframe-
+   Inhalt, der Wrapper schneidet auf die sichtbare (geskalte) Höhe ab, die
+   das Auto-Sizing (postMessage) live aktualisiert. line-height:0 verhindert
+   den Baseline-Spalt unter dem Iframe.
+   Das Element ist ein <span> (kein div, s. markdown-renderer.js): erst
+   parse-inline bleibt er im umgebenden <p> (CSS display wirkt nicht auf
+   das Parsing) und erbt dessen font-size (0.95em) — die em-basierte
+   Default-Max-Höhe (9em) entspricht damit exakt der zoomlosen Default-
+   Höhe am selben Ort. display:inline-block + width:100% füllt trotzdem
+   die gesamte Spaltenbreite, wie ein block-Element. */
+.tutorai-applet-zoom {
+  display: inline-block;
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview .katex-display {
+  margin: 0.5em 0 !important;
+}
+
+/* Gleichungs-Nummer: skaliert mit der Folie (em statt rem aus main.css) */
+:is(.reveal .slides, .slides-canvas) .tutorai-equation .tutorai-eq-num {
+  font-size: 0.9em;
+  color: var(--slides-text, #1f2937);
+  opacity: 0.7;
+}
+
+/* … und als Link, wenn das Label im Skript existiert (Klick → Skript).
+   Sieht exakt wie eine normale (nicht verlinkte) Formel-Nummer aus —
+   der Verweis ist erst beim Hover erkennbar. (!important gegen die
+   globale Skript-Regel .markdown-preview a aus main.css) */
+:is(.reveal .slides, .slides-canvas) .tutorai-equation a.tutorai-eq-num {
+  color: var(--slides-text, #1f2937) !important;
+  opacity: 0.7;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+
+:is(.reveal .slides, .slides-canvas) .tutorai-equation a.tutorai-eq-num:hover {
+  text-decoration: underline !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview .mermaid-diagram svg {
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: 8em !important;
+}
+
+/* ─── Kacheln (Deck-Übersicht + Design-Vorschau) ─────────────────
+   Vorschau: Folie wird in 960×(960/Ratio) gerendert und per transform
+   auf die Kachelbreite skaliert (slides.js). */
+
+.slides-thumb {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: var(--slides-aspect, 1.7778);
+  background: var(--slides-bg, #ffffff);
+  color: var(--slides-text, #1f2937);
+}
+
+.slides-thumb-scaler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+
+.slides-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 1.5em 2.5em;
+  box-sizing: border-box;
+  text-align: center;
+  font-size: calc(28px * var(--slides-font-scale, 1));
+  /* Basis-Font wie in der Präsentation (.reveal-Regel oben): das Canvas ist
+     kein .reveal-Element und würde sonst die Seiten-Schriftart erben.
+     Die serif-Variante (.slides-canvas.theme-serif) hat höhere Spezifität. */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+.slides-canvas.layout-topleft {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* twocol: wie in der Präsentation linksbündig (sonst erbt die Kachel die
+   .slides-canvas-Zentrierung — der Vollbreiten-Header würde anders
+   ausgerichtet als in der Präsentation). */
+.slides-canvas.layout-twocol {
+  text-align: left;
+}
+
+.slides-canvas .markdown-preview {
+  width: 100%;
+}
+
+.slides-canvas .slides-twocol {
+  align-items: center;
+}
+
+/* Deck-Editor (course/slides_edit.html): Zweispaltige Vorschau-Karte */
+.slides-card-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+/* ─── Editor-Vorschau (course/slides_edit.html) ──────────────────
+   Echte eingebettete Reveal-Präsentation (Mini-Fenster, klickbar
+   durchblättern) statt scrollender Thumbnail-Liste. */
+
+.slides-preview-shell {
+  position: relative;
+  aspect-ratio: var(--slides-aspect, 1.7778);
+  overflow: hidden;
+  background: var(--slides-bg, #ffffff);
+  border-radius: 0.5rem;
+}
+
+.slides-preview-shell .reveal {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Steuerelemente/Foliennummer im kleinen Preview-Fenster dezenter */
+.slides-preview-shell .reveal .controls {
+  opacity: 0.5;
+}
+
+.slides-preview-shell .reveal .controls:hover {
+  opacity: 1;
+}
+
+.slides-preview-shell .reveal .slide-number {
+  font-size: 0.28em;
+}
+
+/* Kacheln in slides.html (Deck-Übersicht): echte Reveal-Mini-Präsentation
+   (.slides-preview-shell) + Empty-State für leere Decks. */
+.deck-preview .deck-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+  color: #9ca3af;
+  font-size: 0.85rem;
+  background: var(--slides-bg, #fff);
+}
+
+.deck-preview.has-slides .deck-preview-empty {
+  display: none;
+}
+
+.deck-preview:not(.has-slides) .reveal {
+  display: none;
+}
+
+/* ─── Präsentations-Shell (course/slides_present.html) ─────────── */
+
+body.present-mode {
+  overflow: hidden;
+}
+
+body.present-mode > nav,
+body.present-mode > footer {
+  display: none;
+}
+
+/* Vollbild-Button in der Toolbar */
+body.present-mode .present-toolbar #fullscreen-btn {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: inherit;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+body.present-mode .present-toolbar #fullscreen-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+body.present-mode main {
+  display: flex;
+  flex-direction: column;
+  padding: 0 !important;
+  max-width: none !important;
+  width: 100%;
+}
+
+body.present-mode .present-toolbar {
+  flex: 0 0 3rem;
+  /* Standard: ausgeblendet — die Leiste erscheint nur in der Reveal-Overview
+     (Esc), damit die Präsentation sauber nur die Folien zeigt. Das
+     Toggling macht slides_present.html (overviewshown/overviewhidden). */
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 0.9rem;
+  z-index: 30;
+}
+
+body.present-mode .present-toolbar.visible {
+  display: flex;
+}
+
+body.present-mode .present-toolbar a {
+  color: inherit;
+  text-decoration: none;
+  padding: 0.3rem 0.6rem;
+  border-radius: 0.4rem;
+  white-space: nowrap;
+}
+
+body.present-mode .present-toolbar a:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+body.present-mode .present-toolbar .present-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+body.present-mode .present-shell {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--slides-bg, #ffffff);
+}
+
+body.present-mode .present-shell .reveal {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Folien-Nummer (slideNumber: true) — themenkonform statt Reveal-Default
+   (Default: 12px weiß auf rgba(0,0,0,.4)). */
+.reveal .slide-number {
+  right: 8px;
+  bottom: 8px;
+  font-size: 0.34em;
+  color: var(--slides-text, #1f2937);
+  background: transparent;
+  opacity: 0.55;
+  padding: 0.2em 0.4em;
+}
+
+/* Fehler-/Leer-Meldungen in der Präsentation */
+.present-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 1.1rem;
+}
+
+/* ─── PDF-Druck (?print-pdf) ─────────────────────────────────────
+   Reveal setzt html.print-pdf, erzwingt Body 960×700 (+margin) und
+   injiziert @page. Wir müssen nur die App-Chrome-Elemente ausblenden
+   und die Shell entfixieren. */
+
+/* PDF-Export: In print-pdf hängen die Sections in .pdf-page-Boxen
+   (setupPDF in reveal.js) → die ".slides > section"-Regeln oben matchen
+   nicht. Entsprechung: Seitenrand + Textausrichtung. (Die exakte
+   Seiten-/Folien-Geometrie — Höhe, Zentrierung — setzt fixPdfLayout() in
+   slides_present.html, weil Reveal sie aus gemessenen Scroll-Heights
+   rechnet und den Sections keine feste Höhe gibt.) */
+html.print-pdf .reveal .slides .pdf-page > section {
+  padding: 1.5em 2.5em !important; /* reveal.css: padding:0 !important — wie on-screen (section) */
+  text-align: left;
+  box-sizing: border-box;
+}
+
+/* layout: center im PDF: wie on-screen vertikal + horizontal zentriert.
+   display:flex !important schlägt html.print-pdf .reveal .slides section
+   (display:block !important) — beide !important, hier höhere Spezifität. */
+html.print-pdf .reveal .slides .pdf-page > section.layout-center {
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+/* print-pdf am Bildschirm: Seiten stapeln sich im normalen Flow → die
+   Seite ist nach unten scrollbar, damit Applets (Hintergründe, Folien)
+   interaktiv bedient/gestimmt werden können, bevor gedruckt wird.
+   Override nötig: body.present-mode { overflow:hidden } und
+   html.print-pdf .reveal { overflow:hidden!important } (reveal.css,
+   !important) würden alles in die erste Viewport-Höhe clippen; hier
+   jeweils höhere Spezifität. (setupPDF setzt body height inline auf eine
+   Seite — das clippt nur bei overflow:hidden, daher harmlos.) */
+html.print-pdf body.present-mode {
+  display: block;
+  overflow: visible !important;
+}
+
+html.print-pdf body.present-mode main {
+  display: block;
+  width: auto;
+}
+
+html.print-pdf body.present-mode .present-shell {
+  position: static;
+  flex: none;
+  min-height: 0;
+  height: auto;
+  background: transparent;
+}
+
+html.print-pdf body.present-mode .present-shell .reveal {
+  position: static;
+  inset: auto;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+@media print {
+  body.present-mode {
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  body.present-mode > nav,
+  body.present-mode > footer,
+  body.present-mode .present-toolbar {
+    display: none !important;
+  }
+
+  body.present-mode main {
+    display: block;
+    width: auto;
+  }
+
+  body.present-mode .present-shell {
+    position: static;
+    flex: none;
+    min-height: 0;
+    height: auto;
+    background: transparent;
+  }
+
+  body.present-mode .present-shell .reveal {
+    position: static;
+    inset: auto;
+    width: auto;
+    height: auto;
+  }
+}

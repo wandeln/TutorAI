@@ -1,0 +1,15 @@
+{
+  "name": "tutorai-reveal-build",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Buildt die lesbare (nicht minifizierte) UMD-Version von reveal.js 4.6.0 nach ../reveal.js",
+  "scripts": {
+    "build": "node sync-overrides.mjs && rollup -c"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.3.0",
+    "fitty": "^2.4.1",
+    "reveal.js": "4.6.0",
+    "rollup": "^4.24.0"
+  }
+}

@@ -1,0 +1,590 @@
+{% extends "course/base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tab "Folien": Slide-Decks als Kacheln.
+
+   Kontext (von _course_tab_context + main.slides_page):
+     decks: [{id, title, is_visible, slide_count, updated_at}]
+     slides_theme / slides_theme_css / slides_theme_templates /
+     slides_footer_text / slides_has_logo  (aus _slides_theme_ctx)
+
+   Kachel-Vorschau: echte eingebettete Reveal-Präsentation pro Deck
+   (durchklickbar); leere Decks zeigen einen Empty-State.
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block extra_head %}
+{# reveal.css vor slides.css: reveal.css ist auf .reveal beschränkt; als Reset
+   reicht Tailwinds Preflight (kein eigenes reset.css nötig). #}
+<link rel="stylesheet" href="{{ asset('vendor/reveal/reveal.css') }}">
+<link rel="stylesheet" href="{{ asset('css/slides.css') }}">
+{# Pro-Kurs-Theme-Werte MÜSSEN nach slides.css geladen werden, da slides.css
+   eigene :root-Defaults definiert und bei gleicher Spezifität die
+   Source-Order gewinnt. #}
+<style>:root { {{ slides_theme_css | safe }} }</style>
+<script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
+<script src="{{ asset('js/slides.js') }}"></script>
+{% endblock %}
+
+{% block course_content %}
+
+<!-- Kopfzeile -->
+<div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
+  <div class="flex items-baseline gap-2">
+    <h2 class="text-lg font-bold text-gray-800">Folien</h2>
+    <span class="text-sm text-gray-400">{{ decks | length }} Deck{{ "s" if decks | length != 1 }}</span>
+  </div>
+  {% if is_tutor or is_admin %}
+  <div class="flex gap-2">
+    <button onclick="openThemeModal()"
+            class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50 transition">
+      🎨 Design
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Kachel-Raster -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4" id="deck-grid">
+  {% for d in decks %}
+  <div class="group bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:shadow-md transition"
+       data-deck-id="{{ d.id }}">
+    <div class="slides-preview-shell deck-preview" data-deck-preview="{{ d.id }}">
+      <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}">
+        <div class="slides" id="deck-preview-slides-{{ d.id }}"></div>
+      </div>
+      <div class="deck-preview-empty">Leeres Deck</div>
+    </div>
+    <div class="p-4">
+      <div class="flex items-center justify-between gap-2">
+        <a href="/courses/{{ course.id }}/slides/{{ d.id }}{% if not (is_tutor or is_admin) %}/present{% endif %}"
+           class="font-semibold text-gray-800 hover:text-blue-600 transition">{{ d.title }}</a>
+      </div>
+      <div class="flex items-center gap-2 mt-1 text-xs text-gray-400">
+        <span>📄 {{ d.slide_count }} Folien</span>
+        {% if d.updated_at %}<span>· {{ d.updated_at[:10] }}</span>{% endif %}
+      </div>
+      <div class="flex items-center gap-1.5 mt-3">
+        <a href="/courses/{{ course.id }}/slides/{{ d.id }}/present"
+           class="text-xs bg-blue-600 text-white rounded-lg px-2.5 py-1.5 hover:bg-blue-700 transition font-semibold">
+          ▶
+        </a>
+        <a href="/courses/{{ course.id }}/slides/{{ d.id }}/present?print-pdf" target="_blank"
+           class="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 text-gray-600 hover:bg-gray-50 transition"
+           title="Als PDF herunterladen">⬇️</a>
+        {% if is_tutor or is_admin %}
+        <a href="/courses/{{ course.id }}/slides/{{ d.id }}"
+           class="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 text-gray-600 hover:bg-gray-50 transition"
+           title="Bearbeiten">✏️</a>
+        <button onclick="toggleDeckVisibility({{ d.id }}, {{ 'true' if d.is_visible else 'false' }})"
+                class="text-xs border border-gray-300 rounded-lg px-2.5 py-1.5 transition inline-flex items-center justify-center p-1.5 rounded"
+                title="{% if d.is_visible %}Verstecken{% else %}Einblenden{% endif %}"
+                style="color: {% if d.is_visible %}#9ca3af{% else %}#d1d5db{% endif %};">
+          {% if d.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </button>
+        {% endif %}
+        {% if is_prof or is_admin %}
+        <button onclick="deleteDeck({{ d.id }})"
+                class="text-xs border border-red-200 rounded-lg px-2.5 py-1.5 text-red-600 hover:bg-red-50 transition"
+                title="Löschen">🗑️</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if is_tutor or is_admin %}
+  <!-- Anlegen-Kachel -->
+  <button onclick="createDeck()"
+          class="min-h-[260px] flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+    <span class="text-3xl">＋</span>
+    <span class="text-sm font-medium">Neues Deck anlegen</span>
+  </button>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const decks = {{ decks | tojson }};
+  const theme = {{ slides_theme | tojson }};
+  const templateDefaults = {{ slides_theme_templates | tojson }};
+  const ASPECTS = {{ slides_aspect_ratios | tojson }};
+
+  // ─── Kachel-Vorschauen (echte Reveal-Mini-Präsentation je Deck) ──
+
+  const FOOTER_TEXT = {{ slides_footer_text | tojson }};
+  const FOOTER_ENABLED = {{ "true" if slides_theme.footer else "false" }};
+  const FOOTER = FOOTER_ENABLED && FOOTER_TEXT ? FOOTER_TEXT : null;
+  const RATIO = (theme && theme.aspect_value) || 16 / 9;
+  const TILE_W = 960;
+  const TILE_H = Math.round(TILE_W / RATIO);
+
+  for (const d of decks) {
+    const shell = document.querySelector(`[data-deck-preview="${d.id}"]`);
+    if (!shell) continue;
+    fetch(`/api/courses/${courseId}/materials/${d.id}`, { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(async (data) => {
+        if (!data) return;
+        const slides = parseSlides(data.content || "");
+        if (slides.length === 0) return; // Empty-State bleibt sichtbar
+        const slidesEl = shell.querySelector(".slides");
+        if (FOOTER) slidesEl.setAttribute("data-footer", FOOTER);
+        for (const slide of slides) {
+          slidesEl.appendChild(await buildSlideSection(slide, FOOTER));
+        }
+        shell.classList.add("has-slides");
+        // Echte (eingebettete) Reveal-Instanz: durchklickbar, keine globalen
+        // Tastatur-Bindings (mehrere Instanzen pro Seite).
+        const reveal = new Reveal(shell.querySelector(".reveal"), {
+          embedded: true,
+          keyboard: false,
+          controls: true,
+          controlsTutorial: false,
+          progress: false,
+          center: false,
+          transition: "none",
+          slideNumber: true,
+          hash: false,
+          history: false,
+          width: TILE_W,
+          height: TILE_H,
+          autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+        });
+        await reveal.initialize();
+      })
+      .catch(() => {});
+  }
+
+  // ─── Deck-Verwaltung ────────────────────────────────────────────
+
+  window.createDeck = async function () {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Neues Deck",
+          material_type: "slides",
+          content: "",
+          is_visible: false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Anlegen.", "error");
+        return;
+      }
+      window.location.href = `/courses/${courseId}/slides/${data.material.id}`;
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  };
+
+  window.toggleDeckVisibility = async function (deckId, visible) {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${deckId}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_visible: !visible }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler.", "error");
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  };
+
+  window.deleteDeck = function (deckId) {
+    // Titel aus dem vorhandenen decks-Array auflösen (nicht per tojson im
+    // onclick-Attribute übergeben – Anführungszeichen würden das HTML-Attribut
+    // abbrechen).
+    const d = decks.find((x) => x.id === deckId);
+    const title = (d && d.title) || "dieses Deck";
+    if (!confirm(`Slide-Deck "${title}" wirklich löschen?`)) return;
+    fetch(`/api/courses/${courseId}/materials/${deckId}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    })
+      .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) throw new Error(d.detail || "Fehler beim Löschen.");
+        window.location.reload();
+      })
+      .catch((err) => showToast(err.message, "error"));
+  };
+
+  // ─── Design-Modal (Theme pro Kurs) ──────────────────────────────
+
+  const themeState = {
+    template: theme.template,
+    colors: { ...theme.colors },
+    font_scale: theme.font_scale,
+    footer: theme.footer,
+    logo_media_id: theme.logo_media_id,
+    logo_position: theme.logo_position,
+    logo_scale: theme.logo_scale,
+    aspect_ratio: theme.aspect_ratio,
+    aspect_value: theme.aspect_value,
+  };
+  let previewReveal = null;
+  let previewAspect = null;
+  // Media-ID → URL (vom Medien-Fetch befüllt, PROF/Admin): für die
+  // Live-Logo-Vorschau im Design-Modal (applyPreview).
+  const logoUrls = {};
+
+  function syncThemeInputs() {
+    for (const key of ["primary", "accent", "background", "text"]) {
+      const el = document.getElementById("tm-color-" + key);
+      if (el) el.value = themeState.colors[key];
+    }
+    const scale = document.getElementById("tm-scale");
+    if (scale) {
+      scale.value = themeState.font_scale;
+      const val = document.getElementById("tm-scale-val");
+      if (val) val.textContent = String(parseFloat(themeState.font_scale)) + "×";
+    }
+    const aspect = document.getElementById("tm-aspect");
+    if (aspect) aspect.value = themeState.aspect_ratio;
+    const footer = document.getElementById("tm-footer");
+    if (footer) footer.checked = !!themeState.footer;
+    const logo = document.getElementById("tm-logo");
+    if (logo) logo.value = themeState.logo_media_id || "";
+    const logoPos = document.getElementById("tm-logo-pos");
+    if (logoPos) logoPos.value = themeState.logo_position;
+    const logoScale = document.getElementById("tm-logo-scale");
+    if (logoScale) {
+      logoScale.value = themeState.logo_scale;
+      const val = document.getElementById("tm-logo-scale-val");
+      if (val) val.textContent = String(parseFloat(themeState.logo_scale)) + "×";
+    }
+    document.querySelectorAll(".theme-card").forEach((btn) => {
+      const active = btn.dataset.tmpl === themeState.template;
+      btn.classList.toggle("ring-2", active);
+      btn.classList.toggle("ring-blue-500", active);
+    });
+  }
+
+  async function applyPreview() {
+    const el = document.getElementById("theme-preview");
+    if (!el) return;
+    const root = el.querySelector(".reveal");
+    // Theme-Variables auf dem Vorschau-Container (überschreiben die
+    // :root-Werte aus dem <style>-Block der Seite).
+    el.style.setProperty("--slides-primary", themeState.colors.primary);
+    el.style.setProperty("--slides-accent", themeState.colors.accent);
+    el.style.setProperty("--slides-bg", themeState.colors.background);
+    el.style.setProperty("--slides-text", themeState.colors.text);
+    el.style.setProperty("--slides-font-scale", themeState.font_scale);
+    el.style.setProperty("--slides-aspect", String(themeState.aspect_value));
+    el.style.setProperty("--slides-logo-scale", String(themeState.logo_scale));
+    // Live-Logo-Vorschau: die Auswahl wird auf der Vorschau selbst
+    // überschrieben (URL aus logoUrls, "none" entfernt das Logo). Ohne
+    // geladene logoUrls (Fetch noch offen) bleibt der :root-Wert wirksam —
+    // die gespeicherte Logo-Auswahl wird dann angezeigt.
+    if (themeState.logo_media_id) {
+      const url = logoUrls[themeState.logo_media_id];
+      if (url) el.style.setProperty("--slides-logo", 'url("' + url + '")');
+      else el.style.setProperty("--slides-logo", "none");
+    } else {
+      el.style.setProperty("--slides-logo", "none");
+    }
+    root.className =
+      "reveal" +
+      (themeState.template ? " theme-" + themeState.template : "") +
+      (themeState.logo_media_id
+        ? " slides-has-logo slides-logo-" + themeState.logo_position
+        : "");
+    // Gleiche Vorschau wie Kacheln/Editor: echte eingebettete Reveal-Instanz
+    // (Beispiel-Folie). Neu gebaut wird nur bei Seitenverhältnis-Wechsel
+    // (Reveal braucht dafür neue width/height); Farben/Schrift/Logo/Footer
+    // wirken live über CSS-Variables, Klassen und data-footer.
+    if (previewAspect !== themeState.aspect_value) {
+      previewAspect = themeState.aspect_value;
+      if (previewReveal) {
+        try { previewReveal.destroy(); } catch (e) { /* ältere Instanz */ }
+        previewReveal = null;
+      }
+      const slidesEl = el.querySelector(".slides");
+      slidesEl.innerHTML = "";
+      const W = 960;
+      const H = Math.round(W / themeState.aspect_value);
+      const slide = parseSlides(
+        "# Beispiel-Folie\n\nEin Absatz mit **fett** und $E = mc^2$.\n\n- Punkt eins\n- Punkt zwei"
+      )[0];
+      slidesEl.appendChild(await buildSlideSection(slide, null));
+      previewReveal = new Reveal(root, {
+        embedded: true,
+        keyboard: false,
+        controls: true,
+        controlsTutorial: false,
+        progress: false,
+        center: false,
+        transition: "none",
+        slideNumber: true,
+        hash: false,
+        history: false,
+        width: W,
+        height: H,
+        autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+      });
+      await previewReveal.initialize();
+    }
+    // Footer am Canvas (data-footer) — ohne Rebuild umschaltbar.
+    const slidesEl = el.querySelector(".slides");
+    if (themeState.footer && FOOTER_TEXT) {
+      slidesEl.setAttribute("data-footer", FOOTER_TEXT);
+    } else {
+      slidesEl.removeAttribute("data-footer");
+    }
+  }
+
+  window.openThemeModal = async function () {
+    syncThemeInputs();
+    document.getElementById("theme-modal").classList.remove("hidden");
+    await applyPreview();
+  };
+
+  window.closeThemeModal = function () {
+    document.getElementById("theme-modal").classList.add("hidden");
+  };
+
+  window.pickTemplate = async function (name) {
+    const tpl = templateDefaults[name];
+    if (!tpl) return;
+    themeState.template = name;
+    themeState.colors = {
+      primary: tpl.primary,
+      accent: tpl.accent,
+      background: tpl.background,
+      text: tpl.text,
+    };
+    syncThemeInputs();
+    await applyPreview();
+  };
+
+  window.setColor = async function (key, value) {
+    themeState.colors[key] = value;
+    await applyPreview();
+  };
+
+  window.setScale = async function (value) {
+    themeState.font_scale = parseFloat(value);
+    const val = document.getElementById("tm-scale-val");
+    if (val) val.textContent = String(parseFloat(value)) + "×";
+    await applyPreview();
+  };
+
+  window.setAspect = async function (value) {
+    if (ASPECTS[value]) {
+      themeState.aspect_ratio = value;
+      themeState.aspect_value = ASPECTS[value];
+    }
+    await applyPreview();
+  };
+
+  window.setLogo = function (value) {
+    themeState.logo_media_id = value ? parseInt(value, 10) : null;
+    applyPreview();
+  };
+
+  window.setLogoPosition = async function (value) {
+    themeState.logo_position = value;
+    await applyPreview();
+  };
+
+  window.setLogoScale = async function (value) {
+    themeState.logo_scale = parseFloat(value);
+    const val = document.getElementById("tm-logo-scale-val");
+    if (val) val.textContent = String(parseFloat(value)) + "×";
+    await applyPreview();
+  };
+
+  window.setFooter = async function (checked) {
+    themeState.footer = !!checked;
+    await applyPreview();
+  };
+
+  window.saveTheme = async function () {
+    const payload = {
+      template: themeState.template,
+      colors: themeState.colors,
+      font_scale: themeState.font_scale,
+      footer: themeState.footer,
+      logo_media_id: themeState.logo_media_id,
+      logo_position: themeState.logo_position,
+      logo_scale: themeState.logo_scale,
+      aspect_ratio: themeState.aspect_ratio,
+    };
+    try {
+      const res = await fetch(`/api/courses/${courseId}/slides-theme`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Speichern.", "error");
+        return;
+      }
+      closeThemeModal();
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  };
+
+  // Logo-Auswahl (nur PROF/Admin: Medien-API ist PROF-only —
+  // ungebremst wäre es für Tutor/Student ein 403)
+  {% if is_prof or is_admin %}
+  fetch(`/api/courses/${courseId}/media`, { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : []))
+    .then((media) => {
+      const sel = document.getElementById("tm-logo");
+      if (!sel) return;
+      for (const m of media.filter((m) => m.media_type === "image")) {
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.title;
+        logoUrls[m.id] = m.url;
+        sel.appendChild(opt);
+      }
+      sel.value = themeState.logo_media_id || "";
+    })
+    .catch(() => {});
+  {% endif %}
+})();
+</script>
+
+{% if is_tutor or is_admin %}
+
+<!-- ═══ Design-Modal (Folien-Theme pro Kurs) ═══ -->
+<div id="theme-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[90vh] overflow-y-auto p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-bold text-gray-800">🎨 Folien-Design</h2>
+      <button onclick="closeThemeModal()" class="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Steuerungen -->
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Vorlage</label>
+          <div class="grid grid-cols-4 gap-2">
+            {% for name, tpl in slides_theme_templates.items() %}
+            <button type="button" data-tmpl="{{ name }}" onclick="pickTemplate('{{ name }}')"
+                    class="theme-card border border-gray-200 rounded-lg p-1.5 text-center transition hover:border-blue-400">
+              <span class="block h-8 rounded border border-gray-200 relative overflow-hidden" style="background: {{ tpl.background }}">
+                <span class="absolute top-1.5 left-1.5 right-1.5 h-1.5 rounded-full" style="background: {{ tpl.primary }}"></span>
+                <span class="absolute top-4 left-1.5 right-3 h-1 rounded-full" style="background: {{ tpl.accent }}"></span>
+              </span>
+              <span class="block text-xs mt-1 text-gray-600 capitalize">{{ name }}</span>
+            </button>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          {% set color_labels = {"primary": "Primärfarbe", "accent": "Akzentfarbe", "background": "Hintergrund", "text": "Textfarbe"} %}
+          {% for key, label in color_labels.items() %}
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">{{ label }}</label>
+            <input type="color" id="tm-color-{{ key }}" value="{{ slides_theme.colors[key] }}"
+                   oninput="setColor('{{ key }}', this.value)"
+                   class="w-full h-9 rounded cursor-pointer border border-gray-200 p-1">
+          </div>
+          {% endfor %}
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Textgröße: <span id="tm-scale-val"></span></label>
+          <input type="range" id="tm-scale" min="0.8" max="1.5" step="0.05"
+                 value="{{ slides_theme.font_scale }}" oninput="setScale(this.value)" class="w-full">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Seitenverhältnis</label>
+          <select id="tm-aspect" onchange="setAspect(this.value)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            {% for key, label in slides_aspect_labels.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-gray-400 mt-1">Gilt für Präsentation, Vorschau und PDF.</p>
+        </div>
+
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" id="tm-footer" {% if slides_theme.footer %}checked{% endif %}
+                 onchange="setFooter(this.checked)" class="rounded">
+          Fußzeile „Kurs — Semester“
+        </label>
+
+        {% if is_prof or is_admin %}
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Logo</label>
+          <select id="tm-logo" onchange="setLogo(this.value)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <option value="">— kein Logo —</option>
+          </select>
+          <div class="grid grid-cols-2 gap-3 mt-2">
+            <div>
+              <label class="block text-xs font-medium text-gray-500 mb-1">Position</label>
+              <select id="tm-logo-pos" onchange="setLogoPosition(this.value)"
+                      class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                <option value="top-right">Oben rechts</option>
+                <option value="top-left">Oben links</option>
+                <option value="bottom-right">Unten rechts</option>
+                <option value="bottom-left">Unten links</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-500 mb-1">Größe: <span id="tm-logo-scale-val"></span></label>
+              <input type="range" id="tm-logo-scale" min="0.5" max="2" step="0.1"
+                     value="{{ slides_theme.logo_scale }}" oninput="setLogoScale(this.value)" class="w-full">
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Bilder aus der Medienbibliothek dieses Kurses.</p>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- Live-Vorschau -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Vorschau (Beispiel-Folie)</label>
+        <div id="theme-preview" class="slides-preview-shell border border-gray-200">
+          <div class="reveal" id="theme-preview-reveal">
+            <div class="slides" id="theme-preview-slides"></div>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400 mt-2">
+          Die Vorschau zeigt eine Beispiel-Folie. Kacheln und Präsentationen
+          verwenden dieses Design sofort nach dem Speichern.
+        </p>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 mt-6">
+      <button onclick="closeThemeModal()"
+              class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">Abbrechen</button>
+      <button onclick="saveTheme()"
+              class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">Speichern</button>
+    </div>
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

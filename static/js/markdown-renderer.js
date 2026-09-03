@@ -26,6 +26,10 @@
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
  * Hinweis-Boxen:      @box:{typ} … @endbox        → farbig markierte Box (merksatz/hinweis/bemerkung/
  *                                                            warnung/beispiel; unbekannte Typen = neutrale Box)
+ *                                                            highlight: Box OHNE Kopf (transparent + Blur,
+ *                                                            Primärfarbe), z.B. für Titel auf Deckslides;
+ *                                                            @boxcolor:<farbe> als ERSTE Zeile übersteuert
+ *                                                            die Boxfarbe (#hex/rgb()/CSS-Farbname)
  * Applet-Abbildung:   ![caption](src.html)         → interaktives (sandboxed) Iframe;
  *                                                            mit {#fig:label} nummeriert wie Bilder
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
@@ -98,6 +102,53 @@ const CALLOUT_TYPES = {
   beispiel: { icon: '📎', title: 'Beispiel' },
 };
 
+// ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
+// @box:highlight ist die headless Variante der Hinweis-Boxen (kein
+// Icon/Überschrift-Kopf, Styling in slides.css). Als ERSTE Zeile des
+// Boxinhalts darf @boxcolor:<farbe> die Boxfarbe übersteuern
+// (#rgb/#rrggbb, rgb()/rgba(), klassische CSS-Farbnamen). Der Renderer
+// emittiert eine normalisierte rgba()-Zeile als Inline-Style (überlebt
+// DOMPurify, s. Applet-Styling); ungültige Werte → CSS-Default
+// (Primärfarbe mit HIGHLIGHT_BOX_ALPHA).
+const HIGHLIGHT_BOX_ALPHA = 0.2;
+const BOX_COLOR_NAMES = {
+  white: [255, 255, 255], black: [0, 0, 0], red: [220, 38, 38], green: [22, 163, 74],
+  blue: [37, 99, 235], yellow: [234, 179, 8], orange: [249, 115, 22], purple: [147, 51, 234],
+  pink: [236, 72, 153], brown: [146, 64, 14], gray: [107, 114, 128], grey: [107, 114, 128],
+  cyan: [6, 182, 212], magenta: [233, 30, 99], lime: [132, 204, 22], teal: [13, 148, 136],
+  navy: [30, 58, 138], maroon: [127, 29, 29], olive: [113, 99, 41],
+};
+
+function _boxColorToRgba(value) {
+  // → normalisierte "rgba(r, g, b, a)"-Zeile oder null (→ CSS-Default).
+  // Nur regulargültige Werte werden akzeptiert → kein Weg, beliebigen
+  // CSS-Text in den Inline-Style zu schmuggeln.
+  value = String(value).trim().replace(/^["']+|["']+$/g, '');
+  if (!value) return null;
+
+  let m = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(value);
+  if (m) {
+    let h = value.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return 'rgba(' + parseInt(h.slice(0, 2), 16) + ', ' + parseInt(h.slice(2, 4), 16) +
+      ', ' + parseInt(h.slice(4, 6), 16) + ', ' + HIGHLIGHT_BOX_ALPHA + ')';
+  }
+
+  m = /^rgba?\(\s*(0|[1-9]\d{0,2})\s*,\s*(0|[1-9]\d{0,2})\s*,\s*(0|[1-9]\d{0,2})\s*(?:,\s*([0-9]*\.?[0-9]+))?\s*\)$/i.exec(value);
+  if (m) {
+    let alpha = HIGHLIGHT_BOX_ALPHA;
+    if (m[4] !== undefined) {
+      alpha = parseFloat(m[4]);
+      if (alpha < 0 || alpha > 1) return null;
+    }
+    return 'rgba(' + m[1] + ', ' + m[2] + ', ' + m[3] + ', ' + alpha + ')';
+  }
+
+  const rgb = BOX_COLOR_NAMES[value.toLowerCase()];
+  if (rgb) return 'rgba(' + rgb[0] + ', ' + rgb[1] + ', ' + rgb[2] + ', ' + HIGHLIGHT_BOX_ALPHA + ')';
+  return null;
+}
+
 // ─── Applet-Auto-Sizing ───────────────────────────────────────────────
 // Applets (.html-Medien) melden ihre Inhaltshöhe per postMessage — das
 // Boilerplate wird serverseitig in jeden Applet-Versand injiziert (siehe
@@ -108,10 +159,32 @@ const APPLET_MAX_H = 600;
 window.addEventListener('message', (event) => {
   const d = event.data;
   if (!d || d.source !== 'tutorai-applet' || typeof d.height !== 'number' || !isFinite(d.height)) return;
-  const h = Math.round(Math.min(Math.max(d.height + 8, APPLET_MIN_H), APPLET_MAX_H));
   document.querySelectorAll('iframe.tutorai-applet').forEach((f) => {
     if (f.contentWindow === event.source) {
+      // Gezoomte Applets ({.zoom=X}): Clamp zoom-korrigiert, damit die
+      // VISIBLE Höhe (gemeldete Höhe × zoom) im selben Bereich bleibt.
+      const zoom = parseFloat(f.getAttribute('data-zoom')) || 1;
+      let h = Math.round(
+        Math.min(Math.max(d.height + 8, APPLET_MIN_H / zoom), APPLET_MAX_H / zoom)
+      );
+      // Explizite Max-Höhe ({.height=X} → data-max-h, sichtbare px):
+      // darüber hinaus scrollt das Applet im Iframe intern.
+      const maxH = parseFloat(f.getAttribute('data-max-h'));
+      if (maxH > 0) {
+        const v = Math.min(h * zoom, maxH);
+        h = Math.max(1, Math.round(v / zoom));
+      }
       f.style.height = h + 'px';
+      // Gezoomte Applets stehen in einem .tutorai-applet-zoom-Wrapper, dessen
+      // Höhe der sichtbaren (geskalten) Höhe folgen muss (transform ändert
+      // nicht die Iframe-Layout-Box). offsetHeight statt h: die Iframe-Box
+      // kann per CSS max-height kleiner sein (Default-Höhe ohne explizites
+      // {.height} / {.height}=X), der Wrapper muss dem sichtbaren Ergebnis
+      // folgen, nicht der unbeachteten Zielhöhe.
+      const wrap = f.parentElement && f.parentElement.classList.contains('tutorai-applet-zoom')
+        ? f.parentElement
+        : null;
+      if (wrap) wrap.style.height = Math.round((f.offsetHeight || h) * zoom) + 'px';
     }
   });
 });
@@ -122,7 +195,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return;
   }
 
-  const { preview = false, sectionId = null } = options;
+  const { preview = false, sectionId = null, slideMode = false } = options;
 
   // Globale Label-Map für Querverweise (gecacht; null auf Nicht-Kurs-Seiten).
   const refMap = await getCourseRefMap();
@@ -166,6 +239,27 @@ async function renderMarkdown(text, targetElement, options = {}) {
   processed = processed.replace(
     /@box:([\p{L}0-9_-]+)\r?\n([\s\S]*?)\r?\n@endbox/gu,
     (match, type, content) => {
+      if (type === 'highlight') {
+        // Headless-Box (kein Kopf). Optional: ERSTE Zeile @boxcolor:<farbe>
+        // → normalisierter Inline-Style (ungültig → CSS-Default, Primärfarbe);
+        // die @boxcolor-Zeile wird im Match-Fall immer entfernt.
+        let body = content;
+        const m = /^@boxcolor:\s*(.+?)\s*\r?\n([\s\S]*)$/u.exec(body);
+        if (m) {
+          const rgba = _boxColorToRgba(m[1]);
+          body = m[2];
+          if (rgba) {
+            return (
+              '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' +
+              ' style="background-color:' + rgba + '">\n\n' + body.trim() + '\n\n</div>\n\n'
+            );
+          }
+        }
+        return (
+          '\n\n<div class="tutorai-callbox tutorai-callbox-highlight">\n\n' +
+          body.trim() + '\n\n</div>\n\n'
+        );
+      }
       const info = CALLOUT_TYPES[type] || { icon: '📄', title: type.charAt(0).toUpperCase() + type.slice(1) };
       const body = content.trim();
       return (
@@ -178,47 +272,121 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
   );
 
-  // 1e. Extract labeled figures: ![caption](src){#fig:label}
-  //     → nummerierte Abbildung ("Abb. N") mit Anker, latex-artig verlinkbar.
-  //     Bilder ohne {#fig:…} bleiben unverändert (abwärtskompatibel).
+  // 1e. Extract figures (labeled + unlabeled) mit Attribut-Tokens.
+  //     → labeliert {#fig:label} = nummerierte Abbildung ("Abb. N") mit Anker,
+  //       latex-artig verlinkbar; unlabelt .html = Applet (Iframe); unlabeltes
+  //       Bild + {.height=X} = Bild mit Max-Höhe.
   //     Nummerierung: global (kursweit) via refmap; neue (noch ungespeicherte)
   //     Labels bekommen Fallback-Nummern nach der letzten bekannten des Kapitels.
+  //     Attribut-Tokens nach dem Bild (in BELIEBIGER Reihenfolge, gleiche Zeile
+  //     oder Zeilenumbbruch ohne Leerzeile):
+  //       {#fig:label}, {#fragment}, {#fragment:id}, {#Fragment},
+  //       {.height=X} (Max-Höhe in px, optionaler Suffix "px"),
+  //       {.zoom=X} (Iframes: Zoom-Faktor des Applet-Inhalts).
+  //     height/zoom wirken in Slides UND Skript. Unlabelte Medien nehmen
+  //     optional ihre Attribute an (Applet: {.zoom=X} und/oder {.height=X},
+  //     Bild: nur {.height=X}); ohne Attribut bleibt ein Applet ein normales
+  //     Iframe und ein Bild ein normales <img>. Alles andere (auch unbekannte
+  //     Tokens) → Match wird abgebrochen, der Text bleibt literal
+  //     (Tippfehler fallen so auf).
   const figures = [];
+  const appletFigures = [];
+  const plainFigures = [];
   const figLabelNumbers = {};
   const figFallbackBase = chapterRef ? (chapterRef.maxFig || 0) : 0;
   let figFallbackCount = 0;
-  processed = processed.replace(
-    /!\[([^\]]*)\]\(([^)\s]+)\)\s*\{#fig:([\p{L}0-9_-]+)\}/gu,
-    (match, alt, src, label) => {
-      let num;
-      if (label in figLabelNumbers) {
-        num = figLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
-      } else {
-        const g = globalLabels[label];
-        if (g && g.kind === 'fig') {
-          num = g.num; // gespeichertes Label → exakte globale Nummer
-        } else {
-          figFallbackCount += 1;
-          num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
-        }
-        figLabelNumbers[label] = num;
+  // Zwei einfache Regexes statt einem verschachtelten Monster:
+  const IMG_REF = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  // Ein Attribut-Block: {…} direkt hinter der Referenz, nur Leerraum oder
+  // ein Zeilenumbruch (ohne Leerzeile) dazwischen.
+  const ATTR_BLOCK = /^[ \t]*(?:\r?\n[ \t]*)?\{([^{}]*)\}/;
+  // Literale Tails (unbekannte/ungültige Tokens, schlichte <img>): werden
+  // vor den Folgeschritten (1f–1k) aus dem Text genommen, damit z. B.
+  // {#fragment} im Tail nicht als echtes Fragment-Sentinel interpretiert
+  // wird, und direkt vor marked.parse (Step 2) wiederhergestellt.
+  const imgLiteralTails = [];
+  {
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = IMG_REF.exec(processed)) !== null) {
+      const alt = m[1];
+      const src = m[2];
+      // Aufeinanderfolgende Attribut-Blöcke hinter der Referenz konsumieren.
+      const tokens = [];
+      let pos = m.index + m[0].length;
+      for (;;) {
+        const bm = ATTR_BLOCK.exec(processed.slice(pos));
+        if (!bm) break;
+        tokens.push(bm[1].trim());
+        pos += bm[0].length;
       }
-      figures.push({ alt, src, label, num });
-      return `%%FIG_${figures.length - 1}%%`;
+      // Tokens validieren: nur bekannte Typen, je Attribut höchstens einmal.
+      const a = { label: null, frag: null, height: null, zoom: null };
+      let valid = true;
+      for (const inner of tokens) {
+        let t;
+        if ((t = inner.match(/^#fig:([\p{L}0-9_-]+)$/u))) {
+          if (a.label !== null) { valid = false; break; } // Duplikat-Label
+          a.label = t[1];
+        } else if ((t = inner.match(/^#([Ff])ragment(?::([\p{L}0-9_-]+))?$/u))) {
+          if (a.frag) { valid = false; break; } // Duplikat-Fragment
+          a.frag = { type: _fragType(t[1], t[2]), id: t[2] || null };
+        } else if ((t = inner.match(/^\.?height=([\d.]+)([a-z]*)$/))) {
+          // Führender Punkt optional (beide Formen valid): {height=X} /
+          // {.height=X}. Suffix-Check separat (einfacher als `px?` im Regex
+          // selbst — robust gegenüber V8/Chrome-Regel-3-Veränderungen):
+          // erlaubt: kein Suffix oder genau "px".
+          if (t[2] !== '' && t[2] !== 'px') { valid = false; break; }
+          if (a.height !== null) { valid = false; break; } // Duplikat
+          a.height = parseFloat(t[1]); // px
+        } else if ((t = inner.match(/^\.?zoom=([\d.]+)$/))) {
+          if (a.zoom !== null) { valid = false; break; } // Duplikat
+          a.zoom = parseFloat(t[1]);
+        } else {
+          valid = false; break; // unbekanntes Attribut → literal
+        }
+      }
+      // Unlabelt: Applet nimmt (k)ein {.zoom=X} und/oder (k)ein {.height=X},
+      // Bild (k)ein {.height=X} (Zoom nur für Applets).
+      // Ohne Attribut: Applet → Iframe ohne Zoom, Bild → normales <img>.
+      // Ungültige Kombinationen bleiben literal (Tippfehler fallen auf).
+      let repl = null;
+      if (valid) {
+        if (a.label !== null) {
+          let num;
+          if (a.label in figLabelNumbers) {
+            num = figLabelNumbers[a.label]; // Duplikat → erstes Vorkommen gewinnt
+          } else {
+            const g = globalLabels[a.label];
+            if (g && g.kind === 'fig') {
+              num = g.num; // gespeichertes Label → exakte globale Nummer
+            } else {
+              figFallbackCount += 1;
+              num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
+            }
+            figLabelNumbers[a.label] = num;
+          }
+          figures.push({ alt, src, label: a.label, num, frag: a.frag, height: a.height, zoom: a.zoom });
+          repl = `%%FIG_${figures.length - 1}%%`;
+        } else if (/\.html?$/i.test(src) && !a.frag) {
+          appletFigures.push({ alt, src, zoom: a.zoom, height: a.height });
+          repl = `%%APPLETFIG_${appletFigures.length - 1}%%`;
+        } else if (a.height !== null && !a.frag && a.zoom === null) {
+          plainFigures.push({ alt, src, height: a.height });
+          repl = `%%PLAINFIG_${plainFigures.length - 1}%%`;
+        }
+      }
+      // repl = null (inkl. Bild ohne Attribute) → Referenz + Tail bleiben
+      // literal (per Platzhalter, s. imgLiteralTails).
+      out += processed.slice(last, m.index) + (repl !== null
+        ? repl
+        : `%%IMGLIT_${imgLiteralTails.push(processed.slice(m.index, pos)) - 1}%%`);
+      last = pos;
+      IMG_REF.lastIndex = pos;
     }
-  );
-
-  // 1e2. Extract unlabeled HTML figures: ![caption](src.html)
-  //      → interaktive Vorschau (sandboxed Iframe) OHNE Nummerierung.
-  //      Labelierte .html-Medien ({#fig:…}) wurden oben bereits extrahiert.
-  const appletFigures = [];
-  processed = processed.replace(
-    /!\[([^\]]*)\]\(([^)\s]+\.html?)\)/giu,
-    (match, alt, src) => {
-      appletFigures.push({ alt, src });
-      return `%%APPLETFIG_${appletFigures.length - 1}%%`;
-    }
-  );
+    processed = out + processed.slice(last);
+  }
 
   // 1f. Handle escaped dollar signs: \$ → placeholder
   const escapedDollar = '%%ED%%';
@@ -231,20 +399,28 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const eqLabelNumbers = {};
   const eqFallbackBase = chapterRef ? (chapterRef.maxEq || 0) : 0;
   let eqFallbackCount = 0;
+  // Slide-Decks: eigene Labels (nicht im Skript enthalten) bekommen eigene
+  // Nummerierung (S1), (S2), … — abgesetzt von der Skript-Nummerierung.
+  let slideEqCount = 0;
+  const latexFragments = [];
   processed = processed.replace(
-    /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?/gu,
-    (match, latex, label) => {
+    /\$\$([\s\S]*?)\$\$(?:\s*\{#eq:([\p{L}0-9_-]+)\})?(?:\s*\{#([Ff])ragment(?::([\p{L}0-9_-]+))?\})?/gu,
+    (match, latex, label, fchar, id) => {
       latexBlocks.push(latex.trim());
       if (label && !(label in eqLabelNumbers)) {
         const g = globalLabels[label];
         if (g && g.kind === 'eq') {
           eqLabelNumbers[label] = g.num; // gespeichertes Label → exakte globale Nummer
+        } else if (slideMode) {
+          slideEqCount += 1;
+          eqLabelNumbers[label] = 'S' + slideEqCount; // slide-eigenes Label → (S1), (S2), …
         } else {
           eqFallbackCount += 1;
           eqLabelNumbers[label] = eqFallbackBase + eqFallbackCount; // neues (ungespeichertes) Label
         }
       }
       latexLabels.push(label || null);
+      latexFragments.push(fchar !== undefined ? { type: _fragType(fchar, id), id: id || null } : null);
       return `%%LATEX_BLOCK_${latexBlocks.length - 1}%%`;
     }
   );
@@ -270,6 +446,30 @@ async function renderMarkdown(text, targetElement, options = {}) {
   processed = processed.replace(/@task:(\d+)/g, (match, id) => {
     taskRefs.push(id);
     return `%%TASKREF_${taskRefs.length - 1}%%`;
+  });
+
+  // 1k. Slide-Fragments → unsichtbarer Sentinel (Typ/ID als data-Attribute,
+  //     überleben die DOMPurify-Sanitize). Formen (Details:
+  //     _applyFragmentMarkers am Ende von renderMarkdown):
+  //       {#fragment}      → normales Fragment (eigener Einblend-Schritt)
+  //       {#fragment:id}   → ID-Gruppe (gleiche ID → gleicher Schritt)
+  //       {#Fragment}      → Gate (Groß, ohne ID): Element + alle FOLGENDEN
+  //                           Inhalte der Folie erscheinen in einem Schritt
+  //     eq/fig haben ihren Marker oben bereits selbst extrahiert.
+  if (slideMode) {
+    processed = processed.replace(
+      /\{#([Ff])ragment(?::([\p{L}0-9_-]+))?\}/gu,
+      (m, fchar, id) => {
+        const idAttr = id ? ` data-frag-id="${id}"` : '';
+        return `<span class="tutorai-frag-marker" data-frag="${_fragType(fchar, id)}"${idAttr}></span>`;
+      }
+    );
+  }
+
+  // 1l. Literal-Image-Tails wiederherstellen (nach 1k, damit enthaltene
+  //     {#fragment}-Token als sichtbarer Text bleiben und KEIN Sentinel werden)
+  imgLiteralTails.forEach((tail, idx) => {
+    processed = processed.split(`%%IMGLIT_${idx}%%`).join(tail);
   });
 
   // 2. Render Markdown (marked)
@@ -305,14 +505,36 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 5. Restore LaTeX blocks (labeled ones as numbered equation "(N)")
+  //    Slide-Mode: Nummer eines im Skript vorhandenen Labels ist klickbar und
+  //    verlinkt zur Gleichung im Skript; slide-eigene Labels zeigen (S1), …
   latexBlocks.forEach((latex, idx) => {
     const rendered = renderLatexBlock(latex);
     const label = latexLabels[idx];
+    const frag = latexFragments[idx];
+    const fragAttrs = frag
+      ? ` data-frag="${frag.type}"${frag.id ? ` data-frag-id="${frag.id}"` : ''}`
+      : '';
     if (label) {
+      const num = eqLabelNumbers[label];
+      const g = globalLabels[label];
+      let numHtml;
+      if (slideMode && g && g.kind === 'eq') {
+        const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+        numHtml =
+          `<a class="tutorai-eq-num tutorai-eq-num-link" href="/courses/${cid}/script#eq:${label}"` +
+          ` title="Zur Gleichung im Skript">(${num})</a>`;
+      } else {
+        numHtml = `<span class="tutorai-eq-num">(${num})</span>`;
+      }
       const wrapped =
-        `<div id="eq:${label}" class="tutorai-equation">${rendered}` +
-        `<span class="tutorai-eq-num">(${eqLabelNumbers[label]})</span></div>`;
+        `<div id="eq:${label}" class="tutorai-equation"${fragAttrs}>${rendered}${numHtml}</div>`;
       html = html.replace(`%%LATEX_BLOCK_${idx}%%`, wrapped.replace(/\$/g, '$$$$'));
+    } else if (frag) {
+      // Unlabeled + Fragment: Katex' <span class="katex-display"> in ein
+      // fragmentierbares Block-Element verpacken (wird beim innerHTML-Parse
+      // aus dem umgebenden <p> gehoistet, wie beim labeled Fall). Die
+      // Reveal-Klasse + Index vergibt _applyFragmentMarkers (slideMode).
+      html = html.replace(`%%LATEX_BLOCK_${idx}%%`, `<div${fragAttrs}>${rendered}</div>`.replace(/\$/g, '$$$$'));
     } else {
       html = html.replace(`%%LATEX_BLOCK_${idx}%%`, rendered.replace(/\$/g, '$$$$'));
     }
@@ -324,24 +546,113 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 6a. Restore numbered figures (.html-Medien als interaktives Iframe)
+  //     {.height=X} (px, Max-Höhe) / {.zoom=X} wirken in Slides UND Skript.
+  //     !important: schlägt die generischen img-/applet-Regeln aus
+  //     slides.css/main.css (height:auto, max-height, width:100% — alle mit
+  //     !important; Inline-!important gewinnt).
+  //     Höhe = max-height (nicht exakt): Medien nutzen die verfügbare Breite
+  //     ratio-erhaltend aus, bis die Max-Höhe erreicht ist ("contain"-Effekt
+  //     über die Basis-CSS max-width:100% + height:auto). Applets: volle
+  //     Breite, interne Scrollbar, wenn die Max-Höhe überschritten wird.
   figures.forEach((f, idx) => {
     const safeAlt = escapeHtml(f.alt);
     const isApplet = /\.html?$/i.test(f.src);
+    const parts = [];
+    let dataZoom = '';
+    if (f.height != null) {
+      // Max-Höhe in sichtbaren px. Gezoomtes Applet: geteilt durch den
+      // Zoom-Faktor, da die transform die Iframe-Layout-Box skaliert.
+      parts.push(f.zoom != null
+        ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
+        : `max-height: ${f.height}px !important`);
+    }
+    if (f.zoom != null) {
+      // Zoom via transform (universell unterstützt, im Gegensatz zur
+      // zoom-Property): Width-Kompensation + Skalierung füllen exakt die
+      // Spaltenbreite; der Wrapper übernimmt die sichtbare (geskalte) Höhe.
+      parts.push(`width: calc(100% / ${f.zoom}) !important`);
+      parts.push(`transform: scale(${f.zoom})`);
+      parts.push('transform-origin: 0 0');
+      // Ohne explizite {.height} gilt die Default-Max-Höhe (9em in Slides)
+      // auch für gezoomte Applets — die slides.css-Regel teilt sie durch
+      // --tz (transform vergrößert die Layout-Box), damit die sichtbare
+      // Höhe der zoomlosen Default-Höhe entspricht. --tz setzen, damit sie
+      // ohne data-max-h greift. (Bilder mit Zoom behalten none: Zoom ist
+      // Applet-Semantik, die 7em-Bild-Cap soll dort nicht zuschlagen.)
+      if (isApplet) parts.push(`--tz: ${f.zoom}`);
+      else if (f.height == null) parts.push('max-height: none !important');
+      dataZoom = ` data-zoom="${f.zoom}"`; // Auto-Sizing: Clamp zoom-korrigiert
+    }
+    const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
+    const dataMaxH = isApplet && f.height != null ? ` data-max-h="${f.height}"` : '';
     const mediaTag = isApplet
-      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${safeAlt}"></iframe>`
-      : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}">`;
+      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
+      : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}"${mediaStyle}>`;
+    // Gezoomte Applets in einen overflow:hidden-Wrapper (sichtbare =
+    // geskalte Höhe; transform ändert die Iframe-Layout-Box nicht). Initiale
+    // Höhe = Auto-Sizing-Default (150 px × zoom), ggf. auf die Max-Höhe
+    // begrenzt (der Auto-Sizing-Listener clamped danach ebenfalls).
+    // WICHTIG: <span>, kein <div> — ein div würde das umgebende <p>
+    // (HTML-Parsing, unabhängig vom CSS display) schließen und das Iframe
+    // in einen anderen font-size-Kontext rücken (p = 0.95em); die
+    // em-basierte Default-Max-Höhe müsste dann nicht mehr der zoomlosen
+    // Default-Höhe am selben Ort entsprechen. Ein span mit
+    // display:inline-block + width:100% bleibt im <p> (s. CSS).
+    const zoomInitH = f.height != null
+      ? `min(calc(150px * ${f.zoom}), ${f.height}px)`
+      : `calc(150px * ${f.zoom})`;
+    const innerMedia = (isApplet && f.zoom != null)
+      ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${mediaTag}</span>`
+      : mediaTag;
+    const figFragAttrs = f.frag
+      ? ` data-frag="${f.frag.type}"${f.frag.id ? ` data-frag-id="${f.frag.id}"` : ''}`
+      : '';
     const figHtml =
-      `<figure id="fig:${f.label}" class="tutorai-figure">` +
-      mediaTag +
+      `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}>` +
+      innerMedia +
       `<figcaption>Abb. ${f.num}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
-  // 6a2. Restore unlabeled HTML figures (interaktive Vorschau, ohne Nummer)
+  // 6a2. Restore unlabeled HTML figures (interaktives Applet, ohne Nummer)
+  //      {.height=X} / {.zoom=X}: Semantik wie bei labeled Figures (s. 6a).
   appletFigures.forEach((f, idx) => {
-    const iframeHtml =
-      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${escapeHtml(f.alt)}"></iframe>`;
+    const parts = [];
+    let dataZoom = '';
+    if (f.height != null) {
+      parts.push(f.zoom != null
+        ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
+        : `max-height: ${f.height}px !important`);
+    }
+    if (f.zoom != null) {
+      parts.push(`width: calc(100% / ${f.zoom}) !important`);
+      parts.push(`transform: scale(${f.zoom})`);
+      parts.push('transform-origin: 0 0');
+      // Ohne {.height} gilt die Default-Max-Höhe (9em in Slides) — teilt die
+      // slides.css-Regel durch --tz (s. labeled-Figures oben).
+      parts.push(`--tz: ${f.zoom}`);
+      dataZoom = ` data-zoom="${f.zoom}"`;
+    }
+    const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
+    const dataMaxH = f.height != null ? ` data-max-h="${f.height}"` : '';
+    const iframeTag =
+      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="allow-scripts" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
+    const zoomInitH = f.height != null
+      ? `min(calc(150px * ${f.zoom}), ${f.height}px)`
+      : `calc(150px * ${f.zoom})`;
+    // <span>-Wrapper (kein <div>): muss im umgebenden <p> bleiben, damit
+    // das Iframe dieselbe font-size erbt wie im zoomlosen Fall (s. 6a).
+    const iframeHtml = (f.zoom != null)
+      ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${iframeTag}</span>`
+      : iframeTag;
     html = html.replace(`%%APPLETFIG_${idx}%%`, iframeHtml.replace(/\$/g, '$$$$'));
+  });
+
+  // 6a3. Restore unlabeled plain images mit Max-Höhe ({.height=X}, s. 6a)
+  plainFigures.forEach((f, idx) => {
+    const imgStyle = ` style="max-height: ${f.height}px !important"`;
+    const imgHtml = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
+    html = html.replace(`%%PLAINFIG_${idx}%%`, imgHtml.replace(/\$/g, '$$$$'));
   });
 
   // 6a3. Heading-Nummerierung (h2–h4) + {#sec:label}-Anker
@@ -516,6 +827,125 @@ async function renderMarkdown(text, targetElement, options = {}) {
   } else {
     targetElement.innerHTML = `<div class="markdown-preview">${html}</div>`;
   }
+  if (slideMode) _applyFragmentMarkers(targetElement);
+}
+
+// Fragment-Marker (Reveal) auflösen: {#fragment}, {#fragment:id} (ID-Gruppe),
+// {#Fragment} (Gate). Der Sentinel ist ein Inline-<span>, das marked in das
+// nächste Block-Element einbettet; eq/fig tragen data-frag bereits aus der
+// Restore-Phase. Phasen:
+//   1: Sentinel → umgebendes Block-Element (p/li/h*/pre/…) als Host
+//      (data-frag/data-frag-id vom Span auf den Host kopiert; Sonderfälle:
+//      leeres <p> nach Codeblock, Marker direkt im Wrapper).
+//   2: Alle [data-frag]-Elemente + Top-Level-Elemente der Folie (direkte
+//      Kinder der .markdown-preview-Wrapper, bei twocol je ein Wrapper pro
+//      Spalte) in Dokumentreihenfolge sammeln.
+//   3: Reveal data-fragment-index vergeben (gleicher Index = gleichzeitig
+//      eingeblendet): ID-Gruppen teilen sich den Schritt des ersten
+//      Vorkommens; ein Gate ("reveal") bekommt einen neuen Schritt, und
+//      ALLE nachfolgenden Inhalte der Folie (Dokumentreihenfolge) ohne
+//      eigenes Fragment davor bekommen denselben Schritt — explizite
+//      Fragments nach dem Gate werden also vom Gate "verschlungen"
+//      (ein späteres Gate übertrumpft ein früheres).
+//   4: data-frag*-Attribute entfernen ("fragment"-Klasse + Index bleiben).
+function _applyFragmentMarkers(container) {
+  const blockRe = /^(P|LI|H[1-6]|PRE|BLOCKQUOTE|FIGURE|TABLE|DIV)$/;
+  const isPreviewWrap = (el) => el && el.classList && el.classList.contains('markdown-preview');
+
+  // Phase 1: Sentinel auflösen
+  container.querySelectorAll('span.tutorai-frag-marker').forEach((span) => {
+    const fragType = span.getAttribute('data-frag') || 'normal';
+    const fragId = span.getAttribute('data-frag-id');
+    let el = span.parentElement;
+    while (
+      el &&
+      el !== container &&
+      !isPreviewWrap(el) &&
+      !blockRe.test(el.tagName) &&
+      !el.classList.contains('tutorai-equation')
+    ) {
+      el = el.parentElement;
+    }
+    let host = el && el !== container && !isPreviewWrap(el) ? el : null;
+    // Leeres <p> direkt nach einem Block (z. B. Codeblock): Marker → Block davor
+    if (host && host.tagName === 'P' && !host.textContent.trim() && host.previousElementSibling) {
+      host = host.previousElementSibling;
+    }
+    if (!host) {
+      // Marker steht direkt im Wrapper (Codeblock ohne Leerzeile): vorheriges
+      // Block-Element nehmen, <br> von marked (breaks:true) überspringen.
+      let sib = span.previousElementSibling;
+      while (sib && sib.tagName === 'BR') sib = sib.previousElementSibling;
+      host = sib && blockRe.test(sib.tagName) ? sib : null;
+    }
+    if (host) {
+      host.setAttribute('data-frag', fragType);
+      if (fragId) host.setAttribute('data-frag-id', fragId);
+    }
+    // Vom Sentinel getrenntes <br> (marked, breaks:true) wieder entfernen
+    if (span.previousElementSibling && span.previousElementSibling.tagName === 'BR') {
+      span.previousElementSibling.remove();
+    }
+    span.remove();
+  });
+
+  // Phase 2: Fragment-Elemente + Top-Level-Elemente, Dokumentreihenfolge
+  const fragEls = Array.from(container.querySelectorAll('[data-frag]'));
+  if (fragEls.length === 0) return;
+  const topLevel = [];
+  container.querySelectorAll('.markdown-preview').forEach((mp) => {
+    Array.from(mp.children).forEach((c) => topLevel.push(c));
+  });
+  const allEls = [...new Set([...fragEls, ...topLevel])];
+  allEls.sort((a, b) => {
+    const pos = a.compareDocumentPosition(b);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+
+  // Phase 3: Schritt-Indizes
+  let nextStep = 0;
+  let activeGateStep = null;
+  const idToStep = {};
+  for (const el of allEls) {
+    const fragType = el.getAttribute('data-frag');
+    const fragId = el.getAttribute('data-frag-id');
+    // Ein Top-Level-Element OHNE Marker wird nur fragmentiert, wenn das
+    // Gate es verschlingt und KEIN Fragment-Element darin einen eigenen
+    // (früheren) Schritt bestimmt.
+    const becomesFrag = fragType !== null ||
+      (activeGateStep !== null && !el.querySelector('[data-frag]'));
+    if (!becomesFrag) continue;
+
+    let step;
+    if (fragType === 'reveal') {
+      step = nextStep++; // Gate: eigener neuer Schritt
+      activeGateStep = step;
+    } else if (activeGateStep !== null) {
+      step = activeGateStep; // vom Gate verschlungen (auch mit eigenem Marker)
+    } else if (fragId && fragId in idToStep) {
+      step = idToStep[fragId]; // ID-Gruppe: Schritt des ersten Vorkommens
+    } else {
+      step = nextStep++;
+    }
+    if (fragId && !(fragId in idToStep)) idToStep[fragId] = step;
+    el.setAttribute('data-fragment-index', String(step));
+    el.classList.add('fragment');
+  }
+
+  // Phase 4: Zwischenmarker aufräumen
+  container.querySelectorAll('[data-frag]').forEach((el) => {
+    el.removeAttribute('data-frag');
+    el.removeAttribute('data-frag-id');
+  });
+}
+
+// Fragment-Typ aus der Markersyntax: {#Fragment} (Groß, ohne ID) = Gate,
+// {#fragment:id}/{#Fragment:id} = ID-Gruppe, {#fragment} = normal.
+function _fragType(fchar, id) {
+  if (fchar === 'F' && !id) return 'reveal';
+  return id ? 'group' : 'normal';
 }
 
 // Escape HTML special characters to prevent XSS in error messages

@@ -180,7 +180,9 @@ TutorAI/
 │   ├── course/              # Kurs-Tab-Seiten (Tab-Leiste + Rollensichtbarkeit)
 │   │   ├── base.html        # Parent: Kurs-Header, Tabs, Kurs-Edit-Modal
 │   │   ├── _tabs.html       # Tab-Leiste-Partial (Skript/Slides/Aufgaben/Übersicht/Medien/Mitglieder)
-│   │   ├── material.html    # Tab 'Slides' (Markdown, Editor für Tutor/PROF)
+│   │   ├── slides.html      # Tab 'Folien': Kachel-Übersicht (Live-Preview, Design)
+│   │   ├── slides_edit.html # Folien-Editor (Markdown, Live-Preview, LLM) für Tutor/PROF
+│   │   ├── slides_present.html # Präsentation (Reveal.js) + PDF-Export
 │   │   ├── script.html      # Tab 'Skript': Kapitel-Liste (Tutor) / Lesefluss (Student)
 │   │   ├── media.html       # Tab 'Medien': Upload, Verwendungs-Orte (PROF/Admin)
 │   │   ├── tasks_student.html  # Tab 'Aufgaben': Punktestand + Filter (Student)

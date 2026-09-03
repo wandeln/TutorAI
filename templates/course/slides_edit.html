@@ -1,0 +1,456 @@
+{% extends "course/base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tab "Folien" – Slide-Deck-Seite.
+
+   Die Route /courses/{id}/slides/{deck_id} liefert immer
+   material = {id, title, material_type, is_visible} (sonst 404).
+   Titel + Content werden per API geladen
+   (GET /api/courses/{id}/materials/{material_id}), damit keine
+   JSON-Escape-Probleme im Template entstehen.
+
+   Tutor/PROF: 2-Spalten-Layout (responsive)
+     links:  LLM-Box (Deck generieren/überarbeiten) + Slide-Preview
+             (echte eingebettete Reveal.js-Mini-Präsentation, live beim
+              Tippen aktualisiert, per Pfeil-Buttons durchklickbar)
+     rechts: Titel + Markdown-Editor (Folien)
+     mobil:  LLM-Box → Vorschau → Titel/Editor
+   (Studenten werden von der Route direkt auf die Präsentation umgeleitet.)
+
+   Folien-Format:
+     - Folien werden durch eine eigene Zeile "---" getrennt
+     - optionale Direktiven am Blockanfang: layout: center|topleft|twocol,
+       transition: fade|slide|zoom|none|autoanimate (Default: autoanimate),
+       class: <kennung>, notes: <text>
+     - layout: twocol + eigene Zeile "||" → zweispaltige Folie
+     - Fragments: {#fragment}, {#fragment:id} (gleichzeitig),
+       {#Fragment} (Groß: Element + alle folgenden Inhalte in einem Schritt)
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block extra_head %}
+{# reveal.css vor slides.css: reveal.css ist auf .reveal beschränkt; als Reset
+   reicht Tailwinds Preflight (kein eigenes reset.css nötig). #}
+<link rel="stylesheet" href="{{ asset('vendor/reveal/reveal.css') }}">
+<link rel="stylesheet" href="{{ asset('css/slides.css') }}">
+{# Pro-Kurs-Theme-Werte MÜSSEN nach slides.css geladen werden, da slides.css
+   eigene :root-Defaults definiert und bei gleicher Spezifität die
+   Source-Order gewinnt. #}
+<style>:root { {{ slides_theme_css | safe }} }</style>
+<script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
+<script src="{{ asset('js/slides.js') }}"></script>
+{% endblock %}
+
+{% block course_content %}
+
+  <!-- Header -->
+  <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
+    <div class="min-w-0">
+      <a href="/courses/{{ course.id }}/slides"
+         class="text-sm text-blue-600 hover:text-blue-800 transition inline-block mb-1">
+        ← Alle Folien
+      </a>
+      <h2 class="text-xl font-bold text-gray-800">{{ material.title }}</h2>
+      {% if is_tutor or is_admin %}
+      <p class="text-sm text-gray-500 mt-1 flex items-center gap-1.5">
+        <span class="inline-flex" style="color: {% if material.is_visible %}#9ca3af{% else %}#d1d5db{% endif %}">
+          {% if material.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </span>
+        {% if material.is_visible %}Für alle Kursteilnehmenden sichtbar{% else %}Versteckt (nur Tutor/PROF){% endif %}
+      </p>
+      {% endif %}
+    </div>
+    <div class="flex gap-2 shrink-0 flex-wrap">
+      <a href="/courses/{{ course.id }}/slides/{{ material.id }}/present"
+         class="text-sm border border-blue-200 bg-blue-50 rounded-lg px-3 py-1.5 text-blue-700 hover:bg-blue-100 transition font-medium">
+        ▶ Präsentieren
+      </a>
+      <a href="/courses/{{ course.id }}/slides/{{ material.id }}/present?print-pdf" target="_blank"
+         class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-600 hover:bg-gray-50 transition">
+        ⬇️ PDF
+      </a>
+      {% if is_tutor or is_admin %}
+      <button onclick="toggleVisibility()"
+              class="text-sm border border-gray-300 rounded-lg px-3 py-1.5 text-gray-600 hover:bg-gray-50 transition inline-flex items-center gap-1.5"
+              title="{% if material.is_visible %}Verstecken{% else %}Einblenden{% endif %}">
+        <span class="inline-flex" style="color: {% if material.is_visible %}#9ca3af{% else %}#d1d5db{% endif %}">
+          {% if material.is_visible %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          {% else %}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a16.54 16.54 0 0 1 4.1-5.79"></path><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.55 18.55 0 0 1-2.06 3.28"></path><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+          {% endif %}
+        </span>
+      </button>
+      {% endif %}
+      {% if is_prof or is_admin %}
+      <button onclick="deleteMaterial()" title="Slide-Deck löschen"
+              class="text-sm border border-red-200 rounded-lg px-3 py-1.5 text-red-600 hover:bg-red-50 transition">
+        🗑️
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if is_tutor or is_admin %}
+  <!-- ═══ Tutor/PROF: 2-Spalten-Layout (links LLM+Preview, rechts Titel+Editor) ═══
+       Mobil: linke Spalte zuerst (LLM-Box → Vorschau → Titel/Editor). -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+
+    <!-- Linke Spalte: LLM-Box + Slide-Preview -->
+    <div class="space-y-4 min-w-0">
+
+      <!-- LLM-Box -->
+      <div class="bg-purple-50 border-2 border-purple-300 rounded-xl p-4">
+        <h3 class="font-semibold text-gray-800 mb-3 text-sm">🤖 LLM-Deck generieren</h3>
+        <textarea id="slide-topic" rows="2"
+                  placeholder="Thema / Anweisung (z.B. „Folien zu Kapitel 3: Rekursion erstellen“, „Übungen am Ende ergänzen“, „kürzer fassen“) — leer lassen, wenn das LLM frei überarbeiten soll."
+                  class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm mb-3"></textarea>
+        <div class="flex items-center gap-2 mb-3">
+          <label for="slide-minutes" class="text-sm text-gray-800 shrink-0">Dauer der Präsentation:</label>
+          <input type="number" id="slide-minutes" value="90" min="5" max="480" step="5"
+                 class="w-20 border border-purple-300 rounded px-2 py-1 text-sm">
+          <span class="text-sm text-gray-500">Minuten</span>
+        </div>
+        <div id="slide-progress" class="hidden mb-3">
+          <div class="flex items-center gap-2 text-sm text-purple-700">
+            <span id="slide-pstatus">⏳ LLM generiert/ändert Deck…</span>
+            <span id="slide-ptimer" class="font-mono">0s</span>
+          </div>
+          <div class="mt-2 w-full bg-purple-200 rounded-full h-2">
+            <div id="slide-pbar" class="bg-purple-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+          </div>
+          <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – prüfe das Ergebnis bitte selbst.</p>
+        </div>
+        <div class="flex items-center justify-end">
+          <button type="button" id="slide-ai-btn" onclick="slideAiGenerate()"
+                  class="bg-purple-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-purple-700 transition font-medium">
+            ✨ Generieren / Überarbeiten
+          </button>
+        </div>
+      </div>
+
+      <!-- Slide-Preview (gerenderte Folien) -->
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+          <h3 class="text-sm font-semibold text-gray-700">Vorschau</h3>
+          <span id="slide-count" class="text-xs text-gray-400"></span>
+        </div>
+        <div class="p-3">
+          {# Echte eingebettete Reveal-Präsentation als Miniatur; leerer
+             Zustand als Overlay (#slide-preview-empty). #}
+          <div class="slides-preview-shell" id="slide-preview-shell">
+            <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}"
+                 id="slide-preview-reveal">
+              <div class="slides" id="slide-preview-slides"></div>
+            </div>
+            <div id="slide-preview-empty"
+                 class="hidden absolute inset-0 flex items-center justify-center p-6 text-center text-gray-400 text-sm leading-relaxed">
+              Noch keine Folien. Trenne Folien durch eine eigene Zeile <code>---</code>.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Rechte Spalte: Titel + Markdown-Editor -->
+    <div class="min-w-0">
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="material-title-input">Titel</label>
+        <input id="material-title-input" type="text" maxlength="300"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none mb-3">
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="material-textarea">Folien (Markdown)</label>
+        <textarea id="material-textarea" rows="24"
+                  placeholder="Folien mit einer eigenen Zeile '---' trennen…"
+                  class="w-full h-[55vh] font-mono text-sm leading-relaxed border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
+        <p class="text-xs text-gray-400 mt-2 leading-relaxed">
+          Direktiven am Folienanfang (je eigene Zeile):
+          <code>layout: center|topleft|twocol</code>,
+          <code>transition: fade|slide|zoom|none|autoanimate</code> (Default: <code>autoanimate</code> —
+          der Inhalt animiert zwischen den Folien ineinander;
+          <code>fade</code>/<code>slide</code>/<code>zoom</code>/<code>none</code> setzen eine klassische Transition;
+          gezoomte Applets (<code>{zoom=X}</code>) werden vom Auto-Animate übersprungen — der Applet-Zoom bleibt erhalten),
+          <code>class: &lt;kennung&gt;</code>,
+          <code>notes: &lt;Sprechernotiz&gt;</code>,
+          <code>background: ![Titel](/media/…)</code> (Vollflächiger Folien-Hintergrund, deckt den ganzen Bildschirm ab — Bild oder <code>.html</code>-Applet; Applets bleiben in der Präsentation klickbar, dafür ist dann der Folieninhalt dieser Folie nicht. <code>.html</code> wird beim PDF-Export nicht mitgedruckt).
+          Zweispaltig: <code>layout: twocol</code> + eigene Zeile <code>||</code> (eine Überschrift auf der ersten Zeile der linken Spalte spannt über beide Spalten).
+          Max-Bildhöhe in px: {% raw %}<code>{height=400}</code>{% endraw %} (Suffix <code>px</code> und führender Punkt optional) und Applet-Zoom: {% raw %}<code>{zoom=1.5}</code>{% endraw %}, Applet-Max-Höhe: {% raw %}<code>{height=300}</code>{% endraw %} (direkt nach dem Bild-/Applet-Snippet).
+          Schrittweises Einblenden: {% raw %}<code>{#fragment}</code>{% endraw %} am Zeilenende (z. B. nach Bullet, Absatz oder Formel);
+          {% raw %}<code>{#fragment:id}</code>{% endraw %} → alle Elemente mit gleicher ID erscheinen gleichzeitig;
+          {% raw %}<code>{#Fragment}</code>{% endraw %} (Großbuchstabe) → Element + alle folgenden Inhalte der Folie erscheinen erst mit einem Klick.
+          Hervorheben: <code>@box:highlight … @endbox</code> packt den Inhalt in eine transparente, geblurte Box in der Primärfarbe (z. B. für Titel auf Deckslides);
+          erste Zeile <code>@boxcolor:&lt;farbe&gt;</code> (z. B. <code>@boxcolor:white</code>) übersteuert die Boxfarbe (Hex, rgb()/rgba(), CSS-Farbname).
+        </p>
+        <div class="flex items-center justify-end mt-3">
+          <button onclick="saveMaterial()"
+                  class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+            Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  {% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  const material = {{ material | tojson }};  // {id, title, material_type, is_visible}
+  const theme = {{ slides_theme | tojson }}; // aufgelöstes Folien-Theme
+  let currentVisible = material.is_visible;
+
+  {% if is_tutor or is_admin %}
+
+  // ═══ Tutor/PROF: Editor (Titel + Markdown) mit Live-Preview + LLM ═══
+
+  const titleInput = document.getElementById("material-title-input");
+  const textarea = document.getElementById("material-textarea");
+  const revealRootEl = document.getElementById("slide-preview-reveal");
+  const previewSlidesEl = document.getElementById("slide-preview-slides");
+  const previewEmptyEl = document.getElementById("slide-preview-empty");
+  const countEl = document.getElementById("slide-count");
+
+  // Fußzeile wie in der Präsentation (Theme-Default: aus → null)
+  const FOOTER_TEXT = {{ slides_footer_text | tojson }};
+  const FOOTER_ENABLED = {{ "true" if slides_theme.footer else "false" }};
+
+  // ─── Laden ──────────────────────────────────────────────────
+
+  async function loadContent() {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${material.id}`, { credentials: "same-origin" });
+      if (!res.ok) throw new Error("Nicht geladen");
+      const data = await res.json();
+      titleInput.value = data.title || material.title;
+      textarea.value = data.content || "";
+      renderPreview(textarea.value);
+    } catch (e) {
+      previewEmptyEl.textContent = "Fehler beim Laden des Inhalts.";
+      previewEmptyEl.classList.remove("hidden");
+    }
+  }
+
+  // ─── Live-Preview (gerenderte Folien, debounce 500 ms) ───────
+
+  let previewTimer = null;
+  window.schedulePreview = function () {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => renderPreview(textarea.value), 500);
+  };
+
+  // Render-Schutz: überlappende Renders (schnelles Tippen) dürfen sich
+  // nicht mischen — nur der neueste Render darf weiterarbeiten.
+  let previewSeq = 0;
+
+  let previewReveal = null;
+
+  async function renderPreview(content) {
+    const seq = ++previewSeq;
+    // Aktuelle Folie merken: nach einem Live-Update macht die Vorschau dort
+    // weiter, wo der Tutor gerade war (statt zurück zu Folie 1 zu springen).
+    let prevIndex = null;
+    if (previewReveal) {
+      try { prevIndex = previewReveal.getIndices(); } catch (e) { /* ältere Instanz */ }
+      // Vorherige Instanz zurückbauen (Reveal 4: destroy() entfernt die
+      // viewport-Klasse, Inline-Styles und alle Komponenten).
+      try { previewReveal.destroy(); } catch (e) { /* ältere Instanz */ }
+      previewReveal = null;
+    }
+    previewSlidesEl.innerHTML = "";
+    // Footer am Canvas-Element (wandert nicht mit den Slide-Transitions)
+    if (FOOTER_ENABLED && FOOTER_TEXT) previewSlidesEl.setAttribute("data-footer", FOOTER_TEXT);
+    else previewSlidesEl.removeAttribute("data-footer");
+    const slides = parseSlides(content || "");
+    countEl.textContent = slides.length ? `${slides.length} Folie${slides.length === 1 ? "" : "n"}` : "";
+    if (slides.length === 0) {
+      previewEmptyEl.innerHTML =
+        'Noch keine Folien. Trenne Folien durch eine eigene Zeile <code>---</code>.';
+      previewEmptyEl.classList.remove("hidden");
+      return;
+    }
+    previewEmptyEl.classList.add("hidden");
+    for (let i = 0; i < slides.length; i++) {
+      if (seq !== previewSeq) return; // neuerer Render hat übernommen
+      const footer = FOOTER_ENABLED && FOOTER_TEXT ? FOOTER_TEXT : null;
+      previewSlidesEl.appendChild(await buildSlideSection(slides[i], footer));
+    }
+    if (seq !== previewSeq) return;
+    // Gleiche Logik-Größe wie die Präsentation: Reveal skaliert das Deck
+    // (960 × 960/Ratio) auf die Größe des Preview-Fensters.
+    const ratio = (theme && theme.aspect_value) || 16 / 9;
+    const W = 960;
+    const H = Math.round(W / ratio);
+    const inst = new Reveal(revealRootEl, {
+      embedded: true,
+      keyboard: false, // Mini-Vorschau greift keine globalen Tasten ab
+      controls: true,
+      controlsTutorial: false,
+      progress: false,
+      center: false,
+      transition: "none",
+      slideNumber: true,
+      hash: false,
+      history: false,
+      width: W,
+      height: H,
+      autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+    });
+    previewReveal = inst;
+    await inst.initialize();
+    if (seq !== previewSeq) {
+      // Nur zurückbauen, wenn sie noch die aktuelle Instanz ist
+      if (previewReveal === inst) {
+        try { inst.destroy(); } catch (e) { /* ignore */ }
+        previewReveal = null;
+      }
+      return;
+    }
+    // Zur vorherigen Folie zurückkehren (Reveal clampet bei kürzerem Deck;
+    // f = -1 → Fragments im Ausgangszustand, transition:none → ohne Flash)
+    if (prevIndex && (prevIndex.h > 0 || prevIndex.v > 0 || (prevIndex.f || 0) > 0)) {
+      try { inst.slide(prevIndex.h, prevIndex.v, prevIndex.f); } catch (e) { /* ignore */ }
+    }
+  }
+
+  // ─── LLM: Deck generieren / überarbeiten ────────────────────
+
+  const aiBtn = document.getElementById("slide-ai-btn");
+  const topicInput = document.getElementById("slide-topic");
+  const minutesInput = document.getElementById("slide-minutes");
+  const progress = document.getElementById("slide-progress");
+  const pTimer = document.getElementById("slide-ptimer");
+  const pBar = document.getElementById("slide-pbar");
+
+  window.slideAiGenerate = async function () {
+    aiBtn.disabled = true;
+    aiBtn.textContent = "⏳ Generiere…";
+    progress.classList.remove("hidden");
+
+    // Timer + animierte Progressbar (asymptotisch bis ~95 %, dann 100 % bei Fertig)
+    let seconds = 0;
+    pTimer.textContent = "0s";
+    const aiTimer = setInterval(() => { seconds++; pTimer.textContent = seconds + "s"; }, 1000);
+    let bar = 5;
+    pBar.style.width = bar + "%";
+    const barTimer = setInterval(() => {
+      bar = bar + (95 - bar) * 0.04;
+      pBar.style.width = bar + "%";
+    }, 300);
+
+    try {
+      const res = await fetch(`/api/courses/${courseId}/slides/ai-generate`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          deck_id: material.id,
+          topic: topicInput.value.trim(),
+          minutes: parseInt(minutesInput.value, 10) || 90,
+          current_title: titleInput.value,
+          current_content: textarea.value,
+          generate_fields: { title: true, content: true },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "LLM-Generierung fehlgeschlagen.");
+
+      if (data.title) titleInput.value = data.title;
+      if (data.content) {
+        textarea.value = data.content;
+        renderPreview(data.content);
+      }
+      // Leere Felder im Response = LLM hat das Feld nicht geändert
+      const changed = [], unchanged = [];
+      (data.title ? changed : unchanged).push("Titel");
+      (data.content ? changed : unchanged).push("Folien");
+      let msg = "LLM-Deck generiert";
+      if (data.edits_applied > 0) msg += ` (${data.edits_applied} lokale Änderung${data.edits_applied > 1 ? "en" : ""} angewendet)`;
+      if (unchanged.length) msg += ` — ${unchanged.join(" & ")} unverändert gelassen`;
+      showToast(msg + " — bitte prüfen und speichern.", "success");
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      clearInterval(aiTimer);
+      clearInterval(barTimer);
+      pBar.style.width = "100%";
+      aiBtn.disabled = false;
+      aiBtn.textContent = "✨ Generieren / Überarbeiten";
+      setTimeout(() => progress.classList.add("hidden"), 500);
+    }
+  };
+
+  // ─── Speichern / Sichtbarkeit / Löschen ─────────────────────
+
+  window.saveMaterial = async function () {
+    const title = titleInput.value.trim();
+    const content = textarea.value;
+    if (!title) {
+      showToast("Titel darf nicht leer sein.", "error");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${material.id}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title, content, is_visible: currentVisible }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler beim Speichern.", "error");
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  };
+
+  window.toggleVisibility = async function () {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/materials/${material.id}`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_visible: !currentVisible }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || "Fehler.", "error");
+        return;
+      }
+      window.location.reload();
+    } catch (err) {
+      showToast("Fehler: " + err.message, "error");
+    }
+  };
+
+  window.deleteMaterial = function () {
+    if (!confirm(`Slide-Deck "${titleInput.value || material.title}" wirklich löschen?`)) return;
+    fetch(`/api/courses/${courseId}/materials/${material.id}`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    })
+      .then(r => r.json().then(d => ({ ok: r.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) throw new Error(d.detail || "Fehler beim Löschen.");
+        window.location.href = `/courses/${courseId}/slides`;
+      })
+      .catch(err => showToast(err.message, "error"));
+  };
+
+  // Live-Preview beim Tippen
+  textarea.addEventListener("input", schedulePreview);
+
+  loadContent();
+
+  {% endif %}
+})();
+</script>
+{% endblock %}

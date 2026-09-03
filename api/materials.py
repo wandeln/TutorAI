@@ -2,10 +2,13 @@
 Kurs-Material: Vorlesungsskript & Slides (Markdown).
 
 Regeln:
-- Pro Kurs & Typ (script/slides) existiert maximal ein Material.
+- Skript: existiert als Kapitel (course_script_sections); ein legacy
+  script-Material bleibt pro Kurs einzig.
+- Slides: mehrere Slide-Decks pro Kurs erlaubt (Reihenfolge: display_order).
 - Studenten sehen nur sichtbare Materialien (is_visible=True).
 - Anlegen/Bearbeiten: PROF/TUTOR; Löschen: PROF. Admin darf alles.
-- Slides = ein Markdown-Dokument, Folien durch eine Zeile `---` getrennt.
+- Slides = Markdown-Deck, Folien durch eine Zeile `---` getrennt
+  (Format & Validierung: services.slides_service).
 - Nach jeder Content-Änderung: sync_media_usages() (Medien-Einbindung).
 """
 
@@ -13,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from database.base import get_session
 from database.models import (
@@ -26,6 +29,7 @@ from database.models import (
 )
 from services.auth_service import get_current_user, require_course_access
 from services.media_service import sync_media_usages
+from services.slides_service import SlideError, parse_slides, slide_count, strip_slide_notes
 
 router = APIRouter(prefix="/api", tags=["Skript & Slides"])
 
@@ -70,8 +74,11 @@ def _material_to_dict(m: CourseMaterial, include_content: bool = False) -> dict:
         "title": m.title,
         "material_type": m.material_type.value,
         "is_visible": m.is_visible,
+        "display_order": m.display_order,
         "updated_at": m.updated_at.isoformat() if m.updated_at else None,
     }
+    if m.material_type == MaterialType.SLIDES:
+        d["slide_count"] = slide_count(m.content)
     if include_content:
         d["content"] = m.content
     return d
@@ -90,7 +97,9 @@ async def list_materials(
     is_tutor = _is_tutor(user, session, course_id)
 
     materials = session.exec(
-        select(CourseMaterial).where(CourseMaterial.course_id == course_id)
+        select(CourseMaterial)
+        .where(CourseMaterial.course_id == course_id)
+        .order_by(CourseMaterial.display_order.asc(), CourseMaterial.id.asc())  # type: ignore[attr-defined]
     ).all()
     return [
         _material_to_dict(m)
@@ -114,7 +123,12 @@ async def get_material(
     if not material.is_visible and not is_tutor:
         raise HTTPException(404, "Material nicht gefunden.")
 
-    return _material_to_dict(material, include_content=True)
+    d = _material_to_dict(material, include_content=True)
+    if material.material_type == MaterialType.SLIDES and not is_tutor:
+        # Sprechernotizen nicht an Nicht-Tutoren ausliefern → landen auch
+        # nicht im DOM der Präsentation/Vorschau.
+        d["content"] = strip_slide_notes(material.content)
+    return d
 
 
 # ─── Schreiben (PROF/TUTOR) ──────────────────────────────────────
@@ -126,7 +140,7 @@ async def create_material(
     session: Session = Depends(get_session),
     user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
-    """Skript oder Slides anlegen (max. eins pro Typ)."""
+    """Skript oder Slide-Deck anlegen (mehrere Decks pro Kurs erlaubt)."""
     user, _ = user_and_course
     body = await request.json()
 
@@ -139,20 +153,38 @@ async def create_material(
     if not title:
         raise HTTPException(400, "Titel darf nicht leer sein.")
 
-    existing = session.exec(
-        select(CourseMaterial)
-        .where(CourseMaterial.course_id == course_id)
-        .where(CourseMaterial.material_type == mtype)
-    ).first()
-    if existing:
-        raise HTTPException(409, f"Es existiert bereits ein {LABELS[mtype]} für diesen Kurs.")
+    content = body.get("content") or ""
+    if mtype == MaterialType.SLIDES:
+        try:
+            parse_slides(content)
+        except SlideError as e:
+            raise HTTPException(400, str(e))
+
+    if mtype == MaterialType.SCRIPT:
+        existing = session.exec(
+            select(CourseMaterial)
+            .where(CourseMaterial.course_id == course_id)
+            .where(CourseMaterial.material_type == mtype)
+        ).first()
+        if existing:
+            raise HTTPException(409, f"Es existiert bereits ein {LABELS[mtype]} für diesen Kurs.")
+        display_order = 0
+    else:
+        # Slide-Decks: an die nächste freie Position anhängen
+        last = session.exec(
+            select(func.max(CourseMaterial.display_order))
+            .where(CourseMaterial.course_id == course_id)
+            .where(CourseMaterial.material_type == MaterialType.SLIDES)
+        ).one()
+        display_order = (last or 0) + 1
 
     material = CourseMaterial(
         course_id=course_id,
         title=title,
         material_type=mtype,
-        content=body.get("content") or "",
+        content=content,
         is_visible=bool(body.get("is_visible", True)),
+        display_order=display_order,
         created_by=user.id,  # type: ignore[arg-type]
     )
     session.add(material)
@@ -181,9 +213,17 @@ async def update_material(
             raise HTTPException(400, "Titel darf nicht leer sein.")
         material.title = title
     if "content" in body:
-        material.content = body.get("content") or ""
+        content = body.get("content") or ""
+        if material.material_type == MaterialType.SLIDES:
+            try:
+                parse_slides(content)
+            except SlideError as e:
+                raise HTTPException(400, str(e))
+        material.content = content
     if "is_visible" in body:
         material.is_visible = bool(body["is_visible"])
+    if "display_order" in body and isinstance(body["display_order"], int):
+        material.display_order = body["display_order"]
 
     material.updated_at = datetime.now(timezone.utc)
     session.add(material)

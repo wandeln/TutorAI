@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Slide-Deck-Präsentation (Reveal.js) + PDF-Export (?print-pdf).
+
+   Volleigenständige Seite (ohne Kurs-Tab-Leiste). Kontext von
+   main.slides_present_page:
+     course {id, name, description, semester},
+     deck {id, title, is_visible},
+     is_tutor, current_user, courses, selected_course_id, is_admin
+   + Folien-Theme-Kontext:
+     slides_theme, slides_theme_css, slides_footer_text, slides_has_logo
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block body_class %}present-mode{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ asset('vendor/reveal/reset.css') }}">
+<link rel="stylesheet" href="{{ asset('vendor/reveal/reveal.css') }}">
+<link rel="stylesheet" href="{{ asset('css/slides.css') }}">
+{# Pro-Kurs-Theme-Werte MÜSSEN nach slides.css geladen werden, da slides.css
+   eigene :root-Defaults definiert und bei gleicher Spezifität die
+   Source-Order gewinnt. #}
+<style>:root { {{ slides_theme_css | safe }} }</style>
+{% endblock %}
+
+{% block content %}
+<div class="present-toolbar">
+  <a href="/courses/{{ course.id }}/slides">← Alle Folien</a>
+  <span class="present-title">{{ deck.title }}</span>
+  {% if is_tutor %}
+  <span class="text-gray-400 text-xs whitespace-nowrap" title="Sprechernotizen (Tastenkürzel S)">S = Notizen</span>
+  {% endif %}
+  <button id="fullscreen-btn" title="Vollbild (oder F)">⛶</button>
+  <a href="/courses/{{ course.id }}/slides/{{ deck.id }}/present?print-pdf" target="_blank">⬇️ PDF</a>
+</div>
+<div class="present-shell" id="present-shell">
+  <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}"
+       id="reveal-root">
+    <div class="slides" id="reveal-slides"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ asset('js/slides.js') }}"></script>
+<script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
+{# Notes-Plugin nur für Dozenten/Tutoren: für Studenten ist die Taste „S"
+   inaktiv, und die Notizen werden zusätzlich serverseitig aus dem API-
+   Content gefiltert (slides_service.strip_slide_notes) → nicht im DOM. #}
+{% if is_tutor %}
+<script src="{{ asset('vendor/reveal/plugin/notes/notes.js') }}"></script>
+{% endif %}
+<script>
+  // Global für den Markdown-Renderer (Xrefs @sec:/@task: → Skript-Ref-Map)
+  const courseId = {{ course.id }};
+  const DECK_ID = {{ deck.id }};
+  const FOOTER_TEXT = {{ slides_footer_text | tojson }};
+  const FOOTER_ENABLED = {{ "true" if slides_theme.footer else "false" }};
+  const SLIDE_THEME = {{ slides_theme | tojson }}; // aufgelöstes Theme (Seitenverhältnis …)
+  const HAS_NOTES = {{ "true" if is_tutor else "false" }}; // Notes-Plugin nur für Tutoren/Profs
+</script>
+<script>
+// Vollbild umschalten (Browser-Fullscreen API; Reveal's "F"-Key tut dasselbe)
+(function () {
+  const btn = document.getElementById("fullscreen-btn");
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      document.documentElement.requestFullscreen().catch(() => {});
+    }
+  });
+})();
+</script>
+<script>
+(async function () {
+  const shell = document.getElementById("present-shell");
+
+  // Deck-Inhalt laden
+  let content;
+  try {
+    const res = await fetch(`/api/courses/${courseId}/materials/${DECK_ID}`, { credentials: "same-origin" });
+    if (!res.ok) throw new Error("Nicht geladen");
+    const data = await res.json();
+    content = data.content || "";
+  } catch (e) {
+    shell.innerHTML = '<div class="present-message">Fehler beim Laden des Slide-Decks.</div>';
+    return;
+  }
+
+  const slides = parseSlides(content);
+  if (slides.length === 0) {
+    shell.innerHTML = '<div class="present-message">Dieses Deck enthält noch keine Folien.</div>';
+    return;
+  }
+
+  // Folien als <section> bauen und (asynchron) rendern
+  // (Notizen als <aside class="notes"> — s. buildSlideSection in slides.js)
+  const slidesEl = document.getElementById("reveal-slides");
+  // Footer am Canvas-Element (wandert nicht mit den Slide-Transitions)
+  if (FOOTER_ENABLED && FOOTER_TEXT) slidesEl.setAttribute("data-footer", FOOTER_TEXT);
+  for (const slide of slides) {
+    const footer = FOOTER_ENABLED && FOOTER_TEXT ? FOOTER_TEXT : null;
+    slidesEl.appendChild(await buildSlideSection(slide, footer));
+  }
+
+  // Feste Logik-Größe laut Design (Seitenverhältnis): Präsentation, Vorschau
+  // und PDF nutzen alle dasselbe Format (Reveal skaliert auf den Viewport).
+  const ratio = (SLIDE_THEME && SLIDE_THEME.aspect_value) || 16 / 9;
+  const SLIDE_W = 960;
+  const SLIDE_H = Math.round(SLIDE_W / ratio);
+
+  const reveal = new Reveal(document.getElementById("reveal-root"), {
+    embedded: true, // Reveal übernimmt sonst <body> als Viewport (Full-Page-Mode);
+                    // embedded: Viewport = #reveal-root, unsere Layout-Struktur bleibt erhalten
+    hash: true,
+    controls: true,
+    progress: true,
+    center: false, // keine Reveal-Zentrierung mehr (inline style.top) — normale
+                   // Folien bleiben oben angedockt (konstante Titel-Höhe),
+                   // layout:center zentriert per CSS (slides.css)
+    transition: "slide",
+    // Folien-Nummern immer anzeigen (Reveal 4.x: bei rein horizontalen Decks
+    // = aktuelle Folie; Default showSlideNumber "all" → on-screen + im PDF).
+    slideNumber: true,
+    width: SLIDE_W,
+    height: SLIDE_H,
+    // Gezoomte Applets ({zoom=X}) überspringt das Auto-Animate — der
+    // Inline-Transform bleibt erhalten (s. tutoraiAutoAnimateMatcher).
+    autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+    plugins: HAS_NOTES ? [RevealNotes] : [],
+  });
+  await reveal.initialize();
+
+  // Toolbar nur in der Reveal-Overview (Esc) anzeigen — die Präsentation
+  // selbst läuft ohne die dunkle Leiste, nur die Folien sind sichtbar.
+  const toolbar = document.querySelector(".present-toolbar");
+  reveal.on("overviewshown", () => toolbar.classList.add("visible"));
+  reveal.on("overviewhidden", () => toolbar.classList.remove("visible"));
+
+  // PDF-Export: Reveal legt mit ?print-pdf das Druck-Layout an und feuert
+  // "pdf-ready", ruft window.print() aber nicht selbst auf → hier auslösen.
+  if (/print-pdf/.test(window.location.search)) {
+    // Reveal's setupPDF() setzt den Sections left/top/width, aber KEINE
+    // Höhe (rechnet aus gemessenen Scroll-Heights) → die Sections
+    // schrumpfen in der PDF auf den Inhalt. fixPdfLayout() setzt die
+    // Folien-Höhe exakt (960 × 960/Ratio); die Seiten-Höhe (inkl. margin)
+    // stimmt bei Reveal bereits.
+    const margin = reveal.getConfig().margin ?? 0.04;
+    const pageW = Math.floor(SLIDE_W * (1 + margin));
+    const pageH = Math.floor(SLIDE_H * (1 + margin));
+    const fixPdfLayout = () => {
+      document.querySelectorAll(".pdf-page").forEach((p) => {
+        p.style.height = pageH + "px";
+      });
+      document.querySelectorAll(".pdf-page > section").forEach((s) => {
+        s.style.height = SLIDE_H + "px";
+        s.style.top = Math.round((pageH - SLIDE_H) / 2) + "px";
+        s.style.left = Math.round((pageW - SLIDE_W) / 2) + "px";
+      });
+    };
+    let printed = false;
+    const doPrint = () => {
+      if (!printed) {
+        printed = true;
+        fixPdfLayout();
+        window.print();
+      }
+    };
+    reveal.on("pdf-ready", doPrint);
+    setTimeout(doPrint, 800); // Fallback, falls das Event nicht ankommt
+  }
+})();
+</script>
+{% endblock %}

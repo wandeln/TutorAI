@@ -117,6 +117,9 @@ def migrate_schema():
         "courses": {
             "toc_visible": "BOOLEAN DEFAULT 1",  # Inhaltsverzeichnis für Studenten sichtbar
         },
+        "course_materials": {
+            "display_order": "INTEGER DEFAULT 0",  # Reihenfolge (mehrere Slide-Decks pro Kurs)
+        },
     }
     column_drops = {
         "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt
@@ -124,6 +127,47 @@ def migrate_schema():
     is_sqlite = "sqlite" in DATABASE_URL
 
     with engine.begin() as conn:
+        # Unique-Constraint (max. ein Material pro Kurs & Typ) ist obsolet:
+        # Pro Kurs dürfen mehrere Slide-Decks existieren (Skripte sind
+        # Kapitel und liegen in course_script_sections).
+        if is_sqlite:
+            # In SQLite ist das Constraint Teil des CREATE-TABLE-DDLs
+            # (UNIQUE-Table-Constraint, realisiert als Auto-Index) und kann
+            # nicht per DROP INDEX entfernt werden → Tabelle ohne das
+            # Constraint neu aufbauen, Daten übernehmen, alte Tabelle ersetzen.
+            row = conn.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='course_materials'"
+            ).fetchone()
+            if row and re.search(
+                r"CONSTRAINT\s+uq_material_course_type\s+UNIQUE", row[0], re.IGNORECASE
+            ):
+                new_ddl = re.sub(
+                    r"^\s*CONSTRAINT\s+uq_material_course_type\s+UNIQUE"
+                    r"\s*\(course_id\s*,\s*material_type\)\s*,?\s*$",
+                    "",
+                    row[0],
+                    count=1,
+                    flags=re.IGNORECASE | re.MULTILINE,
+                )
+                tmp = "course_materials_migration_tmp"
+                conn.exec_driver_sql(
+                    new_ddl.replace("course_materials", tmp, 1)
+                )
+                conn.exec_driver_sql(
+                    f"INSERT INTO {tmp} SELECT * FROM course_materials"
+                )
+                conn.exec_driver_sql("DROP TABLE course_materials")
+                conn.exec_driver_sql(f"ALTER TABLE {tmp} RENAME TO course_materials")
+                # Sekundärindex wird mit der alten Tabelle gelöscht → neu anlegen
+                conn.exec_driver_sql(
+                    "CREATE INDEX ix_course_materials_course_id"
+                    " ON course_materials (course_id)"
+                )
+        else:
+            conn.exec_driver_sql(
+                "ALTER TABLE course_materials DROP CONSTRAINT IF EXISTS uq_material_course_type"
+            )
+
         for table, new_columns in column_migrations.items():
             if is_sqlite:
                 rows = conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()

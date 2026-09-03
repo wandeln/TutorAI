@@ -395,6 +395,19 @@
   background: #fff;
 }
 
+/* Gezoomte Applets ({.zoom=X}): Wrapper mit sichtbarer (geskalter) Höhe —
+   transform skaliert den Inhalt, ändert aber nicht die Iframe-Layout-Box,
+   und line-height:0 eliminiert den Inline-Whitespace-Spalte unter dem
+   Iframe. (Skript-Seiten laden slides.css nicht → Regel hier global.
+   Das Element ist ein <span> (kein div): erst parse-inline bleibt er im
+   umgebenden <p> und erbt dessen font-size — s. slides.css. */
+.tutorai-applet-zoom {
+  display: inline-block;
+  width: 100%;
+  overflow: hidden;
+  line-height: 0;
+}
+
 /* Medaillen-Badges — gemeinsame Basis für alle Seiten (tasks_student.html,
    dashboard.html & task_solve.html definieren teils eigene Varianten darüber) */
 .badge-tier { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:9999px; font-size:0.75rem; font-weight:700; text-transform:uppercase; white-space:nowrap; margin-right:6px; }

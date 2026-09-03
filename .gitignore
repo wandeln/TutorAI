@@ -31,6 +31,9 @@ data/avatars/
 # Environment (contains secrets!)
 .env
 
+# reveal.js-Build (npm-Abhängigkeiten)
+static/vendor/reveal/reveal-build/node_modules/
+
 # OS
 .DS_Store
 Thumbs.db

@@ -22,6 +22,7 @@ from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIM
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
 from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
+from prompts.slides_prompt import SLIDES_PROMPT_TEMPLATE
 from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 from prompts.script_question_prompt import SCRIPT_QUESTION_PROMPT_TEMPLATE
@@ -35,6 +36,8 @@ REPORT_TIMEOUT = int(os.getenv("REPORT_TIMEOUT", "180"))
 # Applet-Generierung: komplettes HTML-Dokument → längeres Budget + mehr Tokens
 APPLET_TIMEOUT = int(os.getenv("APPLET_TIMEOUT", "240"))
 APPLET_MAX_TOKENS = int(os.getenv("APPLET_MAX_TOKENS", "16384"))
+# Slide-Deck-Generierung: Decks können lang sein (viele Folien + Sprechernotizen)
+SLIDES_MAX_TOKENS = int(os.getenv("SLIDES_MAX_TOKENS", "16384"))
 
 
 class LLMService:
@@ -217,6 +220,69 @@ class LLMService:
 
         return await self._call_with_json(
             prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
+
+    async def generate_slide_deck(
+        self,
+        course_name: str,
+        topic: str,
+        minutes: int,
+        generate_fields: list[str],
+        current_title: str = "",
+        current_content: str = "",
+        chapters: Optional[list[dict]] = None,
+        course_media: Optional[list[dict]] = None,
+        course_tasks: Optional[list[dict]] = None,
+        config: Optional[dict] = None,
+    ):
+        """Generiert/ändert ein Slide-Deck (Vorlesungsfolien) via LLM.
+
+        topic: Vereinheitlichtes Feld aus der UI (Thema des Decks und/oder
+        konkrete Änderungswünsche, z.B. „Folien zu Kapitel 3 erstellen“).
+        minutes: Dauer der Präsentation in Minuten → das LLM plant die
+        Folienanzahl entsprechend (Richtwert 1,5–2 min/Folie).
+        generate_fields: Untermenge von ["title", "content"].
+        chapters: [{title, labels, content}] der Skript-Kapitel (Inhalt als
+        Folien-Basis; labels für Label-Konsistenz — gleiche Objekte dürfen
+        dieselben Labels verwenden → gleiche Nummer + Link zum Skript).
+        course_media: [{title, description, url}] — alle Medien des Kurses
+        (ggf. einbinden; auch solche, die bereits im Skript vorkommen —
+        Medien dürfen in Skript UND Slides verwendet werden).
+        course_tasks: [{id, title}] — Übungsaufgaben des Kurses (ggf. per
+        @task:{id} im Deck einbindbar → Aufgaben-Box).
+        current_content: bestehendes Deck — für die Folien-Referenz in
+        „content_edits“ mit expliziten Nummern („%% Folie N %%“) vorliegen
+        (s. slides_service.numbered_slide_content); die Marker sind KEIN
+        Deck-Inhalt und werden vom LLM nicht zurückgeliefert.
+        Das LLM liefert JSON mit einer Untermenge der angeforderten Schlüssel —
+        weggelassene Schlüssel = das Feld bleibt unverändert (leeres Feld im
+        Response, Frontend behält den vorhandenen Wert). Für lokale Änderungen
+        an vorhandenem Inhalt kann es „content_edits“ (Liste von Edit-Objekten)
+        statt „content“ liefern — die Anwendung auf den bestehenden Inhalt
+        erfolgt serverseitig (slides_service.apply_slide_edits).
+
+        Enthält keine sensitive Studentendaten — nutzt daher den Public
+        Endpoint, falls konfiguriert.
+        """
+        generate_list = ", ".join(f'"{f}"' for f in generate_fields)
+
+        prompt = Template(SLIDES_PROMPT_TEMPLATE).render(
+            course_name=course_name,
+            topic=topic or "(Kein Thema angegeben — erstelle ein sinnvolles Deck bzw. überarbeite das bestehende Deck.)",
+            minutes=minutes,
+            generate_list=generate_list,
+            chapters=chapters or [],
+            course_media=course_media or [],
+            course_tasks=course_tasks or [],
+            current_title=current_title,
+            current_content=current_content,
+        )
+
+        return await self._call_with_json(
+            prompt,
+            response_format={"type": "json_object"},
+            config=self._public_config(config),
+            max_tokens=SLIDES_MAX_TOKENS,
         )
 
     async def generate_applet(

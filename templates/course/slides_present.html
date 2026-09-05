@@ -34,7 +34,7 @@
   <button id="fullscreen-btn" title="Vollbild (oder F)">⛶</button>
   <a href="/courses/{{ course.id }}/slides/{{ deck.id }}/present?print-pdf" target="_blank">⬇️ PDF</a>
 </div>
-<div class="present-shell" id="present-shell">
+<div class="present-shell" id="present-shell" style="height:100dvh">
   <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}"
        id="reveal-root">
     <div class="slides" id="reveal-slides"></div>

@@ -47,6 +47,17 @@
   text-align: left; /* Default-Layout (topleft): linksbündig */
 }
 
+/* Der Stack-Container braucht KEIN linkes/rechtes Padding: Die Unterfolien
+   sind position:absolute OHNE left (Reveal-Basisregel) → sie sitzen an der
+   statischen Position, d. h. VERSCHOBEN um das Container-Padding. Reveal's
+   .stack-Regel setzt nur padding-top/bottom auf 0 — ohne diesen Reset
+   wären alle Unterfolien 2.5em nach rechts verschoben (und ohne rechten
+   Rand). print-pdf: reveal.css setzt dort ohnehin padding:0!important. */
+.reveal .slides > section.slides-stack {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* layout: center (Titelfolien) — vertikal + horizontal zentriert.
    Nur .present, damit Reveal's display:none für inaktive Folien erhalten
    bleibt. display:flex braucht !important: Reveal setzt auf der aktiven
@@ -165,9 +176,14 @@ html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section::before {
   z-index: 1; /* im PDF über dem Folien-Hintergrund (.tutorai-slide-bg, z-index:0); live: natives Bg liegt hinter .slides */
 }
 
-/* Folieninhalt über dem Logo (Logo ganz im Hintergrund). */
-.reveal.slides-has-logo .slides > section > *,
-html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section > * {
+/* Folieninhalt über dem Logo (Logo ganz im Hintergrund).
+   WICHTIG: :not(section) — bei Stack-Folien sind die direkten Children die
+   nested Unterfolien-Sections; die MÜSSEN position:absolute bleiben
+   (Reveal-Stack-Layout). Hätten sie position:relative, würden sie zu
+   Flow-Elementen und die aktuelle Unterfolie würde hinter den
+   (opacity-0) Past-Siblings unterhalb des Canvases rendern. */
+.reveal.slides-has-logo .slides > section > :not(section),
+html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section > :not(section) {
   position: relative;
   z-index: 1;
 }
@@ -340,7 +356,25 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   color: var(--slides-accent, #2563eb) !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview code {
+/* Abbildungs-/Code-Nummern-Links in Captions (Klick → Skript): wie
+   normale Nummern (kein Accent, keine Underline) — der Verweis ist erst
+   beim Hover erkennbar (wie .tutorai-eq-num). Muss nach der a-Regel
+   stehen: gleiche Selektorstärke + !important → Source-Order gewinnt. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) a {
+  color: inherit !important;
+  text-decoration: none !important;
+}
+
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) a:hover {
+  text-decoration: underline !important;
+}
+
+/* Code in echten Slides (.reveal .slides): native Reveal.js-Darstellung
+   (hljs-Theme + reveal.css) — bewusst KEINE eigenen code/pre-Regeln hier,
+   sonst kaputt sie die Zeilennummern-Tabelle/Per-Line-Reveal-Clones. Die
+   Regeln gelten nur noch für .slides-canvas (Kachel-Thumbnails, kein
+   Reveal-Plugin → kein natives Code-Styling dort). */
+.slides-canvas .markdown-preview code {
   font-size: 0.8em !important;
   background: rgba(127, 127, 127, 0.15) !important;
   border: 1px solid rgba(127, 127, 127, 0.35) !important;
@@ -350,13 +384,13 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   font-weight: 400 !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview pre {
+.slides-canvas .markdown-preview pre {
   font-size: 0.78em !important;
   margin-top: 0.4em !important;
   margin-bottom: 0.55em !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview pre code {
+.slides-canvas .markdown-preview pre code {
   font-size: 1em !important;
   padding: 0.9em 1.1em !important;
 }
@@ -369,6 +403,38 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
 }
 :is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-code pre code {
   padding: 0.5em 1em 0.7em !important;
+}
+
+/* Code-Default-Höhe = Applet-Default (9em): ohne explizite {.height} wird
+   ein längerer Block intern geschnitten + scrollbar (wie Applets).
+   Gezoomt ({.zoom=X}) teilt --tz die Cap, damit die sichtbare Höhe dem
+   zoomlosen Default entspricht (wie bei gezoomten Applets). Explizites
+   {.height} setzt inline max-height !important → gewinnt gegen diese
+   Regel. @box:code bleibt nahtlos ausgenommen (:not). Die Per-Line-
+   Reveal-Clones sind absolute Kinder → sie scrollen MIT dem <pre>. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview pre:not(.tutorai-callbox-code pre) {
+  max-height: calc(9em / var(--tz, 1)) !important;
+  overflow: auto !important;
+}
+
+/* PDF-Export: Cap weg — Code muss im PDF vollständig stehen bleiben
+   (internes Scrollen ist dort nicht bedienbar). */
+html.print-pdf .reveal .slides .markdown-preview pre {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* Per-Line-Reveal-Clones (Code-Blöcke mit {#lines:…}): reveal.css positioniert
+   die Clone absolut (top:0/left:0) relativ zum nächsten positioned Vorgänger.
+   Ohne diese Regel wäre das der Folieninhalt bzw. (mit Logo) .markdown-preview
+   → die Clone-Tabelle schwebt als Ghost-Overlay über dem Folieninhalt.
+   Mit position:relative am <pre> (padding 0: UA-Default; das hljs-Theme
+   padding sitzt auf code, identisch bei Basis und Clone) decken sich Clone
+   und Basis exakt. :has() → nur pre MIT Clones wird positioniert, alle
+   anderen Code-Blöcke bleiben unverändert (wichtig für die
+   AutoAnimate-BBox-Messung via offsetParent). */
+:is(.reveal .slides, .slides-canvas) pre:has(> code.fragment) {
+  position: relative;
 }
 
 :is(.reveal .slides, .slides-canvas) .markdown-preview blockquote {
@@ -386,7 +452,9 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   margin: 0.8em 0 !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview table {
+/* :not(.hljs-ln) — die Code-Zeilennummern-Tabelle (highlight.js-Plugin) ist
+   KEINE Datentabelle: padding:0/border:0 gehören zum Code-Layout. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview table:not(.hljs-ln) {
   font-size: 0.85em !important;
 }
 
@@ -397,7 +465,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   padding: 0.4em 0.7em !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview td {
+:is(.reveal .slides, .slides-canvas) .markdown-preview table:not(.hljs-ln) td {
   border: 1px solid rgba(127, 127, 127, 0.4) !important;
   color: var(--slides-text, #1f2937) !important;
   padding: 0.4em 0.7em !important;
@@ -410,11 +478,22 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   border-radius: 0.3em !important;
 }
 
-/* Applet-Iframes: Höhe dämpfen (Renderer setzt inline 150–600 px) */
+/* Figure-/Applet-/Code-Captions: in Slides größer als im Skript
+   (0.875rem) — em-basiert, damit sie mit dem Reveal-Zoom skalieren. */
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) figcaption {
+  font-size: 1.2rem;
+}
+
+/* Applet-Iframes: volle Breite, Höhe dämpfen (Renderer setzt inline
+   150–600 px). Videos (YouTube) ausgenommen: ihre Höhe folgt dem
+   16:9-Format (aspect-ratio in main.css) oder der expliziten {.height}. */
 :is(.reveal .slides, .slides-canvas) .tutorai-applet {
   width: 100% !important;
-  max-height: 9em !important;
   border-radius: 0.4em;
+}
+
+:is(.reveal .slides, .slides-canvas) .tutorai-applet:not(.tutorai-video) {
+  max-height: 9em !important;
 }
 
 /* Gezoomtes Applet OHNE explizites {.height}: dieselbe Default-Max-Höhe
@@ -422,7 +501,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
    scale(--tz) vergrößert sie sichtbar, daher Teilung durch den Faktor
    (--tz setzt der Renderer inline). Ergebnis: sichtbare Höhe = 9em,
    identisch zum zoomlosen Default; darüber scrollt das Applet intern. */
-:is(.reveal .slides, .slides-canvas) .tutorai-applet[data-zoom]:not([data-max-h]) {
+:is(.reveal .slides, .slides-canvas) .tutorai-applet[data-zoom]:not([data-max-h]):not(.tutorai-video) {
   max-height: calc(9em / var(--tz, 1)) !important;
 }
 

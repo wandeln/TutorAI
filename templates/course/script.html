@@ -846,6 +846,24 @@
       }
     }
 
+    // Codes: beschriftete Code-Blöcke (Token #code:label + [caption] in der
+    // öffnenden Zeile eines Fenced-Blocks, s. parseFenceHead)
+    body.appendChild(subHead('Codes'));
+    const codeList = refMap.codes || [];
+    if (!codeList.length) {
+      const p = document.createElement('p');
+      p.className = 'text-gray-400 text-sm py-0.5';
+      p.textContent = 'Noch keine beschrifteten Code-Blöcke.';
+      body.appendChild(p);
+    } else {
+      for (const c of codeList) {
+        const crow = document.createElement('div');
+        crow.className = 'py-0.5 text-sm';
+        crow.appendChild(tocLink('#code:' + encodeURIComponent(c.label), 'Code ' + c.num + (c.caption ? ': ' + c.caption : ''), 'text-gray-500 hover:text-blue-600 hover:underline'));
+        body.appendChild(crow);
+      }
+    }
+
     container.prepend(card);
     sqUpdateChapterNumbers();
   }
@@ -1051,9 +1069,9 @@
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // ─── Deep-Link: #fig:label / #eq:label → Kapitel aufklappen, zum Objekt scrollen ───
+  // ─── Deep-Link: #fig:label / #eq:label / #code:label → Kapitel aufklappen, zum Objekt scrollen ───
   async function handleObjectHash() {
-    const m = location.hash.match(/^#(fig|eq):(.+)$/);
+    const m = location.hash.match(/^#(fig|eq|code):(.+)$/);
     if (!m) return;
     const kind = m[1];
     const label = decodeURIComponent(m[2]);

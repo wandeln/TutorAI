@@ -59,6 +59,14 @@ def _scan_labels(content: str) -> tuple[list[str], list[str]]:
 
 # Nummerierte Figuren inkl. Caption (Abbildungsverzeichnis)
 _FIG_CAPTION_RE = re.compile(r"!\[([^\]]*)\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
+# Beschriftete Code-Blöcke: {#code:label} auf der ÖFFNENDEN Zeile eines
+# Fenced-Blocks (``` …), optional mit Caption [text] auf derselben Zeile
+# (Syntax {#code:label}[caption], s. parseFenceHead in markdown-renderer.js).
+# Schließende Fences haben eine leere Kopfzeile → werden nicht erkannt.
+# Caption-Zeichenkette [^\]]* ≈ JS-Token (bis zum ersten ]).
+_CODE_FENCE_OPEN_RE = re.compile(r"^```([^\n]*)$", re.MULTILINE)
+_CODE_LABEL_IN_HEAD_RE = re.compile(r"\{#code:([\w-]+)\}")
+_CODE_CAPTION_IN_HEAD_RE = re.compile(r"\[([^\]]*)\]")
 # Sektions-Label am Ende einer Heading-Zeile: ## Titel {#sec:label}
 _SEC_LABEL_TAIL_RE = re.compile(r"\s*\{#sec:([\w-]+)\}\s*$")
 # Kapitel-Label: {#sec:label} als EIGENE ZEILE = erste nicht-leere Zeile des Inhalts
@@ -72,6 +80,25 @@ def _scan_figures(content: str) -> list[tuple[str, str]]:
     text = _CODE_FENCED_RE.sub("", content or "")
     text = _CODE_INLINE_RE.sub("", text)
     return _FIG_CAPTION_RE.findall(text)
+
+
+def _scan_code_labels(content: str) -> list[tuple[str, str]]:
+    """(Label, Caption) beschrifteter Code-Blöcke in Reihenfolge des Vorkommens.
+
+    Im Gegensatz zu Figuren/Gleichungen wird hier genau in den Code-Blöcken
+    gesucht: {#code:label} steht auf der öffnenden ```-Zeile (Tokens in
+    beliebiger Reihenfolge, nahtlos oder mit Leerzeichen, s. parseFenceHead).
+    """
+    out: list[tuple[str, str]] = []
+    for m in _CODE_FENCE_OPEN_RE.finditer(content or ""):
+        head = m.group(1)
+        lm = _CODE_LABEL_IN_HEAD_RE.search(head)
+        if not lm:
+            continue
+        cm = _CODE_CAPTION_IN_HEAD_RE.search(head)
+        caption = cm.group(1).strip() if cm else ""
+        out.append((lm.group(1), caption))
+    return out
 
 
 def _clean_heading_title(title: str) -> str:
@@ -460,17 +487,19 @@ async def script_refmap(
         mode:     "reading" (Student) bzw. "edit" (PROF/TUTOR/Admin) — beeinflusst nur das
                   Layout der @task:-Boxen (Querverweise verlinken alle auf die Skript-Seite)
         courseId: Kurs-ID
-        chapters: {id: {title, label, num, visible, maxFig, maxEq,
+        chapters: {id: {title, label, num, visible, maxFig, maxEq, maxCode,
                         sections: [{num, title, label, anchor}]}}
                   # num = Kapitelnummer (rollenabhängig), sections = h2–h4-Liste fürs TOC
-                  # maxFig/maxEq = Preview-Fallback (neue, ungespeicherte Labels)
+                  # maxFig/maxEq/maxCode = Preview-Fallback (neue, ungespeicherte Labels)
         labels:   {label: {kind, sectionId, num, chapter?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt
-                  # kinds: fig / eq / sec (num = "N.M…"-String). Kapitel-Label = {#sec:label}
+                  # kinds: fig / eq / sec / code (sec: num = "N.M…"-String). Kapitel-Label = {#sec:label}
                   # als erste nicht-leere Zeile im Inhalt → sec-Entry mit chapter: true und num = Kapitelnummer
         tocVisible: Inhaltsverzeichnis für Studenten sichtbar (Tutor/Prof sehen es immer)
         chapterOrder: Kapitel-IDs in Display-Reihenfolge (JSON-Keys werden bei
                   numerischen IDs vom Parser numerisch sortiert → Reihenfolge nur hier)
         figures:  [{num, caption, label, sectionId}]  # Abbildungsverzeichnis fürs TOC
+        codes:    [{num, caption, label, sectionId}]  # Codes-Tabelle fürs TOC
+                  # ({#code:label} in der öffnenden Zeile eines Fenced-Blocks)
         tasks:    {id: {id, title, taskType, maxPoints, myPoints, attemptsUsed, maxAttempts, deadline}}
                   # für @task:{id}-Referenzen. Student: nur freigeschaltete Aufgaben +
                   # eigene Punkte (analog Aufgabenübersicht); PROF/TUTOR/Admin: alle.
@@ -493,13 +522,17 @@ async def script_refmap(
     chapters: dict[str, dict[str, object]] = {}
     labels: dict[str, dict[str, object]] = {}
     figures: list[dict[str, object]] = []
+    codes: list[dict[str, object]] = []
     fig_running = 0
     eq_running = 0
+    code_running = 0
     for ch_num, s in enumerate(sections, start=1):
         fig_pairs = _scan_figures(s.content)  # (Caption, Label) in Vorkommensreihenfolge
         eqs = _scan_labels(s.content)[1]
+        code_items = _scan_code_labels(s.content)  # (Label, Caption) in Vorkommensreihenfolge
         max_fig = 0
         max_eq = 0
+        max_code = 0
         for caption, label in fig_pairs:
             fig_running += 1
             if label not in labels:
@@ -511,6 +544,12 @@ async def script_refmap(
             if label not in labels:
                 labels[label] = {"kind": "eq", "sectionId": s.id, "num": eq_running}
             max_eq = max(max_eq, eq_running)
+        for label, caption in code_items:
+            code_running += 1
+            if label not in labels:
+                labels[label] = {"kind": "code", "sectionId": s.id, "num": code_running}
+            max_code = max(max_code, code_running)
+            codes.append({"num": code_running, "caption": caption, "label": label, "sectionId": s.id})
         # Sections (h2–h4): kapitellokale Nummerierung, Labels, Anker fürs TOC
         headings = _scan_headings(s.content)
         ch_label = _chapter_label(s.content)
@@ -537,6 +576,7 @@ async def script_refmap(
             "visible": s.is_visible,
             "maxFig": max_fig,
             "maxEq": max_eq,
+            "maxCode": max_code,
             "sections": sec_entries,
         }
 
@@ -588,6 +628,7 @@ async def script_refmap(
         "chapters": chapters,
         "labels": labels,
         "figures": figures,
+        "codes": codes,
         "tasks": tasks_map,
     }
 

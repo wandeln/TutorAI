@@ -34,9 +34,19 @@
  *                                                            (Inhalt = fenced Code-Block)
  * Code-Blöcke:        ```<sprache> … ```           → Syntax-Highlighting (hljs, alle Sprachen;
  *                                                            ohne Sprache = Auto-Detection)
- *                                                            ```<sprache> {#lines:1,3-5} → (Slides) Zeilennummern
- *                                                            + Zeilen-Highlight, "|" = weiterer Schritt
+ *                                                            Öffnende Zeile: Sprache + optionale Tokens in
+ *                                                            BELIEBIGER Reihenfolge (parseFenceHead):
+ *                                                            {#lines:1,3-5} → (Slides) Zeilennummern +
+ *                                                            Zeilen-Highlight, "|" = weiterer Schritt
  *                                                            (Per-Line-Reveal, Reveal-Highlight-Plugin)
+ *                                                            {#aaid:label} → (Slides) Auto-Animate-ID auf dem
+ *                                                            <pre> (data-id): derselbe Label auf der nächsten
+ *                                                            Folie → native Zeilen-Animation
+ *                                                            {.zoom=X} → Schriftgröße ×X, {.height=Y} →
+ *                                                            Max-Höhe Y px + internes Scrollen (beides:
+ *                                                            Slides UND Skript; führender Punkt optional,
+ *                                                            wie bei Applets; Inline-Styles am <pre>)
+ *                                                            (unbekanntes Token → 1. Zeile bleibt Code-Text)
  * AutoAnimate-IDs:    {#aaid:label}                → (nur Slides) explizites Auto-Animate-Element-
  *                                                            Matching: Elemente mit demselben Label auf
  *                                                            zwei Folien animieren per ID ineinander
@@ -190,7 +200,30 @@ function isAppletSrc(src) {
     (/^https?:\/\//i.test(src) && !APPLET_IMAGE_EXT.test(src));
 }
 function appletSandboxAttr(src) {
-  return /^https?:\/\//i.test(src) ? "allow-scripts allow-same-origin" : "allow-scripts";
+  if (!/^https?:\/\//i.test(src)) return "allow-scripts";
+  // YouTube-Player: der „Zu YouTube“-Link braucht allow-popups. Vollbild ist
+  // per Embed-Param fs=0 deaktiviert (Button versteckt), weil fullscreen aus
+  // dem cross-origin-Frame trotz Permissions-Policy-Delegation in Chrome
+  // blockiert wird → kein allow-fullscreen mehr nötig.
+  if (/youtube(?:-nocookie)?\.com/i.test(src)) {
+    return "allow-scripts allow-same-origin allow-popups";
+  }
+  return "allow-scripts allow-same-origin";
+}
+
+// YouTube-URL (watch?v=…, youtu.be/…, shorts/…, embed/…; youtube.com und
+// youtube-nocookie.com) → Embed-URL des Players. Damit werden YouTube-
+// Links wie jedes andere Medium eingebunden (Iframe-Player statt der
+// ganzen Watch-Seite). Nicht-YouTube-URLs → null.
+function youtubeEmbedSrc(src) {
+  let m;
+  if ((m = /^https?:\/\/(?:www\.|m\.)?youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#]*&)?v=|embed\/|shorts\/)([A-Za-z0-9_-]+)(?:[?&#]|$)/i.exec(src)) ||
+      (m = /^https?:\/\/(?:www\.)?youtu\.be\/([A-Za-z0-9_-]+)(?:[?&#]|$)/i.exec(src))) {
+    // fs=0: Vollbild-Button im Player verstecken — fullscreen aus dem
+    // cross-origin-Frame ist ohnehin nicht nutzbar (s. appletSandboxAttr).
+    return `https://www.youtube.com/embed/${m[1]}?fs=0`;
+  }
+  return null;
 }
 
 // ─── Applet-Auto-Sizing ───────────────────────────────────────────────
@@ -233,6 +266,97 @@ window.addEventListener('message', (event) => {
     }
   });
 });
+
+// ─── Fenced-Code-Block-Head ──────────────────────────────────────────
+// Öffnende Zeile eines ```-Blocks: optionale Sprache (bares Wort an
+// erster Position) + optionale Tokens in beliebiger Reihenfolge —
+// durch Leerraum getrennt ODER nahtlos direkt aneinander:
+//   {#lines:1,3-5}   Zeilennummern + Highlight-Schritte (Slides)
+//   {#aaid:label}    Auto-Animate-ID (Slides)
+//   {#code:label}    Code-Label (nummeriert "Code N", Codes-Tabelle im
+//                    Inhaltsverzeichnis, Verweis ins Skript)
+//   [caption]        Code-Caption (NUR in Kombination mit {#code:label};
+//                    ohne Label bleibt die Zeile Code-Text, damit z. B.
+//                    ```python [1,2,3] weiter ein Code-Array ist)
+//   {.zoom=X}        Schriftgröße ×X
+//   {.height=Y}      Max-Höhe Y px (Suffix ∅ oder "px", wie Applets)
+// (Zoom/Height: führender Punkt optional, wie bei Applets; wirken in
+// Slides UND Skript — Inline-Styles am <pre>, kein Kontext-CSS nötig.)
+// Unbekanntes Token oder Duplikat → null (Fallback: 1. Zeile = Code-Text,
+// Tippfehler fallen sichtbar auf — wie beim Applet-Attribut-Parser).
+function parseFenceHead(head) {
+  const out = { language: '', lines: null, aaid: null, zoom: null, height: null, codeLabel: null, caption: null };
+  let matchedAny = false;
+  let i = 0;
+  const n = head.length;
+  const isWS = (ch) => ch === ' ' || ch === '\t';
+  while (i < n) {
+    if (isWS(head[i])) { i += 1; continue; }
+    // Token = {…} (bis zum nächsten }), […] (bis zum nächsten ]) oder
+    // bares Wort (bis zum nächsten Leerraum/{/[) → nahtlose Tokens sind
+    // damit automatisch möglich.
+    let tok, isBare = false;
+    if (head[i] === '{') {
+      const end = head.indexOf('}', i);
+      if (end === -1) return null;
+      tok = head.slice(i, end + 1);
+      i = end + 1;
+    } else if (head[i] === '[') {
+      const end = head.indexOf(']', i);
+      if (end === -1) return null;
+      tok = head.slice(i, end + 1);
+      i = end + 1;
+    } else {
+      let j = i;
+      while (j < n && !isWS(head[j]) && head[j] !== '{' && head[j] !== '[') j += 1;
+      tok = head.slice(i, j);
+      i = j;
+      isBare = true;
+    }
+    let m;
+    if (isBare) {
+      // Sprache: bares Wort nur an erster Position (vor jedem Token)
+      if (matchedAny) return null;
+      if (!/^[a-zA-Z][a-zA-Z0-9+-]*$/.test(tok)) return null;
+      out.language = tok;
+      matchedAny = true;
+      continue;
+    }
+    if ((m = tok.match(/^\{#lines:([\d,| -]+)\}$/u))) {
+      if (out.lines !== null) return null; // Duplikat
+      out.lines = m[1];
+      matchedAny = true;
+    } else if ((m = tok.match(/^\{#aaid:([\p{L}0-9_-]+)\}$/u))) {
+      if (out.aaid !== null) return null; // Duplikat
+      out.aaid = m[1];
+      matchedAny = true;
+    } else if ((m = tok.match(/^\{#code:([\p{L}0-9_-]+)\}$/u))) {
+      if (out.codeLabel !== null) return null; // Duplikat
+      out.codeLabel = m[1];
+      matchedAny = true;
+    } else if (tok[0] === '[') {
+      // Caption nur nach {#code:label} (und nur einmal); leer → ungültig.
+      if (out.codeLabel === null) return null;
+      if (out.caption !== null) return null; // Duplikat
+      const cap = tok.slice(1, -1).trim();
+      if (!cap) return null;
+      out.caption = cap;
+      matchedAny = true;
+    } else if ((m = tok.match(/^\{\.?zoom=([\d.]+)\}$/))) {
+      if (out.zoom !== null) return null; // Duplikat
+      out.zoom = parseFloat(m[1]);
+      matchedAny = true;
+    } else if ((m = tok.match(/^\{\.?height=([\d.]+)([a-z]*)\}$/))) {
+      if (m[2] !== '' && m[2] !== 'px') return null; // Suffix: ∅ oder "px"
+      if (out.height !== null) return null; // Duplikat
+      out.height = parseFloat(m[1]); // px
+      matchedAny = true;
+    } else {
+      return null; // unbekanntes Token → Fallback
+    }
+  }
+  return matchedAny ? out : null;
+}
 
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
@@ -322,7 +446,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //       latex-artig verlinkbar; unlabelt .html = Applet (Iframe); unlabeltes
   //       Bild + {.height=X} = Bild mit Max-Höhe.
   //     Nummerierung: global (kursweit) via refmap; neue (noch ungespeicherte)
-  //     Labels bekommen Fallback-Nummern nach der letzten bekannten des Kapitels.
+  //     Labels bekommen in Slides S-Nummern (S1, S2, …) bzw. im Skript
+  //     Fallback-Nummern nach der letzten bekannten des Kapitels.
   //     Attribut-Tokens nach dem Bild (in BELIEBIGER Reihenfolge, gleiche Zeile
   //     oder Zeilenumbbruch ohne Leerzeile):
   //       {#fig:label}, {#fragment}, {#fragment:id}, {#Fragment},
@@ -331,15 +456,20 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //     height/zoom wirken in Slides UND Skript. Unlabelte Medien nehmen
   //     optional ihre Attribute an (Applet: {.zoom=X} und/oder {.height=X},
   //     Bild: nur {.height=X}); ohne Attribut bleibt ein Applet ein normales
-  //     Iframe und ein Bild ein normales <img>. Alles andere (auch unbekannte
-  //     Tokens) → Match wird abgebrochen, der Text bleibt literal
-  //     (Tippfehler fallen so auf).
+  //     Iframe. Medien mit Alt-Text bekommen diesen als Caption unter sich
+  //     angezeigt (unlabelt: ohne Nummer; labelt: „Abb. N: Caption").
+  //     Alles andere (auch unbekannte Tokens) → Match wird abgebrochen, der
+  //     Text bleibt literal (Tippfehler fallen so auf).
   const figures = [];
   const appletFigures = [];
   const plainFigures = [];
   const figLabelNumbers = {};
   const figFallbackBase = chapterRef ? (chapterRef.maxFig || 0) : 0;
   let figFallbackCount = 0;
+  // Slide-Decks: eigene Labels (nicht im Skript enthalten) bekommen eigene
+  // Nummerierung (S1), (S2), … — abgesetzt von der Skript-Nummerierung
+  // (wie bei den Formeln, s. 1g).
+  let slideFigCount = 0;
   // Zwei einfache Regexes statt einem verschachtelten Monster:
   const IMG_REF = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
   // Ein Attribut-Block: {…} direkt hinter der Referenz, nur Leerraum oder
@@ -397,8 +527,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
         }
       }
       // Unlabelt: Applet nimmt (k)ein {.zoom=X} und/oder (k)ein {.height=X},
-      // Bild (k)ein {.height=X} (Zoom nur für Applets).
-      // Ohne Attribut: Applet → Iframe ohne Zoom, Bild → normales <img>.
+      // Bild (k)ein {.height=X} (Zoom nur für Applets). Medien mit Alt-Text
+      // bekommen ihre Caption unter sich (unlabelt ohne Nummer).
       // Ungültige Kombinationen bleiben literal (Tippfehler fallen auf).
       let repl = null;
       if (valid) {
@@ -410,6 +540,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
             const g = globalLabels[a.label];
             if (g && g.kind === 'fig') {
               num = g.num; // gespeichertes Label → exakte globale Nummer
+            } else if (slideMode) {
+              slideFigCount += 1;
+              num = 'S' + slideFigCount; // slide-eigenes Label → S1, S2, …
             } else {
               figFallbackCount += 1;
               num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
@@ -421,7 +554,11 @@ async function renderMarkdown(text, targetElement, options = {}) {
         } else if (isAppletSrc(src) && !a.frag) {
           appletFigures.push({ alt, src, zoom: a.zoom, height: a.height });
           repl = `%%APPLETFIG_${appletFigures.length - 1}%%`;
-        } else if (a.height !== null && !a.frag && a.zoom === null) {
+        } else if (!isAppletSrc(src) && !a.frag && a.zoom === null &&
+                   (a.height !== null || alt.trim() !== '')) {
+          // Bild mit Max-Höhe und/oder Caption (= Alt-Text, ohne Nummer).
+          // Ohne Attribut UND ohne Alt-Text bleibt das Bild literal
+          // (normales marked-<img>), wie bisher.
           plainFigures.push({ alt, src, height: a.height });
           repl = `%%PLAINFIG_${plainFigures.length - 1}%%`;
         }
@@ -540,30 +677,122 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 3. Restore fenced code blocks
-  //    Öffnende Zeile: optionale Sprache + optionales {#lines:…} (Slides:
-  //    Zeilennummern + Per-Line-Reveal, Reveal-Highlight-Plugin; "|" =
-  //    weiterer Schritt). Ohne {#lines}-Token bleibt das Altbewährte:
-  //    die erste Zeile ist Sprache NUR wenn rein (sonst Code-Teil).
+  //    Öffnende Zeile (parseFenceHead): optionale Sprache + optionale
+  //    Tokens in beliebiger Reihenfolge, nahtlos oder mit Leerzeichen:
+  //    {#lines:…} (Slides: Zeilennummern + Per-Line-Reveal, Reveal-
+  //    Highlight-Plugin; "|" = weiterer Schritt),
+  //    {#aaid:label} (Slides: Auto-Animate-ID → <pre data-id=…>; Blöcke
+  //    mit demselben Label auf aufeinanderfolgenden Folien animiert Reveal
+  //    nativ per Zeile ineinander, s. Reveal-Code-Beispiel),
+  //    {#code:label} (+ optionales [caption] direkt danach, ohne
+  //    Leerzeichen): nummerierter Code-Block ("Code N") mit Anker —
+  //    Nummer wie bei Abbildungen/Formeln (im Skript gespeichertes Label →
+  //    Skript-Nummer, in Slides: eigene Labels → S1, S2, …); in Slides ist
+  //    die Nummer klickbar (→ Skript). Beschriftete Blöcke stehen in einer
+  //    „Codes-Tabelle“ im Inhaltsverzeichnis (via refmap).
+  //    {.zoom=X} / {.height=Y} (Schriftgröße / Max-Höhe + internes
+  //    Scrollen; Slides UND Skript — Inline-Styles am <pre>, die auch von
+  //    den hljs-Clones geerbt werden).
+  //    Unbekanntes Token/Duplikat → Fallback: die erste Zeile ist Sprache
+  //    NUR wenn rein (sonst Code-Teil).
+  const codeLabelNumbers = {};
+  const codeFallbackBase = chapterRef ? (chapterRef.maxCode || 0) : 0;
+  let codeFallbackCount = 0;
+  // Slide-Decks: slide-eigene Code-Labels → S1, S2, … (wie eq/fig).
+  let slideCodeCount = 0;
   fencedCodeBlocks.forEach((content, idx) => {
     const safe = content.replace(escapedDollar, '$');
     const lines = safe.split('\n');
     let language = '';
     let lineNumbers = null;
+    let blockAaid = null;
+    let codeZoom = null;
+    let codeHeight = null;
+    let codeLabel = null;
+    let codeCaption = null;
+    let codeNum = null;
     let codeBody;
     if (lines.length > 1) {
-      const head = lines[0].trim();
-      const hm = head.match(/^([a-zA-Z][a-zA-Z0-9+-]*)?(?:\s+\{#lines:([\d,| -]+)\})?$/);
-      if (hm && (hm[1] || hm[2])) {
-        language = hm[1] || '';
-        lineNumbers = hm[2] || null;
+      const parsed = parseFenceHead(lines[0].trim());
+      if (parsed) {
+        language = parsed.language;
+        lineNumbers = parsed.lines;
+        blockAaid = parsed.aaid;
+        codeZoom = parsed.zoom;
+        codeHeight = parsed.height;
+        codeLabel = parsed.codeLabel;
+        codeCaption = parsed.caption;
         codeBody = lines.slice(1).join('\n');
       }
     }
     if (codeBody === undefined) codeBody = safe;
     const escaped = codeBody.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\$\$/g, '$$$$$$$$');
     const langAttr = language ? ` class="language-${language}"` : '';
-    const linesAttr = lineNumbers ? ` data-line-numbers="${escapeHtml(lineNumbers.trim())}"` : '';
-    html = html.replace(`%%FC${idx}%%`, `<pre><code${langAttr}${linesAttr}>${escaped}</code></pre>`);
+    // {#aaid} ohne {#lines}: bares data-line-numbers → das Reveal-Highlight-
+    // Plugin baut die hljs-ln-Tabelle OHNE Highlight-Schritte — die
+    // .hljs-ln-code-Zellen braucht das native AutoAnimate zum Zeilen-Matching.
+    const linesAttr = lineNumbers
+      ? ` data-line-numbers="${escapeHtml(lineNumbers.trim())}"`
+      : (blockAaid ? ' data-line-numbers' : '');
+    const aaidAttr = blockAaid ? ` data-id="${blockAaid}"` : '';
+    // {.zoom=X} → font-size in em (Text bleibt scharf; das Theme-Padding
+    // 1em am code skaliert proportional mit), {.height=Y} → max-height +
+    // internes Scrollen (die hljs-Clones sind absolute Kinder → sie
+    // scrollen MIT dem Container, das Zeilen-Alignement bleibt erhalten).
+    // !important: muss auch die !important-Regeln von main.css (Skript-
+    // Ansicht/Thumbnails: pre font-size 0.825rem) schlagen — Inline-
+    // !important gewinnt gegen Stylesheet-!important.
+    let preStyle = '';
+    if (codeZoom !== null) {
+      preStyle += `font-size:${codeZoom}em !important;`;
+      // --tz: Default-Max-Höhe (9em, slides.css) wird durch den Zoom-Faktor
+      // geteilt → sichtbare Default-Höhe identisch zum zoomlosen Default
+      // (exakt wie bei gezoomten Applets, s. dort).
+      preStyle += `--tz:${codeZoom};`;
+    }
+    if (codeHeight !== null) preStyle += `max-height:${codeHeight}px !important;overflow:auto !important;`;
+    const preStyleAttr = preStyle ? ` style="${preStyle}"` : '';
+    let blockHtml = `<pre${aaidAttr}${preStyleAttr}><code${langAttr}${linesAttr}>${escaped}</code></pre>`;
+    // {#code:label} und/oder [caption] → Code-Figur mit Caption
+    // ("Code N: caption"), wie bei Abbildungen.
+    if (codeLabel !== null || codeCaption !== null) {
+      if (codeLabel !== null) {
+        if (codeLabel in codeLabelNumbers) {
+          codeNum = codeLabelNumbers[codeLabel]; // Duplikat → erstes Vorkommen
+        } else {
+          const g = globalLabels[codeLabel];
+          if (g && g.kind === 'code') {
+            codeNum = g.num; // gespeichertes Label → exakte globale Nummer
+          } else if (slideMode) {
+            slideCodeCount += 1;
+            codeNum = 'S' + slideCodeCount; // slide-eigenes Label
+          } else {
+            codeFallbackCount += 1;
+            codeNum = codeFallbackBase + codeFallbackCount;
+          }
+          codeLabelNumbers[codeLabel] = codeNum;
+        }
+      }
+      let numHtml = '';
+      if (codeNum !== null) {
+        const g = globalLabels[codeLabel];
+        if (slideMode && g && g.kind === 'code') {
+          const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+          numHtml =
+            `<a class="tutorai-code-num-link" href="/courses/${cid}/script#code:${codeLabel}"` +
+            ` title="Zum Code im Skript">Code ${codeNum}</a>`;
+        } else {
+          numHtml = `Code ${codeNum}`;
+        }
+      }
+      const capParts = [];
+      if (numHtml) capParts.push(numHtml);
+      if (codeCaption) capParts.push(escapeHtml(codeCaption));
+      const idAttr = codeLabel !== null ? ` id="code:${codeLabel}"` : '';
+      blockHtml = `<figure class="tutorai-code-figure"${idAttr}>${blockHtml}` +
+        `<figcaption>${capParts.join(': ')}</figcaption></figure>`;
+    }
+    html = html.replace(`%%FC${idx}%%`, blockHtml.replace(/\$/g, '$$$$'));
   });
 
   // 4. Restore inline code spans
@@ -629,20 +858,47 @@ async function renderMarkdown(text, targetElement, options = {}) {
   figures.forEach((f, idx) => {
     const safeAlt = escapeHtml(f.alt);
     const isApplet = isAppletSrc(f.src);
+    // Externe Website/YouTube (http(s)): keine Auto-Sizing-Nachrichten →
+    // {.height=Y} setzt die ECHTE Höhe (height, nicht max-height) —
+    // sonst bliebe das Iframe bei der Browser-Default-Höhe (150 px) und
+    // die Angabe wirkte nicht. YouTube-Watch-Links → Embed-Player.
+    const isExternalApplet = isApplet && /^https?:\/\//i.test(f.src);
+    const isVideo = youtubeEmbedSrc(f.src) !== null;
+    const effSrc = youtubeEmbedSrc(f.src) || f.src;
     const parts = [];
     let dataZoom = '';
-    if (f.height != null) {
-      // Max-Höhe in sichtbaren px. Gezoomtes Applet: geteilt durch den
+    if (isVideo && f.height != null) {
+      // YouTube: fixe Höhe + proportionale Breite (16:9), zentriert in
+      // der Figure (text-align:center). Inline-!important schlägt die
+      // width:100%-Regel (slides.css) und die 9em-Default-Max-Höhe.
+      const hExpr = f.zoom != null ? `calc(${f.height}px / ${f.zoom})` : `${f.height}px`;
+      const wExpr = f.zoom != null
+        ? `calc(${f.height}px * 16 / 9 / ${f.zoom})`
+        : `${Math.round((f.height * 16) / 9)}px`;
+      parts.push(`height: ${hExpr} !important`);
+      parts.push(`max-height: ${hExpr} !important`);
+      parts.push(`width: ${wExpr} !important`);
+    } else if (f.height != null) {
+      // Höhe in sichtbaren px. Gezoomtes Applet: geteilt durch den
       // Zoom-Faktor, da die transform die Iframe-Layout-Box skaliert.
       parts.push(f.zoom != null
-        ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
-        : `max-height: ${f.height}px !important`);
+        ? `${isExternalApplet ? 'height' : 'max-height'}: calc(${f.height}px / ${f.zoom}) !important`
+        : `${isExternalApplet ? 'height' : 'max-height'}: ${f.height}px !important`);
+      // Externe Website: die 9em-Default-Max-Höhe (slides.css, Stylesheet-
+      // !important) dürfte die explizite height nicht deckeln → gleiche
+      // Max-Höhe inline (Inline-!important gewinnt).
+      if (isExternalApplet) {
+        parts.push(f.zoom != null
+          ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
+          : `max-height: ${f.height}px !important`);
+      }
     }
     if (f.zoom != null) {
       // Zoom via transform (universell unterstützt, im Gegensatz zur
       // zoom-Property): Width-Kompensation + Skalierung füllen exakt die
       // Spaltenbreite; der Wrapper übernimmt die sichtbare (geskalte) Höhe.
-      parts.push(`width: calc(100% / ${f.zoom}) !important`);
+      // (Video mit expliziter {.height} trägt oben bereits die 16:9-Breite.)
+      if (!(isVideo && f.height != null)) parts.push(`width: calc(100% / ${f.zoom}) !important`);
       parts.push(`transform: scale(${f.zoom})`);
       parts.push('transform-origin: 0 0');
       // Ohne explizite {.height} gilt die Default-Max-Höhe (9em in Slides)
@@ -656,14 +912,16 @@ async function renderMarkdown(text, targetElement, options = {}) {
       dataZoom = ` data-zoom="${f.zoom}"`; // Auto-Sizing: Clamp zoom-korrigiert
     }
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
-    const dataMaxH = isApplet && f.height != null ? ` data-max-h="${f.height}"` : '';
+    const dataMaxH = isApplet && !isExternalApplet && f.height != null ? ` data-max-h="${f.height}"` : '';
     const mediaTag = isApplet
-      ? `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="${appletSandboxAttr(f.src)}" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
+      ? `<iframe src="${escapeHtml(effSrc)}" class="tutorai-applet${isVideo ? ' tutorai-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
       : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}"${mediaStyle}>`;
     // Gezoomte Applets in einen overflow:hidden-Wrapper (sichtbare =
     // geskalte Höhe; transform ändert die Iframe-Layout-Box nicht). Initiale
-    // Höhe = Auto-Sizing-Default (150 px × zoom), ggf. auf die Max-Höhe
-    // begrenzt (der Auto-Sizing-Listener clamped danach ebenfalls).
+    // Höhe: Applets = Auto-Sizing-Default (150 px × zoom), ggf. auf die
+    // Max-Höhe begrenzt (der Auto-Sizing-Listener clamped danach ebenfalls);
+    // externe Websites = exakt die vorgegebene Höhe (Iframe-Höhe ist fix);
+    // Videos ohne {.height} = Spaltenbreite × 9/16 (16:9, CSS aspect-ratio).
     // WICHTIG: <span>, kein <div> — ein div würde das umgebende <p>
     // (HTML-Parsing, unabhängig vom CSS display) schließen und das Iframe
     // in einen anderen font-size-Kontext rücken (p = 0.95em); die
@@ -671,8 +929,12 @@ async function renderMarkdown(text, targetElement, options = {}) {
     // Default-Höhe am selben Ort entsprechen. Ein span mit
     // display:inline-block + width:100% bleibt im <p> (s. CSS).
     const zoomInitH = f.height != null
-      ? `min(calc(150px * ${f.zoom}), ${f.height}px)`
-      : `calc(150px * ${f.zoom})`;
+      ? (isExternalApplet
+        ? `${f.height}px`
+        : `min(calc(150px * ${f.zoom}), ${f.height}px)`)
+      : (isVideo
+        ? 'calc(100% * 0.5625)'
+        : `calc(150px * ${f.zoom})`);
     const innerMedia = (isApplet && f.zoom != null)
       ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${mediaTag}</span>`
       : mediaTag;
@@ -680,25 +942,55 @@ async function renderMarkdown(text, targetElement, options = {}) {
       ? ` data-frag="${f.frag.type}"${f.frag.id ? ` data-frag-id="${f.frag.id}"` : ''}`
       : '';
     const figAaidAttr = f.aaid ? ` data-id="${f.aaid}"` : '';
+    // Nummer: im Skript gespeichertes Label → in Slides klickbar (→ Skript),
+    // wie bei den Formeln; sonst (auch slide-eigene S-Nummern) plain.
+    const g = globalLabels[f.label];
+    const numHtml = (slideMode && g && g.kind === 'fig')
+      ? (() => {
+        const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+        return `<a class="tutorai-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
+      })()
+      : `Abb. ${f.num}`;
     const figHtml =
       `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}${figAaidAttr}>` +
       innerMedia +
-      `<figcaption>Abb. ${f.num}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
+      `<figcaption>${numHtml}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
-  // 6a2. Restore unlabeled HTML figures (interaktives Applet, ohne Nummer)
+  // 6a2. Restore unlabeled HTML figures (interaktives Applet/YouTube, ohne
+  //      Nummer) — Medien mit Alt-Text bekommen die Caption unter sich.
   //      {.height=X} / {.zoom=X}: Semantik wie bei labeled Figures (s. 6a).
   appletFigures.forEach((f, idx) => {
+    const isExternal = /^https?:\/\//i.test(f.src);
+    const isVideo = youtubeEmbedSrc(f.src) !== null;
+    const effSrc = youtubeEmbedSrc(f.src) || f.src;
     const parts = [];
     let dataZoom = '';
-    if (f.height != null) {
+    if (isVideo && f.height != null) {
+      // YouTube: fixe Höhe + proportionale Breite (16:9) — s. labeled-
+      // Figures oben.
+      const hExpr = f.zoom != null ? `calc(${f.height}px / ${f.zoom})` : `${f.height}px`;
+      const wExpr = f.zoom != null
+        ? `calc(${f.height}px * 16 / 9 / ${f.zoom})`
+        : `${Math.round((f.height * 16) / 9)}px`;
+      parts.push(`height: ${hExpr} !important`);
+      parts.push(`max-height: ${hExpr} !important`);
+      parts.push(`width: ${wExpr} !important`);
+    } else if (f.height != null) {
       parts.push(f.zoom != null
-        ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
-        : `max-height: ${f.height}px !important`);
+        ? `${isExternal ? 'height' : 'max-height'}: calc(${f.height}px / ${f.zoom}) !important`
+        : `${isExternal ? 'height' : 'max-height'}: ${f.height}px !important`);
+      // Externe Website: 9em-Default-Max-Höhe nicht zulassen (s. 6a).
+      if (isExternal) {
+        parts.push(f.zoom != null
+          ? `max-height: calc(${f.height}px / ${f.zoom}) !important`
+          : `max-height: ${f.height}px !important`);
+      }
     }
     if (f.zoom != null) {
-      parts.push(`width: calc(100% / ${f.zoom}) !important`);
+      // (Video mit expliziter {.height} trägt bereits die 16:9-Breite.)
+      if (!(isVideo && f.height != null)) parts.push(`width: calc(100% / ${f.zoom}) !important`);
       parts.push(`transform: scale(${f.zoom})`);
       parts.push('transform-origin: 0 0');
       // Ohne {.height} gilt die Default-Max-Höhe (9em in Slides) — teilt die
@@ -707,24 +999,35 @@ async function renderMarkdown(text, targetElement, options = {}) {
       dataZoom = ` data-zoom="${f.zoom}"`;
     }
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
-    const dataMaxH = f.height != null ? ` data-max-h="${f.height}"` : '';
+    const dataMaxH = !isExternal && f.height != null ? ` data-max-h="${f.height}"` : '';
     const iframeTag =
-      `<iframe src="${escapeHtml(f.src)}" class="tutorai-applet" sandbox="${appletSandboxAttr(f.src)}" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
+      `<iframe src="${escapeHtml(effSrc)}" class="tutorai-applet${isVideo ? ' tutorai-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
     const zoomInitH = f.height != null
-      ? `min(calc(150px * ${f.zoom}), ${f.height}px)`
-      : `calc(150px * ${f.zoom})`;
+      ? (isExternal ? `${f.height}px` : `min(calc(150px * ${f.zoom}), ${f.height}px)`)
+      : (isVideo ? 'calc(100% * 0.5625)' : `calc(150px * ${f.zoom})`);
     // <span>-Wrapper (kein <div>): muss im umgebenden <p> bleiben, damit
     // das Iframe dieselbe font-size erbt wie im zoomlosen Fall (s. 6a).
     const iframeHtml = (f.zoom != null)
       ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${iframeTag}</span>`
       : iframeTag;
-    html = html.replace(`%%APPLETFIG_${idx}%%`, iframeHtml.replace(/\$/g, '$$$$'));
+    // Caption unter dem Medium: Alt-Text (unlabelt → ohne Nummer).
+    const figHtml = f.alt.trim()
+      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${escapeHtml(f.alt.trim())}</figcaption></figure>`
+      : iframeHtml;
+    html = html.replace(`%%APPLETFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
-  // 6a3. Restore unlabeled plain images mit Max-Höhe ({.height=X}, s. 6a)
+  // 6a3. Restore unlabeled plain images — mit Max-Höhe ({.height=X}, s. 6a)
+  //      und/oder Caption (= Alt-Text, ohne Nummer) → <figure>;
+  //      sonst simples <img> (wie ein normales marked-Bild).
   plainFigures.forEach((f, idx) => {
-    const imgStyle = ` style="max-height: ${f.height}px !important"`;
-    const imgHtml = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
+    const imgStyle = f.height != null ? ` style="max-height: ${f.height}px !important"` : '';
+    const imgTag = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
+    const imgHtml = (f.height != null || f.alt.trim())
+      ? `<figure class="tutorai-figure">${imgTag}` +
+        (f.alt.trim() ? `<figcaption>${escapeHtml(f.alt.trim())}</figcaption>` : '') +
+        `</figure>`
+      : imgTag;
     html = html.replace(`%%PLAINFIG_${idx}%%`, imgHtml.replace(/\$/g, '$$$$'));
   });
 
@@ -895,12 +1198,92 @@ async function renderMarkdown(text, targetElement, options = {}) {
     });
   }
 
-  if (preview) {
-    targetElement.innerHTML = `<div class="markdown-preview">${html}</div>`;
-  } else {
-    targetElement.innerHTML = `<div class="markdown-preview">${html}</div>`;
-  }
+  targetElement.innerHTML = `<div class="markdown-preview">${html}</div>`;
+  _cleanupBlockArtifacts(targetElement);
   if (slideMode) _applyFragmentMarkers(targetElement);
+}
+
+// Byproducts aufräumen: Figure-/Applet-/Code-/Taskbox-Placeholders sind
+// Inline-Tokens — marked (breaks:true) erzeugt aus „Token-Zeile + Textzeile
+// (ohne Leerzeile dazwischen)“ ein <p>…<br>TOKEN<br>…</p>. Beim
+// innerHTML-Parsen schließen <figure>/<pre>/<div> das umgebende <p>
+// IMPLIZIT (HTML-Parser-Regel), sodass (a) ein <p>-Rest mit trailing <br>
+// vor dem Block bleibt und (b) das <br> + der Folgetext (inkl. Inline-
+// Elemente wie <code>/Katex-Spans) als Direktkinder der .markdown-preview
+// landen. Aufräumen:
+//   (1) Top-Level-<br> entfernen (erzeugen je eine Zeile Abstand),
+//   (2) laufende Inline-Läufe (Text + inline gerenderte Elemente) in
+//       EINEM <p> hüllen — würde jeder Textknoten sein eigenes <p>
+//       bekommen, bricht der Satz an den Inline-Elementen um (falsche
+//       Zeilenumbrüche um Formeln/`<code>`),
+//   (3) leere Top-Level-<p> entfernen,
+//   (4) trailing <br> am Ende eines <p> entfernen, wenn danach (über
+//       Whitespace hinweg) ein Block-Element folgt (Byproduct-Lücke vor
+//       dem Figure-/Code-Block).
+// Legitime <br> (z. B. in Listen oder zwischen zwei Zeilen desselben
+// Absatzes) liegen nie als Direktkind der Preview und bleiben erhalten.
+function _cleanupBlockArtifacts(root) {
+  const clean = (mp) => {
+    // (1) Top-Level-<br> entfernen
+    for (const br of Array.from(mp.querySelectorAll(':scope > br'))) br.remove();
+
+    // (2) Top-Level-Inline-Läufe in <p> gruppieren.
+    // Tag-basiert statt getComputedStyle: beim Render sind die
+    // Reveal-Sections noch detached (bzw. display:none) — für nicht
+    // eingebundene Elemente liefert getComputedStyle keine aufgelösten
+    // Werte (display="" → kein "inline") → Inline-Elemente blieben
+    // ungruppiert und Absätze zerfielen (nur im Skript, wo der Container
+    // im DOM hängt, griff die computed-style-Variante).
+    const isBlockTag = /^(?:P|DIV|PRE|FIGURE|TABLE|UL|OL|BLOCKQUOTE|H[1-6]|HR|SECTION|ARTICLE|ASIDE|DETAILS|FORM|FIELDSET|BR|VIDEO|AUDIO|IFRAME)$/;
+    const isInlineEl = (node) =>
+      node.nodeType === Node.ELEMENT_NODE && !isBlockTag.test(node.tagName);
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const p = document.createElement('p');
+      mp.insertBefore(p, run[0]);
+      for (const n of run) p.appendChild(n);
+      run = [];
+    };
+    for (const node of Array.from(mp.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        // Whitespace-Text ohne aktiven Lauf: unsichtbar → stehen lassen.
+        if (node.textContent.trim() || run.length) run.push(node);
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        if (isInlineEl(node)) run.push(node);
+        else flush();
+      }
+    }
+    flush();
+
+    // (3) Leere Top-Level-<p> entfernen
+    for (const p of Array.from(mp.querySelectorAll(':scope > p'))) {
+      if (!p.childElementCount && !p.textContent.trim()) p.remove();
+    }
+
+    // (4) Trailing <br> am <p>-Ende entfernen, wenn danach ein Block-Element
+    // folgt (das <br> ist das Byproduct der Token-Zeile, nicht ein
+    // absichtlicher Zeilenumbruch).
+    const isBlockEl = (el) => !!(el && isBlockTag.test(el.tagName));
+    for (const p of Array.from(mp.querySelectorAll(':scope > p'))) {
+      let sib = p.nextSibling;
+      while (sib && sib.nodeType === Node.TEXT_NODE && !sib.textContent.trim()) {
+        sib = sib.nextSibling;
+      }
+      if (!sib || sib.nodeType !== Node.ELEMENT_NODE || !isBlockEl(sib)) continue;
+      while (p.lastChild) {
+        const n = p.lastChild;
+        if (n.nodeType === Node.ELEMENT_NODE && n.tagName === 'BR') {
+          n.remove();
+        } else if (n.nodeType === Node.TEXT_NODE && !n.textContent.trim()) {
+          n.remove();
+        } else {
+          break;
+        }
+      }
+    }
+  };
+  root.querySelectorAll('.markdown-preview').forEach(clean);
 }
 
 // Fragment-Marker (Reveal) auflösen: {#fragment}, {#fragment:id} (ID-Gruppe),
@@ -1209,7 +1592,9 @@ function _katexTrust(ctx) {
 // idempotent (gleiche hljs-Version) und baut zusätzlich die
 // data-line-numbers-Tabelle/Fragmente auf.
 function highlightCodeBlocks(html) {
-  return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (match, attrs, code) => {
+  // <pre> darf Attribute tragen (data-id für {#aaid:…}-Code-Blöcke) — die
+  // überleben den Rebuild unverändert (preAttrs).
+  return html.replace(/<pre([^>]*)><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (match, preAttrs, attrs, code) => {
     const decoded = code
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
@@ -1235,7 +1620,7 @@ function highlightCodeBlocks(html) {
       }
       if (highlighted !== null) {
         const cls = (language ? `language-${language} ` : '') + 'hljs';
-        return `<pre><code${otherAttrs ? ` ${otherAttrs}` : ''} class="${cls}">${highlighted}</code></pre>`;
+        return `<pre${preAttrs}><code${otherAttrs ? ` ${otherAttrs}` : ''} class="${cls}">${highlighted}</code></pre>`;
       }
     }
 
@@ -1244,12 +1629,12 @@ function highlightCodeBlocks(html) {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
 
-    return `<pre><code${attrs}>${escaped}</code></pre>`;
+    return `<pre${preAttrs}><code${attrs}>${escaped}</code></pre>`;
   });
 }
 
 function decodeTextEntities(html) {
-  const parts = html.split(/(<pre>[\s\S]*?<\/pre>|<span class="katex(?:-display)?">[\s\S]*?<\/span>|<div class="mermaid-diagram">[\s\S]*?<\/div>|<[^>]*>)/g);
+  const parts = html.split(/(<pre[^>]*>[\s\S]*?<\/pre>|<span class="katex(?:-display)?">[\s\S]*?<\/span>|<div class="mermaid-diagram">[\s\S]*?<\/div>|<[^>]*>)/g);
   return parts.map((part, i) => {
     if (i % 2 === 0) {
       return part.replace(/&lt;/g, '<').replace(/&gt;/g, '>');

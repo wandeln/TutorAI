@@ -417,7 +417,16 @@ function wireKatexFragmentResort(reveal, slidesEl) {
     // MutationObserver das Class-Set synchron (Microtask) ab — ebenfalls
     // noch vor der Paginierung.
     const doPrintResort = () => {
-      slidesEl.querySelectorAll("section").forEach((s) => resort(s, false));
+      slidesEl.querySelectorAll("section").forEach((s) => {
+        // Stack-Eltern (`--`-Stapel) NIEMALS als Container resorten:
+        // Die [data-frag]-Sammlung würde dann über ALLE Kinder-Folien
+        // hinweg laufen (flache, cross-slide-Liste) und Gates früherer
+        // Unterfolien würden den Inhalt späterer Unterfolien "verschlingen"
+        // → falsche Fragment-Schritte + leere Print-Seiten. Die Kinder
+        // werden in derselben Schleife einzeln (korrekt) abgearbeitet.
+        if (s.querySelector(":scope > section")) return;
+        resort(s, false);
+      });
     };
     if (document.documentElement.classList.contains("print-pdf")) {
       doPrintResort();

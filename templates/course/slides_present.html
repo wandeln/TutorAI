@@ -29,15 +29,30 @@
   <a href="/courses/{{ course.id }}/slides">← Alle Folien</a>
   <span class="present-title">{{ deck.title }}</span>
   {% if is_tutor %}
-  <span class="text-gray-400 text-xs whitespace-nowrap" title="Sprechernotizen (Tastenkürzel S)">S = Notizen</span>
+  <a href="/courses/{{ course.id }}/slides/{{ deck.id }}" title="Slide-Deck bearbeiten">✏️ Edit</a>
   {% endif %}
   <button id="fullscreen-btn" title="Vollbild (oder F)">⛶</button>
   <a href="/courses/{{ course.id }}/slides/{{ deck.id }}/present?print-pdf" target="_blank">⬇️ PDF</a>
 </div>
-<div class="present-shell" id="present-shell" style="height:100dvh">
+<div class="present-shell" id="present-shell">
   <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}"
        id="reveal-root">
     <div class="slides" id="reveal-slides"></div>
+  </div>
+  {# Shortcuts-Panel: erscheint in der Reveal-Overview (Esc) oben rechts
+     unterhalb der dunklen Toolbar (Toggling + Aktionen: s. JS unten). #}
+  <div class="present-shortcuts" id="present-shortcuts">
+    <div class="present-shortcuts-title">Shortcuts</div>
+    <button type="button" data-key="70"><kbd>F</kbd><span>Full-Screen Mode</span></button>
+    {% if is_tutor %}
+    <button type="button" data-key="83"><kbd>S</kbd><span>Speaker View</span></button>
+    {% endif %}
+    <button type="button" data-key="66"><kbd>B</kbd><span>Break</span></button>
+    <button type="button" data-key="79"><kbd>O</kbd><span>Overview</span></button>
+    <button type="button" data-key="80"><kbd>←</kbd><kbd>P</kbd><span>Previous Slide</span></button>
+    <button type="button" data-key="78"><kbd>→</kbd><kbd>N</kbd><span>Next Slide</span></button>
+    <button type="button" data-key="36"><kbd>Home</kbd><span>First Slide</span></button>
+    <button type="button" data-key="35"><kbd>End</kbd><span>Last Slide</span></button>
   </div>
 </div>
 {% endblock %}
@@ -148,11 +163,17 @@
   // html.print-pdf gesetzt ist (vor der Fragment-PDF-Paginierung).
   wireKatexFragmentResort(reveal, slidesEl);
 
-  // Toolbar nur in der Reveal-Overview (Esc) anzeigen — die Präsentation
-  // selbst läuft ohne die dunkle Leiste, nur die Folien sind sichtbar.
+  // Toolbar + Shortcuts-Panel nur in der Reveal-Overview (Esc) anzeigen —
+  // die Präsentation selbst läuft ohne die dunkle Leiste, nur die Folien
+  // sind sichtbar.
   const toolbar = document.querySelector(".present-toolbar");
-  reveal.on("overviewshown", () => toolbar.classList.add("visible"));
-  reveal.on("overviewhidden", () => toolbar.classList.remove("visible"));
+  const shortcuts = document.getElementById("present-shortcuts");
+  const setOverviewUI = (visible) => {
+    toolbar.classList.toggle("visible", visible);
+    if (shortcuts) shortcuts.classList.toggle("visible", visible);
+  };
+  reveal.on("overviewshown", () => setOverviewUI(true));
+  reveal.on("overviewhidden", () => setOverviewUI(false));
 
   // PDF-Export: Reveal legt mit ?print-pdf das Druck-Layout an und feuert
   // "pdf-ready", ruft window.print() aber nicht selbst auf → hier auslösen.
@@ -162,14 +183,22 @@
     // schrumpfen in der PDF auf den Inhalt. fixPdfLayout() setzt die
     // Folien-Höhe exakt (960 × 960/Ratio); die Seiten-Höhe (inkl. margin)
     // stimmt bei Reveal bereits.
+    // NUR bei Ein-Seiten-Folien: Reveal's Seitenhöhe ist
+    // (pageHeight+offset)*n mit n = Seiten pro Folie — n > 1 passiert
+    // nativ, wenn der Inhalt das Slide-Format übersteigt. Diese Folien
+    // fließen über die physischen PDF-Seiten (gewollt: kein abgeschnittener
+    // Inhalt); nur ihre Sections dürfen nicht auf die Slide-Höhe gequetscht
+    // werden.
     const margin = reveal.getConfig().margin ?? 0.04;
     const pageW = Math.floor(SLIDE_W * (1 + margin));
     const pageH = Math.floor(SLIDE_H * (1 + margin));
     const fixPdfLayout = () => {
       document.querySelectorAll(".pdf-page").forEach((p) => {
+        const n = Math.max(1, Math.round((parseFloat(p.style.height) || pageH) / pageH));
+        if (n > 1) return; // Mehr-Seiten-Folie: Reveal-Layout behalten
         p.style.height = pageH + "px";
-      });
-      document.querySelectorAll(".pdf-page > section").forEach((s) => {
+        const s = p.querySelector(":scope > section");
+        if (!s) return;
         s.style.height = SLIDE_H + "px";
         s.style.top = Math.round((pageH - SLIDE_H) / 2) + "px";
         s.style.left = Math.round((pageW - SLIDE_W) / 2) + "px";
@@ -186,6 +215,35 @@
     reveal.on("pdf-ready", doPrint);
     setTimeout(doPrint, 800); // Fallback, falls das Event nicht ankommt
   }
+})();
+</script>
+{# Shortcuts-Panel: Ein Klick auf einen Eintrag führt aus, als wäre die Taste
+   gedrückt worden. Reveal + das Notes-Plugin (Taste S) hören beide auf
+   document keydown und prüfen event.keyCode → ein synthetisches keydown mit
+   dem passenden keyCode löst dieselbe Aktion aus wie der Tastendruck. #}
+<script>
+(function () {
+  const panel = document.getElementById("present-shortcuts");
+  if (!panel) return;
+  panel.querySelectorAll("button[data-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const keyCode = parseInt(btn.dataset.key, 10);
+      const ev = new KeyboardEvent("keydown", {
+        keyCode,
+        cancelable: true,
+        bubbles: true,
+      });
+      // Fallback für Browser, die keyCode im Event-Init ignorieren:
+      // Property auf der Instanz setzen (Reveal prüft nur event.keyCode).
+      if (ev.keyCode !== keyCode) {
+        Object.defineProperty(ev, "keyCode", { value: keyCode });
+      }
+      document.dispatchEvent(ev);
+      // Fokus weg, sonst würde Space/Enter die gerade geklickte Zeile
+      // (natives Button-Verhalten) sofort erneut auslösen.
+      btn.blur();
+    });
+  });
 })();
 </script>
 {% endblock %}

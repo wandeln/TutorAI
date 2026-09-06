@@ -17,12 +17,17 @@ Nachrichten (im Kanal):
          - ?after_id=N: nur Nachrichten neuer als N (für Polling)
 - POST   /courses/{course_id}/forum/channels/{channel_id}/messages
 - DELETE /courses/{course_id}/forum/channels/{channel_id}/messages/{message_id}
+
+Gelesen-Status (für Ungelesen-Zähler):
+- POST   /courses/{course_id}/forum/channels/{channel_id}/read
+         - ?up_to_id=N: Kanal als gelesen bis Nachricht N markieren
 """
 
 from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import text
 from sqlmodel import Session, func, select
 
 from database.base import get_session
@@ -30,6 +35,7 @@ from database.models import (
     CourseRole,
     ForumChannel,
     ForumChannelCreate,
+    ForumChannelReadState,
     ForumChannelUpdate,
     ForumMessage,
     ForumMessageCreate,
@@ -87,6 +93,7 @@ def _channel_dict(
     ch: ForumChannel,
     last_message_at: Optional[datetime],
     can_manage: bool,
+    unread_count: int = 0,
 ) -> dict[str, Any]:
     """Kanal als API-/Template-Dict (inkl. letzter Nachricht + Rechte)."""
     return {
@@ -96,6 +103,7 @@ def _channel_dict(
         "can_manage": can_manage,
         "last_message_at": last_message_at.isoformat() if last_message_at else None,
         "last_message_label": last_message_at.strftime("%d.%m.%y") if last_message_at else "",
+        "unread_count": unread_count,
     }
 
 
@@ -120,13 +128,34 @@ def _message_dict(
     }
 
 
+def load_unread_counts(session: Session, course_id: int, user_id: int) -> dict[int, int]:
+    """Ungelesene Nachrichten pro Kanal (eine Query für den ganzen Kurs).
+
+    Ungelesen = Nachrichten mit id > letzter gelesener Stand des Users
+    (forum_channel_read_state; ohne Eintrag → alle sind ungelesen).
+    """
+    sql = """
+        SELECT m.channel_id, COUNT(*) AS cnt
+        FROM forum_messages AS m
+        LEFT JOIN forum_channel_read_state AS rs
+          ON rs.user_id = :user_id AND rs.channel_id = m.channel_id
+        WHERE m.course_id = :course_id AND m.channel_id IS NOT NULL
+          AND m.id > COALESCE(rs.last_read_message_id, 0)
+        GROUP BY m.channel_id
+    """
+    rows = session.execute(
+        text(sql).bindparams(user_id=user_id, course_id=course_id)
+    ).all()
+    return {ch_id: cnt for ch_id, cnt in rows}
+
+
 def load_channels_payload(
     session: Session,
     course_id: int,
     viewer: User,
     viewer_role: Optional[str],
 ) -> list[dict[str, Any]]:
-    """Alle Kanäle des Kurses (Anlage-Reihenfolge) + letzte Nachricht pro Kanal."""
+    """Alle Kanäle des Kurses (Anlage-Reihenfolge) + letzte Nachricht + Ungelesen-Zähler."""
     channels = session.exec(
         select(ForumChannel)
         .where(ForumChannel.course_id == course_id)
@@ -145,11 +174,13 @@ def load_channels_payload(
         CourseRole.PROF.value,
         CourseRole.TUTOR.value,
     )
+    unread = load_unread_counts(session, course_id, viewer.id)
     return [
         _channel_dict(
             ch,
             last_msgs.get(ch.id),
             can_manage=is_staff or ch.created_by == viewer.id,
+            unread_count=unread.get(ch.id, 0),
         )
         for ch in channels
     ]
@@ -401,3 +432,50 @@ async def delete_forum_message(
     session.delete(msg)
     session.commit()
     return {"message": "Nachricht gelöscht."}
+
+
+@router.post("/courses/{course_id}/forum/channels/{channel_id}/read")
+async def mark_forum_channel_read(
+    course_id: int,
+    channel_id: int,
+    up_to_id: Optional[int] = Query(None, ge=1, description="Bis zu dieser Nachricht-ID gelesen"),
+    session: Session = Depends(get_session),
+    viewer_and_course: tuple[User, int] = Depends(require_course_access(*_ALL_COURSE_ROLES)),
+):
+    """Kanal als gelesen markieren (Stand: letzte vom User gesehene Nachricht).
+
+    Der Stand rückt nur vor, nie zurück (z. B. nach Nachricht-Löschung).
+    Ohne up_to_id: alles im Kanal bis zur letzten Nachricht als gelesen.
+    """
+    viewer, _ = viewer_and_course
+    ch = _get_channel(session, course_id, channel_id)
+
+    target = up_to_id
+    if target is None:
+        target = session.exec(
+            select(func.max(ForumMessage.id))  # type: ignore[call-overload]
+            .where(ForumMessage.course_id == course_id)
+            .where(ForumMessage.channel_id == ch.id)
+        ).one()
+        target = target or 0
+
+    if target > 0:
+        rs = session.exec(
+            select(ForumChannelReadState)
+            .where(ForumChannelReadState.user_id == viewer.id)
+            .where(ForumChannelReadState.channel_id == ch.id)
+        ).first()
+        if rs is None:
+            session.add(
+                ForumChannelReadState(
+                    user_id=viewer.id,  # type: ignore[arg-type]
+                    channel_id=ch.id,  # type: ignore[arg-type]
+                    last_read_message_id=target,
+                )
+            )
+        elif rs.last_read_message_id < target:
+            rs.last_read_message_id = target
+            session.add(rs)
+        session.commit()
+
+    return {"ok": True}

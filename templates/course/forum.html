@@ -27,9 +27,20 @@
       {% for ch in forum_channels %}
       <a href="?channel={{ ch.id }}"
          class="forum-channel flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm transition
-                {% if active_channel and active_channel.id == ch.id %}bg-blue-50 text-blue-700 font-semibold{% else %}text-gray-600 hover:bg-gray-100{% endif %}">
+                {% if active_channel and active_channel.id == ch.id %}bg-blue-50 text-blue-700 font-semibold
+                {% elif ch.unread_count %}font-semibold text-gray-900
+                {% else %}text-gray-600 hover:bg-gray-100{% endif %}">
         <span class="text-gray-400 select-none">#</span>
         <span class="flex-1 truncate">{{ ch.name }}</span>
+        {# Ungelesen-Badge. Ist der Chat des aktiven Kanals sichtbar (Desktop
+           oder ?channel=), entfernt das Initial-Script das Badge vor dem ersten
+           Paint und markiert den Kanal als gelesen; auf Mobil ohne ?channel=
+           ist nur die Liste zu sehen und das Badge bleibt stehen. #}
+        {% if ch.unread_count %}
+        <span class="channel-unread inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none shrink-0">
+          {{ ch.unread_count if ch.unread_count <= 99 else '99+' }}
+        </span>
+        {% endif %}
         {% if ch.last_message_label %}<span class="text-[10px] text-gray-400 shrink-0">{{ ch.last_message_label }}</span>{% endif %}
       </a>
       {% endfor %}
@@ -118,11 +129,22 @@
 <script>
   const initialMessages = {{ forum_messages | tojson }};
   const activeChannelId = {% if active_channel %}{{ active_channel.id }}{% else %}null{% endif %};
+  // Ungelesene im aktiven Kanal (Server-Ansicht vor dem Markieren) —
+  // wird beim Initial-Load (nur bei sichtbarem Chat) vom Tab-Badge abgezogen.
+  const activeChannelUnread = {% if active_channel %}{{ active_channel.unread_count }}{% else %}0{% endif %};
   const forumBase = `/api/courses/${courseId}/forum`;
 
   const forumList = document.getElementById('forum-messages');
   const forumInput = document.getElementById('forum-input');
   const forumForm = document.getElementById('forum-form');
+  const forumChat = document.getElementById('forum-chat');
+
+  // Ist der Chat-Pan wirklich sichtbar? Auf Mobilgeräten ohne ?channel= ist
+  // nur die Kanal-Liste zu sehen — dann dürfen Nachrichten NICHT als gelesen
+  // markiert werden (dafür bleiben die Badges stehen).
+  function chatVisible() {
+    return forumChat && window.getComputedStyle(forumChat).display !== 'none';
+  }
 
   let lastMessageId = initialMessages.length
     ? initialMessages[initialMessages.length - 1].id
@@ -178,7 +200,45 @@
     return forumList.scrollHeight - forumList.scrollTop - forumList.clientHeight < 120;
   }
 
-  function appendForumMessages(msgs, forceScroll) {
+  // ─── Gelesen-Status + Tab-Badge ───────────────────────────────
+  // Kanal serverseitig als gelesen markieren (Stand: letzte gesehene Nachricht).
+  async function markChannelRead() {
+    if (activeChannelId == null || lastMessageId <= 0) return;
+    try {
+      await fetch(`${forumBase}/channels/${activeChannelId}/read?up_to_id=${lastMessageId}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+    } catch {
+      // kein Netz — nächster Poll / Seitenlad wird es erneut versuchen
+    }
+  }
+
+  // Badge am Forum-Tab in der Kurs-Tab-Leiste um n verringern (Boden: 0).
+  function reduceForumTabBadge(n) {
+    if (!n || n <= 0) return;
+    const link = document.querySelector('#course-tab-bar a[href$="/forum"]');
+    const badge = link ? link.querySelector('.tab-badge') : null;
+    if (!badge) return;
+    let count = parseInt(badge.dataset.count || '0', 10);
+    count = Math.max(0, count - n);
+    if (count === 0) badge.remove();
+    else {
+      badge.dataset.count = String(count);
+      badge.textContent = count > 99 ? '99+' : String(count);
+    }
+  }
+
+  // Badge des aktiven Kanals in der Sidebar entfernen (Kanal wird gerade gesehen).
+  function clearActiveChannelBadge() {
+    if (activeChannelId == null) return;
+    const link = document.querySelector(`.forum-channel[href="?channel=${activeChannelId}"]`);
+    const badge = link ? link.querySelector('.channel-unread') : null;
+    if (badge) badge.remove();
+  }
+
+  let initialLoadDone = false;
+  function appendForumMessages(msgs, forceScroll, countAsUnread = true) {
     if (!msgs.length) return;
     const nearBottom = forumIsNearBottom();
     const empty = document.getElementById('forum-empty');
@@ -186,6 +246,13 @@
     for (const m of msgs) forumList.appendChild(forumMessageEl(m));
     if (nearBottom || forceScroll) forumList.scrollTop = forumList.scrollHeight;
     lastMessageId = msgs[msgs.length - 1].id;
+    if (countAsUnread && chatVisible()) {
+      // Initial-Load: Server-Zähler abziehen (lastMessageId markiert alles bis
+      // zur letzten Nachricht als gelesen). Spätere Adds: nur die neuen zählen.
+      reduceForumTabBadge(initialLoadDone ? msgs.length : activeChannelUnread);
+    }
+    initialLoadDone = true;
+    if (chatVisible()) markChannelRead();
   }
 
   // ─── Löschen (Event-Delegation) ──────────────────────────────
@@ -224,7 +291,9 @@
         body: JSON.stringify({ content }),
       });
       if (res.ok) {
-        appendForumMessages([await res.json()], true);
+        // Eigene Nachricht: zahlt nicht auf das Ungelesen-Badge an,
+        // wird aber serverseitig als gelesen markiert (countAsUnread=false).
+        appendForumMessages([await res.json()], true, false);
       } else {
         const data = await res.json().catch(() => ({}));
         showToast(data.detail || 'Senden fehlgeschlagen.', 'error');
@@ -354,6 +423,9 @@
   if (activeChannelId != null) {
     appendForumMessages(initialMessages, false);
     forumList.scrollTop = forumList.scrollHeight;
+    // Sichtbarer Chat → aktiver Kanal wird als gelesen markiert (Badge weg);
+    // unsichtbar (mobil, nur Kanal-Liste) → Badge und Ungelesen bleiben stehen.
+    if (chatVisible()) clearActiveChannelBadge();
   }
 </script>
 {% endblock %}

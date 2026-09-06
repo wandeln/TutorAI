@@ -12,7 +12,7 @@ Das hält die API sauber und typisiert.
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import SQLModel, Field, Relationship
 
 
@@ -709,6 +709,24 @@ class ForumMessageRead(SQLModel):
     role: str
     avatar: Optional[str] = None
     can_delete: bool = False
+
+
+class ForumChannelReadState(SQLModel, table=True):
+    """Letzter gelesener Nachrichten-Stand je User und Forum-Kanal.
+
+    Basis für die Ungelesen-Zähler: Alle Nachrichten mit
+    id > last_read_message_id sind ungelesen (0 = Kanal noch nie gelesen).
+    Neue Tabelle wird beim App-Start per create_all angelegt.
+    """
+
+    __tablename__ = "forum_channel_read_state"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    channel_id: int = Field(foreign_key="forum_channels.id", index=True)
+    last_read_message_id: int = Field(default=0)
+
+    __table_args__ = (UniqueConstraint("user_id", "channel_id"),)
 
 
 # ═══════════════════════════════════════════════════════════════════

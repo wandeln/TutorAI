@@ -378,6 +378,13 @@ def _course_tab_context(
         .where(ScriptSection.is_visible == True)  # noqa: E712
     ).all()
 
+    # Aufgaben: für Studenten erst, wenn mindestens eine sichtbar ist
+    visible_tasks = session.exec(
+        select(Task)
+        .where(Task.course_id == course_id)
+        .where(Task.is_visible == True)  # noqa: E712
+    ).all()
+
     tabs: list[dict[str, Any]] = []
     if is_tutor or is_admin or visible_sections:
         tabs.append(
@@ -400,17 +407,20 @@ def _course_tab_context(
             }
         )
 
-    tabs.append(
-        {
-            "key": "tasks",
-            "icon": "📋",
-            "label": "Aufgaben",
-            "url": f"/courses/{course_id}/tasks",
-            "active": active_tab == "tasks",
-        }
-    )
+    if is_tutor or is_admin or visible_tasks:
+        tabs.append(
+            {
+                "key": "tasks",
+                "icon": "📋",
+                "label": "Aufgaben",
+                "url": f"/courses/{course_id}/tasks",
+                "active": active_tab == "tasks",
+            }
+        )
     # Forum: für alle Kurs-Mitglieder (Student/Tutor/PROF) + Admins
     if membership is not None or is_admin:
+        # Ungelesen-Zähler (Summe über alle Kanäle) als Badge am Forum-Tab
+        forum_badge = sum(forum.load_unread_counts(session, course_id, user.id).values())  # type: ignore[arg-type]
         tabs.append(
             {
                 "key": "forum",
@@ -418,6 +428,7 @@ def _course_tab_context(
                 "label": "Forum",
                 "url": f"/courses/{course_id}/forum",
                 "active": active_tab == "forum",
+                "badge": forum_badge,
             }
         )
     if is_tutor:
@@ -469,6 +480,7 @@ def _course_tab_context(
         "tabs": tabs,
         "active_tab": active_tab,
         "has_visible_sections": bool(visible_sections),
+        "has_visible_tasks": bool(visible_tasks),
     }
     return membership, ctx
 
@@ -506,8 +518,13 @@ async def index(
         for c in student_courses:
             course_id = c["id"]
             tasks = session.exec(
-                select(Task).where(Task.course_id == course_id)
+                select(Task)
+                .where(Task.course_id == course_id)
+                .where(Task.is_visible == True)  # noqa: E712
             ).all()
+            # Ohne sichtbare Aufgaben: kein Fortschritt/keine Punkte auf dem Kurs-Tile
+            if not tasks:
+                continue
             course_earned = 0.0
             course_possible = 0
             completed_count = 0
@@ -695,7 +712,7 @@ async def course_page(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Kurs-Start: leitet zum Skript weiter (falls sichtbar), sonst zu den Aufgaben."""
+    """Kurs-Start: leitet zum Skript weiter (falls sichtbar), sonst zu den Aufgaben, sonst zum Forum."""
     membership, ctx = _course_tab_context(
         session, user, request, course_id, active_tab="tasks"
     )
@@ -703,10 +720,13 @@ async def course_page(
     if not membership:
         raise HTTPException(403, "Du bist kein Mitglied dieses Kurses.")
 
-    # Standard-Landing: Skript (wenn der Nutzer es sieht), sonst Aufgaben.
+    # Standard-Landing: Skript (wenn der Nutzer es sieht), sonst Aufgaben,
+    # sonst Forum (verbleibender Tab, wenn auch keine sichtbaren Aufgaben da sind).
     if ctx["is_tutor"] or ctx["is_admin"] or ctx["has_visible_sections"]:
         return RedirectResponse(url=f"/courses/{course_id}/script", status_code=302)
-    return RedirectResponse(url=f"/courses/{course_id}/tasks", status_code=302)
+    if ctx["has_visible_tasks"]:
+        return RedirectResponse(url=f"/courses/{course_id}/tasks", status_code=302)
+    return RedirectResponse(url=f"/courses/{course_id}/forum", status_code=302)
 
 
 @app.get("/courses/{course_id}/tasks")
@@ -737,10 +757,11 @@ async def tasks_page(
 
     # Für Studenten: nur sichtbare Aufgaben, my_points und has_feedback pro Aufgabe berechnen
     if not is_tutor:
+        visible_tasks = [t for t in tasks if t.is_visible]
+        if not visible_tasks:
+            raise HTTPException(404, "Keine Aufgaben für diesen Kurs vorhanden.")
         task_list = []
-        for t in tasks:
-            if not t.is_visible:
-                continue
+        for t in visible_tasks:
             subs = session.exec(
                 select(Submission)
                 .where(Submission.task_id == t.id)

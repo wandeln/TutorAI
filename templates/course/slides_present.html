@@ -43,7 +43,7 @@
      unterhalb der dunklen Toolbar (Toggling + Aktionen: s. JS unten). #}
   <div class="present-shortcuts" id="present-shortcuts">
     <div class="present-shortcuts-title">Shortcuts</div>
-    <button type="button" data-key="70"><kbd>F</kbd><span>Full-Screen Mode</span></button>
+    <button type="button" data-action="fullscreen"><kbd>F</kbd><span>Full-Screen Mode</span></button>
     {% if is_tutor %}
     <button type="button" data-key="83"><kbd>S</kbd><span>Speaker View</span></button>
     {% endif %}
@@ -79,17 +79,23 @@
   const HAS_NOTES = {{ "true" if is_tutor else "false" }}; // Notes-Plugin nur für Tutoren/Profs
 </script>
 <script>
-// Vollbild umschalten (Browser-Fullscreen API; Reveal's "F"-Key tut dasselbe)
+// Vollbild auf Dokumentebene umschalten (Browser-Fullscreen API).
+// Wichtig: documentElement und NICHT nur der Reveal-Viewport
+// (#reveal-root) — die dunkle Toolbar und das Shortcuts-Panel liegen
+// außerhalb von #reveal-root und wären im Viewport-Fullscreen unsichtbar.
+// Reveal's eigener F-Key wird unten per config.keyboard auf dieselbe
+// Funktion umgebunden.
+function togglePageFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+}
 (function () {
   const btn = document.getElementById("fullscreen-btn");
   if (!btn) return;
-  btn.addEventListener("click", () => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    } else {
-      document.documentElement.requestFullscreen().catch(() => {});
-    }
-  });
+  btn.addEventListener("click", togglePageFullscreen);
 })();
 </script>
 <script>
@@ -153,6 +159,10 @@
     // bereits HTML-escapten Code (mit true würde das Plugin doppelte
     // Entities setzen und die Highlight-Spans kaputt machen).
     highlight: { escapeHTML: false },
+    // F = Seiten-Vollbild (togglePageFullscreen) statt Reveal-Viewport:
+    // nur so bleiben Toolbar + Shortcuts-Panel im Vollbild sichtbar.
+    // (User-defined Bindings haben Vorrang vor Reveal's System-Bindings.)
+    keyboard: { 70: togglePageFullscreen },
     plugins: [RevealHighlight, ...(HAS_NOTES ? [RevealNotes] : [])],
   });
   await reveal.initialize();
@@ -225,20 +235,26 @@
 (function () {
   const panel = document.getElementById("present-shortcuts");
   if (!panel) return;
-  panel.querySelectorAll("button[data-key]").forEach((btn) => {
+  panel.querySelectorAll("button").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const keyCode = parseInt(btn.dataset.key, 10);
-      const ev = new KeyboardEvent("keydown", {
-        keyCode,
-        cancelable: true,
-        bubbles: true,
-      });
-      // Fallback für Browser, die keyCode im Event-Init ignorieren:
-      // Property auf der Instanz setzen (Reveal prüft nur event.keyCode).
-      if (ev.keyCode !== keyCode) {
-        Object.defineProperty(ev, "keyCode", { value: keyCode });
+      if (btn.dataset.action === "fullscreen") {
+        // F-Zeile: Seiten-Vollbild (wie der ⛶-Button), damit die dunkle
+        // Bar + dieses Panel im Vollbild sichtbar bleiben.
+        togglePageFullscreen();
+      } else {
+        const keyCode = parseInt(btn.dataset.key, 10);
+        const ev = new KeyboardEvent("keydown", {
+          keyCode,
+          cancelable: true,
+          bubbles: true,
+        });
+        // Fallback für Browser, die keyCode im Event-Init ignorieren:
+        // Property auf der Instanz setzen (Reveal prüft nur event.keyCode).
+        if (ev.keyCode !== keyCode) {
+          Object.defineProperty(ev, "keyCode", { value: keyCode });
+        }
+        document.dispatchEvent(ev);
       }
-      document.dispatchEvent(ev);
       // Fokus weg, sonst würde Space/Enter die gerade geklickte Zeile
       // (natives Button-Verhalten) sofort erneut auslösen.
       btn.blur();

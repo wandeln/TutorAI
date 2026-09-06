@@ -48,10 +48,18 @@
   <!-- Header -->
   <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
     <div class="min-w-0">
-      <a href="/courses/{{ course.id }}/slides"
-         class="text-sm text-blue-600 hover:text-blue-800 transition inline-block mb-1">
-        ← Alle Folien
-      </a>
+      <div class="flex items-center gap-2 mb-1.5 flex-wrap">
+        <button type="button" onclick="cancelEdit()"
+                class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded-lg text-sm font-medium transition">
+          Abbrechen
+        </button>
+        {% if is_tutor or is_admin %}
+        <button type="button" onclick="saveMaterial()"
+                class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition">
+          💾 Speichern
+        </button>
+        {% endif %}
+      </div>
       <h2 class="text-xl font-bold text-gray-800">{{ material.title }}</h2>
       {% if is_tutor or is_admin %}
       <p class="text-sm text-gray-500 mt-1 flex items-center gap-1.5">
@@ -169,35 +177,93 @@
         <textarea id="material-textarea" rows="24"
                   placeholder="Folien mit einer eigenen Zeile '---' trennen…"
                   class="w-full h-[55vh] font-mono text-sm leading-relaxed border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
-        <p class="text-xs text-gray-400 mt-2 leading-relaxed">
-          Direktiven am Folienanfang (je eigene Zeile):
-          <code>layout: center|topleft|twocol</code>,
-          <code>transition: fade|slide|zoom|none|autoanimate</code> (Default: <code>autoanimate</code> —
-          der Inhalt animiert zwischen den Folien ineinander;
-          <code>fade</code>/<code>slide</code>/<code>zoom</code>/<code>none</code> setzen eine klassische Transition;
-          gezoomte Applets (<code>{zoom=X}</code>) werden vom Auto-Animate übersprungen — der Applet-Zoom bleibt erhalten),
-          <code>class: &lt;kennung&gt;</code>,
-          <code>notes: &lt;Sprechernotiz&gt;</code>,
-          <code>background: ![Titel](/media/…)</code> (Vollflächiger Folien-Hintergrund, deckt den ganzen Bildschirm ab — Bild oder <code>.html</code>-Applet; Applets bleiben in der Präsentation klickbar, dafür ist dann der Folieninhalt dieser Folie nicht. <code>.html</code> wird beim PDF-Export nicht mitgedruckt).
-          Zweispaltig: <code>layout: twocol</code> + eigene Zeile <code>||</code> (eine Überschrift auf der ersten Zeile der linken Spalte spannt über beide Spalten).
-          Vertikale Unterfolien: eine eigene Zeile <code>--</code> teilt eine Folie in mehrere Unterfolien, die in der Präsentation nacheinander (mit ↓) erscheinen — jede Unterfolie ist wie eine normale Folie (eigene Direktiven, <code>notes</code>, Hintergrund; <code>---</code> trennt weiterhin Folien).
-          Max-Bildhöhe in px: {% raw %}<code>{height=400}</code>{% endraw %} (Suffix <code>px</code> und führender Punkt optional), Applet-Zoom: {% raw %}<code>{zoom=1.5}</code>{% endraw %} und Höhe: {% raw %}<code>{height=300}</code>{% endraw %} (direkt nach dem Bild-/Applet-Snippet) — bei externen Websites und YouTube-Links ist {% raw %}<code>{height=…}</code>{% endraw %} wie bei Applets die fixe Iframe-Höhe.
-          YouTube-Links ({% raw %}<code>watch?v=…</code>, <code>youtu.be/…</code>, <code>shorts/…</code>{% endraw %}) werden wie jedes andere Medium eingebunden (Embed-Player im 16:9-Videoformat — die Breite passt sich der Höhe an; mit {% raw %}<code>{height=…}</code>{% endraw %} wird die Höhe fixiert und die Breite proportional angepasst); der Alt-Text steht immer als Unterschrift unter dem Medium (mit Label: „Abb. N: Text“, ohne Label: ohne Nummer).
-          Schrittweises Einblenden: {% raw %}<code>{#fragment}</code>{% endraw %} am Zeilenende (z. B. nach Bullet, Absatz oder Formel);
-          {% raw %}<code>{#fragment:id}</code>{% endraw %} → alle Elemente mit gleicher ID erscheinen gleichzeitig;
-          {% raw %}<code>{#Fragment}</code>{% endraw %} (Großbuchstabe) → Element + alle folgenden Inhalte der Folie erscheinen erst mit einem Klick.
-          Hervorheben: <code>@box:highlight … @endbox</code> packt den Inhalt in eine transparente, geblurte Box in der Primärfarbe (z. B. für Titel auf Deckslides);
-          erste Zeile <code>@boxcolor:&lt;farbe&gt;</code> (z. B. <code>@boxcolor:white</code>) übersteuert die Boxfarbe (Hex, rgb()/rgba(), CSS-Farbname).
-          Formelteile schrittweise: {% raw %}<code>\htmlClass{fragment}{…}</code> / <code>\htmlClass{fragment:id}{…}</code>{% endraw %} in einer Formel → der eingewickelte Teil erscheint erst mit einem extra Klick (gleiche <code>id</code> = gleichzeitig).
-          Auto-Animate-Element-ID: {% raw %}<code>{#aaid:label}</code>{% endraw %} am Zeilenende (oder nach <code>$$…$$</code>/{% raw %}<code>{#eq:…}</code>{% endraw %}/Bild-Snippet) → Elemente mit demselben Label auf zwei Folien animieren per ID ineinander.
-          Code: Fenced-Block mit Sprache auf der öffnenden Zeile wird syntax-highlightet; {% raw %}<code>{#lines:1,3-5}</code>{% endraw %} → Zeilennummern + schrittweises Zeilen-Einblenden (<code>|</code> = weiterer Schritt), {% raw %}<code>{#aaid:label}</code>{% endraw %} → Auto-Animate-ID (gleiche Label auf zwei Folien → Zeilen animieren ineinander), {% raw %}<code>{.zoom=1.5}</code>{% endraw %} → größere Schrift, {% raw %}<code>{.height=300}</code>{% endraw %} → Max-Höhe in px + internes Scrollen (alle Tokens direkt nach der Sprache, Reihenfolge frei, auch ohne Leerzeichen; ohne {% raw %}<code>{.height}</code>{% endraw %} gilt dieselbe Default-Höhe wie bei Applets);
-          {% raw %}<code>{#code:label}[caption]</code>{% endraw %} → nummerierter Code-Block („Code N: caption“, die Nummer ist klickbar, falls das Label auch im Skript vorkommt) + Eintrag in der „Codes“-Tabelle des Skript-Inhaltsverzeichnisses; <code>@box:code … @endbox</code> = dunkle Code-Box mit „Code“-Kopf.
-        </p>
-        <div class="flex items-center justify-end mt-3">
-          <button onclick="saveMaterial()"
-                  class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-            Speichern
+        <div class="flex items-center mt-2">
+          <button type="button" id="md-help-btn" onclick="toggleMdHelp()"
+                  class="text-sm border border-blue-200 bg-blue-50 rounded-lg px-3 py-1.5 text-blue-700 hover:bg-blue-100 transition font-medium">
+            ❓ Markdown-Hilfe
           </button>
+        </div>
+        <div id="md-help" class="hidden mt-2 bg-blue-50/60 border border-blue-200 rounded-lg p-4">
+          <h4 class="text-sm font-semibold text-gray-800 mb-3">📝 Markdown-Anleitung für Folien</h4>
+          <div class="grid gap-x-8 gap-y-4 text-xs text-gray-600 leading-relaxed md:grid-cols-2">
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Folien &amp; Unterfolien</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li><code>---</code> (eigene Zeile) → neue Folie</li>
+                <li><code>--</code> (eigene Zeile) → vertikale Unterfolien (in der Präsentation mit ↓ nacheinander); jede Unterfolie ist wie eine normale Folie (eigene Direktiven, <code>notes</code>, Hintergrund)</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Direktiven (je eigene Zeile am Folienanfang)</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li><code>layout: center|topleft|twocol</code></li>
+                <li><code>transition: fade|slide|zoom|none|autoanimate</code> — Default <code>autoanimate</code> (Inhalt animiert zwischen den Folien ineinander; gezoomte Applets <code>{zoom=X}</code> überspringt das Auto-Animate); <code>fade</code>/<code>slide</code>/<code>zoom</code>/<code>none</code> = klassische Transition</li>
+                <li><code>class: &lt;kennung&gt;</code></li>
+                <li><code>notes: &lt;Sprechernotiz&gt;</code></li>
+                <li><code>background: ![Titel](/media/…)</code> → vollflächiger Folien-Hintergrund (Bild oder <code>.html</code>-Applet; Applets bleiben klickbar) — <code>.html</code> wird beim PDF-Export nicht mitgedruckt</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Zweispaltig</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li><code>layout: twocol</code> + eigene Zeile <code>||</code></li>
+                <li>Überschrift auf der ersten Zeile der linken Spalte → spannt über beide Spalten</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Schrittweises Einblenden (Fragments)</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li>{% raw %}<code>{#fragment}</code>{% endraw %} am Zeilenende (z. B. nach Bullet, Absatz oder Formel)</li>
+                <li>{% raw %}<code>{#fragment:id}</code>{% endraw %} → alle Elemente mit gleicher ID erscheinen gleichzeitig</li>
+                <li>{% raw %}<code>{#Fragment}</code>{% endraw %} (Großbuchstabe) → Element + alle folgenden Inhalte der Folie erscheinen erst mit einem Klick</li>
+                <li>In Formeln: {% raw %}<code>\htmlClass{fragment}{…}</code> / <code>\htmlClass{fragment:id}{…}</code>{% endraw %} → der eingewickelte Teil erscheint erst mit einem extra Klick (gleiche <code>id</code> = gleichzeitig)</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Medien (Bilder, Applets, YouTube)</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li><code>{height=400}</code> → Max-Bildhöhe in px (Suffix <code>px</code> und führender Punkt optional), direkt nach dem Bild-/Applet-Snippet</li>
+                <li><code>{zoom=1.5}</code> → Applet-Zoom, direkt nach dem Snippet</li>
+                <li>Externe Websites &amp; YouTube-Links (<code>watch?v=…</code>, <code>youtu.be/…</code>, <code>shorts/…</code>) werden automatisch eingebettet (16:9-Embed-Player); <code>{height=…}</code> fixiert die Iframe-Höhe (Breite proportional)</li>
+                <li>Alt-Text steht immer als Unterschrift unter dem Medium (mit Label: „Abb. N: Text“, ohne Label: ohne Nummer)</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Hervorheben</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li><code>@box:highlight … @endbox</code> → transparenter, geblurter Bereich in der Primärfarbe (z. B. für Titel auf Deckslides)</li>
+                <li><code>@boxcolor:&lt;farbe&gt;</code> als erste Zeile → Boxfarbe übersteuern (Hex, <code>rgb()</code>/<code>rgba()</code>, CSS-Farbname)</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Auto-Animate</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li>{% raw %}<code>{#aaid:label}</code>{% endraw %} am Zeilenende (oder nach <code>$$…$$</code>/{% raw %}<code>{#eq:…}</code>{% endraw %}/Bild-Snippet) → Elemente mit demselben Label auf zwei Folien animieren per ID ineinander</li>
+              </ul>
+            </section>
+
+            <section>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Code-Blöcke</h5>
+              <ul class="list-disc pl-4 space-y-1">
+                <li>Fenced-Block mit Sprache auf der öffnenden Zeile → syntax-highlightet</li>
+                <li>Tokens direkt nach der Sprache (Reihenfolge frei, auch ohne Leerzeichen):</li>
+                <li>{% raw %}<code>{#lines:1,3-5}</code>{% endraw %} → Zeilennummern + schrittweises Zeilen-Einblenden (<code>|</code> = weiterer Schritt)</li>
+                <li>{% raw %}<code>{#aaid:label}</code>{% endraw %} → Auto-Animate-ID (gleiche Label auf zwei Folien → Zeilen animieren ineinander)</li>
+                <li>{% raw %}<code>{.zoom=1.5}</code>{% endraw %} → größere Schrift</li>
+                <li>{% raw %}<code>{.height=300}</code>{% endraw %} → Max-Höhe in px + internes Scrollen (ohne <code>{.height}</code> gilt dieselbe Default-Höhe wie bei Applets)</li>
+                <li>{% raw %}<code>{#code:label}</code>[caption]{% endraw %} → nummerierter Code-Block („Code N: caption“, Nummer klickbar, falls das Label auch im Skript vorkommt) + Eintrag in der „Codes“-Tabelle des Skript-IV</li>
+                <li><code>@box:code … @endbox</code> → dunkle Code-Box mit „Code“-Kopf</li>
+              </ul>
+            </section>
+
+          </div>
         </div>
       </div>
     </div>
@@ -213,6 +279,20 @@
   const material = {{ material | tojson }};  // {id, title, material_type, is_visible}
   const theme = {{ slides_theme | tojson }}; // aufgelöstes Folien-Theme
   let currentVisible = material.is_visible;
+
+  // Geladene (gespeicherte) Werte — Basis für den "Abbrechen"-Dirty-Check
+  let loadedContent = "";
+  let loadedTitle = "";
+
+  // Abbrechen: zurück zur Folien-Übersicht; bei ungespeicherten Änderungen fragen
+  window.cancelEdit = function () {
+    const ta = document.getElementById("material-textarea");
+    const ti = document.getElementById("material-title-input");
+    if (ta && (ta.value !== loadedContent || ti.value.trim() !== loadedTitle)) {
+      if (!confirm("Ungespeicherte Änderungen verwerfen und zur Folien-Übersicht zurückkehren?")) return;
+    }
+    window.location.href = `/courses/${courseId}/slides`;
+  };
 
   {% if is_tutor or is_admin %}
 
@@ -238,6 +318,8 @@
       const data = await res.json();
       titleInput.value = data.title || material.title;
       textarea.value = data.content || "";
+      loadedTitle = titleInput.value;
+      loadedContent = textarea.value;
       renderPreview(textarea.value);
     } catch (e) {
       previewEmptyEl.textContent = "Fehler beim Laden des Inhalts.";
@@ -402,6 +484,15 @@
     }
   };
 
+  // ─── Markdown-Hilfe ein-/ausblenden ─────────────────────────
+
+  const mdHelpBtn = document.getElementById("md-help-btn");
+  const mdHelpPanel = document.getElementById("md-help");
+  window.toggleMdHelp = function () {
+    const open = !mdHelpPanel.classList.toggle("hidden");
+    mdHelpBtn.textContent = open ? "Hilfe ausblenden" : "❓ Markdown-Hilfe";
+  };
+
   // ─── Speichern / Sichtbarkeit / Löschen ─────────────────────
 
   window.saveMaterial = async function () {
@@ -423,7 +514,8 @@
         showToast(data.detail || "Fehler beim Speichern.", "error");
         return;
       }
-      window.location.reload();
+      // Nach erfolgreichem Speichern zurück zur Folien-Übersicht
+      window.location.href = `/courses/${courseId}/slides`;
     } catch (err) {
       showToast("Fehler: " + err.message, "error");
     }

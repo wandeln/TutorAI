@@ -23,6 +23,10 @@
 <style>:root { {{ slides_theme_css | safe }} }</style>
 <script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
 <script src="{{ asset('js/slides.js') }}"></script>
+{% if is_tutor or is_admin %}
+<!-- SortableJS (MIT) — Drag-and-Drop Deck-Reihenfolge (nur Tutor/PROF) -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+{% endif %}
 {# Highlight-Plugin (Code-Highlighting + data-line-numbers; nutzt das
    global geladene highlight.js aus base.html) #}
 <script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
@@ -67,6 +71,16 @@
         {% if d.updated_at %}<span>· {{ d.updated_at[:10] }}</span>{% endif %}
       </div>
       <div class="flex items-center gap-1.5 mt-3">
+        {% if is_tutor or is_admin %}
+        <div class="deck-drag-handle cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-1 -m-1 -ml-2"
+             title="Ziehen zur Reihenfolge ändern">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/>
+          </svg>
+        </div>
+        {% endif %}
         <a href="/courses/{{ course.id }}/slides/{{ d.id }}/present"
            class="text-xs bg-blue-600 text-white rounded-lg px-2.5 py-1.5 hover:bg-blue-700 transition font-semibold">
           ▶
@@ -102,7 +116,7 @@
   {% if is_tutor or is_admin %}
   <!-- Anlegen-Kachel -->
   <button onclick="createDeck()"
-          class="min-h-[260px] flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
+          class="deck-create-btn min-h-[260px] flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-500 transition">
     <span class="text-3xl">＋</span>
     <span class="text-sm font-medium">Neues Deck anlegen</span>
   </button>
@@ -232,6 +246,47 @@
       })
       .catch((err) => showToast(err.message, "error"));
   };
+
+  // ─── Drag-and-Drop: Deck-Reihenfolge (nur Tutor/PROF) ───────────
+  // Handle unten links in der Kachel. Die „Anlegen“-Kachel ist per
+  // filter ausgeschlossen und wird per onEnd-Fixup zuletzt gelassen.
+  const grid = document.getElementById("deck-grid");
+  const createBtn = grid ? grid.querySelector(".deck-create-btn") : null;
+  if (grid && window.Sortable) {
+    Sortable.create(grid, {
+      handle: ".deck-drag-handle",
+      filter: ".deck-create-btn",
+      animation: 150,
+      ghostClass: "bg-blue-50",
+      chosenClass: "shadow-lg",
+      dragClass: "shadow-xl",
+      onEnd: async function () {
+        if (createBtn && grid.lastElementChild !== createBtn) grid.appendChild(createBtn);
+        const newOrder = [];
+        grid.querySelectorAll("[data-deck-id]").forEach((tile) => {
+          newOrder.push(parseInt(tile.getAttribute("data-deck-id")));
+        });
+        try {
+          const res = await fetch(`/api/courses/${courseId}/materials/reorder`, {
+            method: "PATCH",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ material_ids: newOrder }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            showToast(data.detail || "Fehler beim Verschieben.", "error");
+            window.location.reload(); // Reihenfolge zurücksetzen bei Fehler
+            return;
+          }
+          showToast("Reihenfolge aktualisiert.", "success");
+        } catch (err) {
+          showToast("Fehler: " + err.message, "error");
+          window.location.reload();
+        }
+      },
+    });
+  }
 
   // ─── Design-Modal (Theme pro Kurs) ──────────────────────────────
 

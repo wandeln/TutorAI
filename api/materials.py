@@ -251,3 +251,34 @@ async def delete_material(
     sync_media_usages(session, course_id)
 
     return {"message": f"{label} '{title}' gelöscht."}
+
+
+@router.patch("/courses/{course_id}/materials/reorder")
+async def reorder_materials(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    _user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
+):
+    """Reihenfolge der Slide-Decks eines Kurses ändern (nur PROF/TUTOR)."""
+    body = await request.json()
+    material_ids = body.get("material_ids")
+    if not isinstance(material_ids, list) or not material_ids:
+        raise HTTPException(400, "material_ids muss eine nicht-leere Liste sein.")
+
+    decks = session.exec(
+        select(CourseMaterial)
+        .where(CourseMaterial.course_id == course_id)
+        .where(CourseMaterial.material_type == MaterialType.SLIDES)
+    ).all()
+    by_id = {m.id: m for m in decks}
+
+    for idx, mid in enumerate(material_ids):
+        m = by_id.get(mid)
+        if not m:
+            raise HTTPException(404, f"Slide-Deck {mid} nicht gefunden.")
+        m.display_order = idx
+        session.add(m)
+    session.commit()
+
+    return {"message": "Deck-Reihenfolge aktualisiert."}

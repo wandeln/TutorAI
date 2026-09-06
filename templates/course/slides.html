@@ -280,6 +280,10 @@
             return;
           }
           showToast("Reihenfolge aktualisiert.", "success");
+          // S-Nummern der slide-eigenen Labels hängen von der Deck-Reihenfolge
+          // ab → Kachel-Vorschauen (mit eingebrannten S-Nummern) nur per Reload
+          // korrekt. Ref-Map kommt serverseitig ohnehin aus display_order.
+          window.location.reload();
         } catch (err) {
           showToast("Fehler: " + err.message, "error");
           window.location.reload();

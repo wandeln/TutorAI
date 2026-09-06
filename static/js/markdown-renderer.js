@@ -120,6 +120,31 @@ function refreshCourseRefMap() {
   return getCourseRefMap();
 }
 
+// ─── Slide-Ref-Map (S-Nummern) ─────────────────────────────────────────────
+// GET /api/courses/{courseId}/slides-refmap: slide-eigene Labels (die im
+// Skript NICHT vorkommen) mit fortlaufenden S-Nummern über ALLE Slide-Decks
+// (je Typ fig/eq/code eigener Zähler, kanonische Deck-Reihenfolge aus der DB)
+// + Reveal-Koordinaten (deckId, h, v) fürs Verlinken. Eigenes gecachtes
+// Promise, unabhängig von der Skript-Ref-Map.
+let _slidesRefMapPromise = null;
+function getCourseSlidesRefMap() {
+  const cid = _getCourseId();
+  if (cid === null) {
+    return Promise.resolve(null); // bewusst ohne Caching → nächster Render versucht es erneut
+  }
+  if (!_slidesRefMapPromise) {
+    _slidesRefMapPromise = fetch(`/api/courses/${cid}/slides-refmap`, { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .catch(() => null);
+  }
+  return _slidesRefMapPromise;
+}
+
+function refreshCourseSlidesRefMap() {
+  _slidesRefMapPromise = null;
+  return getCourseSlidesRefMap();
+}
+
 function _chapterRef(refMap, sectionId) {
   if (!refMap || !refMap.chapters || sectionId === null || sectionId === undefined) return null;
   return refMap.chapters[String(sectionId)] || null;
@@ -370,6 +395,15 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const refMap = await getCourseRefMap();
   const globalLabels = (refMap && refMap.labels) || {};
   const chapterRef = _chapterRef(refMap, sectionId);
+  // Slide-Ref-Map: slide-eigene Labels → S-Nummern (fortlaufend über alle
+  // Decks) + Link-Ziele (deckId/h/v). Immer holen (gecacht) — auch
+  // Skript-/Aufgaben-Seiten dürfen per @fig:/@eq:/@code: auf Slide-Objekte
+  // referenzieren.
+  const slidesRefMap = await getCourseSlidesRefMap();
+  const slidesLabels = (slidesRefMap && slidesRefMap.labels) || {};
+  const slidesMaxSFig = (slidesRefMap && slidesRefMap.maxSFig) || 0;
+  const slidesMaxSEq = (slidesRefMap && slidesRefMap.maxSEq) || 0;
+  const slidesMaxSCode = (slidesRefMap && slidesRefMap.maxSCode) || 0;
 
   // 0. Kapitel-Label ({#sec:label} als erste nicht-leere Zeile) → kein Content, entfernen
   text = text.replace(/^(?:[ \t]*\n)*[ \t]*\{#sec:[\p{L}0-9_-]+\}[ \t]*(?:\r?\n|$)/u, '');
@@ -541,8 +575,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
             if (g && g.kind === 'fig') {
               num = g.num; // gespeichertes Label → exakte globale Nummer
             } else if (slideMode) {
-              slideFigCount += 1;
-              num = 'S' + slideFigCount; // slide-eigenes Label → S1, S2, …
+              const sl = slidesLabels['fig:' + a.label]; // typ-qualifiziert (s. slides-refmap)
+              if (sl && sl.kind === 'fig') {
+                num = 'S' + sl.num; // slide-eigenes Label → S-Nummer aus der Slide-Ref-Map
+              } else {
+                slideFigCount += 1;
+                num = 'S' + (slidesMaxSFig + slideFigCount); // ungespeichert → weiterzählen
+              }
             } else {
               figFallbackCount += 1;
               num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
@@ -599,8 +638,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
         if (g && g.kind === 'eq') {
           eqLabelNumbers[label] = g.num; // gespeichertes Label → exakte globale Nummer
         } else if (slideMode) {
-          slideEqCount += 1;
-          eqLabelNumbers[label] = 'S' + slideEqCount; // slide-eigenes Label → (S1), (S2), …
+          const sl = slidesLabels['eq:' + label]; // typ-qualifiziert (s. slides-refmap)
+          if (sl && sl.kind === 'eq') {
+            eqLabelNumbers[label] = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+          } else {
+            slideEqCount += 1;
+            eqLabelNumbers[label] = 'S' + (slidesMaxSEq + slideEqCount); // ungespeichert
+          }
         } else {
           eqFallbackCount += 1;
           eqLabelNumbers[label] = eqFallbackBase + eqFallbackCount; // neues (ungespeichertes) Label
@@ -620,9 +664,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
   });
 
-  // 1i. Extract cross-references: @fig:label / @eq:label / @sec:label / @kap:label
+  // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @sec:label / @kap:label
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq|sec|kap):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap|code):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -764,8 +808,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
           if (g && g.kind === 'code') {
             codeNum = g.num; // gespeichertes Label → exakte globale Nummer
           } else if (slideMode) {
-            slideCodeCount += 1;
-            codeNum = 'S' + slideCodeCount; // slide-eigenes Label
+            const sl = slidesLabels['code:' + codeLabel]; // typ-qualifiziert (s. slides-refmap)
+            if (sl && sl.kind === 'code') {
+              codeNum = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+            } else {
+              slideCodeCount += 1;
+              codeNum = 'S' + (slidesMaxSCode + slideCodeCount); // ungespeichert
+            }
           } else {
             codeFallbackCount += 1;
             codeNum = codeFallbackBase + codeFallbackCount;
@@ -1079,30 +1128,42 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = frag.innerHTML;
   }
 
-  // 6b. Restore cross-references (@fig:label / @eq:label / @sec:label;
-  //     @kap:label = Legacy-Alias für @sec:label)
-  //     Auflösung: 1) in diesem Dokument → In-Page-Anker,
-  //               2) refmap → direkter Link zum Objekt (#fig:label / #eq:label / #sec:label)
-  //                  auf der Skript-Seite (alle Rollen; das Kapitel wird dort aufgeklappt);
-  //                  Kapitel-Labels (chapter: true) verlinken auf #chapter-{id} und
-  //                  werden als „Kap. N“ angezeigt,
-  //               3) unbekannt → ❓
+  // 6b. Restore cross-references (@fig:label / @eq:label / @code:label /
+  //     @sec:label; @kap:label = Legacy-Alias für @sec:label)
+  //     Auflösung: 1) in diesem Dokument (nur außerhalb der Slides: dort
+  //                  würde Reveal den In-Page-Hash als Folien-Übergang lesen)
+  //                  → In-Page-Anker,
+  //               2) Skript-Ref-Map → direkter Link zum Objekt
+  //                  (#fig:label / #eq:label / #code:label / #sec:label) auf
+  //                  der Skript-Seite (alle Rollen; das Kapitel wird dort
+  //                  aufgeklappt); Kapitel-Labels (chapter: true) verlinken auf
+  //                  #chapter-{id} und werden als „Kap. N“ angezeigt,
+  //               3) Slide-Ref-Map → Link auf die Folie im Slide-Deck
+  //                  (/slides/{deckId}/present#/{h}/{v}, Anzeige „… S{n}“),
+  //               4) unbekannt → ❓
   xrefs.forEach((x, idx) => {
     const kind = x.kind === 'kap' ? 'sec' : x.kind;
     const local =
       kind === 'fig' ? figLabelNumbers[x.label]
       : kind === 'eq' ? eqLabelNumbers[x.label]
+      : kind === 'code' ? codeLabelNumbers[x.label]
       : secLabelNumbers[x.label];
     const g = globalLabels[x.label];
+    const sl = slidesLabels[kind + ':' + x.label]; // typ-qualifiziert (s. slides-refmap)
+    const kindText = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : kind === 'code' ? 'Code' : 'Abs.';
     let refHtml;
-    if (local) {
-      const text = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : 'Abs.';
-      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref">${text} ${local}</a>`;
+    const useLocalAnchor = kind === 'sec' || !slideMode;
+    if (useLocalAnchor && local) {
+      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref">${kindText} ${local}</a>`;
     } else if (g && g.kind === kind) {
       const cid = (refMap && refMap.courseId) || '';
-      const text = g.chapter ? 'Kap.' : kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : 'Abs.';
+      const text = g.chapter ? 'Kap.' : kindText;
       const anchor = g.chapter ? `chapter-${g.sectionId}` : `${kind}:${x.label}`;
       refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref">${text} ${g.num}</a>`;
+    } else if (sl && sl.kind === kind) {
+      // Slide-eigenes Objekt (kein Skript-Label): Link auf die Folie.
+      const cid = (slidesRefMap && slidesRefMap.courseId) || (refMap && refMap.courseId) || '';
+      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref">${kindText} S${sl.num}</a>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }

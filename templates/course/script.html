@@ -20,6 +20,25 @@
   @media (max-width: 639px) {
     #course-tab-bar { margin-bottom: 0; }
   }
+  /* Kapitel-Header sticky: bleibt unter der Tab-Leiste sichtbar, bis das
+     Kapitel durchgescrollt ist. z-10 < Tab-Leiste z-30 < Main-Nav z-50.
+     radius 11px = sm:rounded-xl (12px) − 1px Card-Border. */
+  .sq-chapter-header {
+    position: sticky;
+    top: calc(var(--navbar-height, 60px) + var(--tab-height, 43px));
+    z-index: 10;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+  @media (min-width: 640px) {
+    .sq-chapter-header { border-top-left-radius: 11px; border-top-right-radius: 11px; }
+    /* Einklappt: der Header bildet die Kartenunterkante → unten ebenfalls
+       runden (früher hat das overflow-hidden der Card abgeschnitten). */
+    .script-chapter-card:has(> .script-chapter-body.hidden) .sq-chapter-header {
+      border-bottom-left-radius: 11px;
+      border-bottom-right-radius: 11px;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -951,14 +970,16 @@
         const card = document.createElement("div");
         // Mobil: Karte full-bleed (nimmt das px-4 des Main-Containers per
         // -mx-4 mit, keine Rundung, keine Seitenbänder). Ab sm: gewöhnliche Karte.
-        card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl";
+        // Kein overflow-hidden: würde die Card zum Scroll-Container machen
+        // und den Sticky-Kapitel-Header in der Card einsperren.
+        card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl";
         card.setAttribute("data-section-id", s.id);
         card.setAttribute("data-section-title", s.title);
         card._visible = !!s.is_visible;
 
         const header = document.createElement("button");
         header.type = "button";
-        header.className = "w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition";
+        header.className = "sq-chapter-header w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition";
 
         if (SQ_IS_TUTOR) {
           const handle = document.createElement("div");

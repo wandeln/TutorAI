@@ -71,6 +71,7 @@
         const root = document.documentElement.style;
         root.setProperty("--tab-sb", sb + "px");
         root.setProperty("--tab-page-x", x + "px");
+        root.setProperty("--tab-height", bar.offsetHeight + "px");
         bar.classList.add("tab-full-bleed");
       };
       applyBleed();

@@ -461,6 +461,16 @@ def _course_tab_context(
                 "active": active_tab == "members",
             }
         )
+    if is_prof or is_admin:
+        tabs.append(
+            {
+                "key": "settings",
+                "icon": "⚙️",
+                "label": "Einstellungen",
+                "url": f"/courses/{course_id}/settings",
+                "active": active_tab == "settings",
+            }
+        )
 
     ctx = {
         "request": request,
@@ -1259,6 +1269,23 @@ async def members_page(
 
     ctx["members"] = members
     return templates.TemplateResponse("course/members.html", ctx)
+
+
+@app.get("/courses/{course_id}/settings")
+async def course_settings_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Einstellungen': Kurs-Grunddaten bearbeiten (nur PROF/Admin)."""
+    membership, ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="settings"
+    )
+    if not (ctx["is_prof"] or ctx["is_admin"]):
+        raise HTTPException(403, "Nur PROFs und Administratoren dürfen die Einstellungen bearbeiten.")
+    ctx["page_title"] = f"Einstellungen — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/settings.html", ctx)
 
 
 @app.get("/join/{token}")

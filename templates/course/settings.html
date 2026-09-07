@@ -1,0 +1,84 @@
+{% extends "course/base.html" %}
+
+{% block course_content %}
+  <!-- Kurs-Einstellungen -->
+  <div class="max-w-2xl">
+    <div class="card p-6">
+      <h2 class="text-lg font-bold text-gray-800 mb-4">Kurs-Einstellungen</h2>
+
+      <form id="course-settings-form" class="space-y-4">
+        <div>
+          <label for="settings-name" class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+          <input id="settings-name" type="text"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 value="{{ course.name }}" maxlength="200" required>
+        </div>
+
+        <div>
+          <label for="settings-semester" class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
+          <input id="settings-semester" type="text"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 value="{{ course.semester }}" maxlength="50" placeholder="z.B. WS 2025/26">
+        </div>
+
+        <div>
+          <label for="settings-description" class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+          <textarea id="settings-description" rows="4"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    maxlength="2000">{{ course.description }}</textarea>
+        </div>
+
+        <div class="flex justify-end pt-2">
+          <button type="submit"
+                  class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+            Speichern
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
+
+<script>
+  document.getElementById('course-settings-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+
+    const name = document.getElementById('settings-name').value.trim();
+    const semester = document.getElementById('settings-semester').value.trim();
+    const description = document.getElementById('settings-description').value.trim();
+
+    if (!name) {
+      showToast('Titel darf nicht leer sein.', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/courses/' + courseId + '/name', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          semester: semester,
+          description: description,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.detail || 'Fehler beim Speichern.', 'error');
+        return;
+      }
+
+      // Header im DOM aktualisieren
+      const h1El = document.getElementById('course-name');
+      const pEl = document.getElementById('course-subtitle');
+      if (h1El) h1El.textContent = name;
+      if (pEl) pEl.textContent = semester + (description ? ' — ' + description : '');
+
+      showToast(data.message || 'Kurs aktualisiert.', 'success');
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  });
+</script>

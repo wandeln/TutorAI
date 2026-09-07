@@ -4,7 +4,7 @@ Slide-Decks (Vorlesungsfolien) eines Kurses.
 
 Das LLM erhält: Thema/Anweisung, die Dauer der Präsentation, die
 Skript-Kapitel des Kurses (inkl. Inhalt — daraus werden die Folien gebaut)
-sowie deren vorhandene fig/eq/sec-Labels (damit das LLM dieselben Labels
+sowie deren vorhandene fig/eq/code/box/sec-Labels (damit das LLM dieselben Labels
 für dieselben Objekte wiederverwendet → gleiche Nummerierung wie im Skript
 + Verlinkung der Folien-Nummer zum Skript), die Medien des Kurses
 (Skript- und Folien-Medien dürfen sich überlappen) und die Übungsaufgaben.
@@ -84,10 +84,18 @@ Nummerierung & Labels (wie in LaTeX — du schreibst NIEMALS Nummern, die werden
   ![Baumdiagramm](/media/…/baum.png){#fig:baum}{height=400}
 - Gleichung, auf die du Bezug nehmen möchtest: Label direkt nach dem Display-Math, z.B.
   $$T(n) = 2T(n/2) + n$$ {#eq:meister}  →  wird als „(N)“ neben der Formel gerendert.
+- Code-Block, auf den du Bezug nehmen möchtest: Label auf der öffnenden Fence-Zeile, z.B.
+  ```python {#code:sort}
+  ...Code...
+  ```  →  wird als „Code N“ gerendert.
+- Box (Definition/Satz/Lemma/…), auf die du im Text Bezug nehmen möchtest: Label auf der @box:-Zeile direkt nach dem Typ, z.B.
+  @box:satz {#box:pythagoras}
+  ...Inhalt der Box...
+  @endbox  →  wird als „Satz N“ gerendert.
 {% endraw %}
 - Labels für Objekte, die AUCH IM SKRIPT vorkommen (s. o. „Labels“ der Kapitel): die dort bereits vergebenen Labels EXAKT wiederverwenden (gleiche Schreibweise, snake_case) — dadurch bekommt die Folie dieselbe Nummer wie das Skript und die Nummer wird als Link zum Skript gerendert. Erfinde für solche Objekte KEINE neuen Labels.
 - Labels für neue, nur in diesem Slide-Deck vorkommende Objekte: frische, eindeutige snake_case-Labels, die mit KEINEM der gelisteten Skript-Labels kollidieren (diese bekommen die eigene Slide-Nummerierung (S1), (S2), …).
-- Bezugnahmen im Fließtext: @fig:label / @eq:label / @sec:label → werden durch klickbare Referenzen ersetzt. Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen.
+- Bezugnahmen im Fließtext: @fig:label / @eq:label / @code:label / @box:label / @sec:label → werden durch klickbare Referenzen ersetzt. Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen.
 - Beschrifte nur Objekte, die du tatsächlich einbindest bzw. auf die du Bezug nimmst — nicht jede Formel braucht ein Label.
 
 Medien (aus der Medienbibliothek des Kurses):
@@ -156,7 +164,7 @@ Regeln für "content_edits":
 - Verwende NUR Foliennummern und Snippets, die im bestehenden Deck tatsächlich vorhanden sind — erfinde keine.
 - Foliennummern betreffen die ganze Folie EINSCHLIESSLICH aller ihrer "--"-Unterfolien: replace_slide/delete_slide entfernen/ersetzen den kompletten Inhalt der Folie (alle Unterfolien); für eine Änderung an EINZIG EINER Unterfolie ohne Volltext-Austausch der Folie "replace_span" verwenden (das Snippet bleibt innerhalb der Unterfolie).
 - Eine Folie wird höchstens EINMAL mit replace_slide oder delete_slide angefasst (diese beiden Ops nicht auf derselben Folie kombinieren); mehrere insert_slide_after bzw. replace_span sind erlaubt, solange jedes Snippet eindeutig bleibt.
-- Bewahre vorhandene fig/eq-Labels und @-Referenzen bei, soweit die Anweisung nichts anderes vorschreibt.
+- Bewahre vorhandene fig/eq/code/box-Labels und @-Referenzen bei, soweit die Anweisung nichts anderes vorschreibt.
 - Übernimm die Marker „%% Folie N %%“ NIEMALS in „content“, „old“ oder „new“.
 - Betrifft die Änderung einen Großteil des Decks, nutze STATTDESSEN "content" (Volltext).
 {% endif %}

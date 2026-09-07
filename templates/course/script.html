@@ -896,7 +896,7 @@
     } else {
       // Labelte Section: Kapitel per refmap ermitteln
       const refMap = await getCourseRefMap();
-      const entry = refMap && refMap.labels ? refMap.labels[labelPart] : null;
+      const entry = refMap && refMap.labels ? refMap.labels['sec:' + labelPart] : null;
       if (entry && entry.kind === 'sec' && entry.sectionId != null) sectionId = entry.sectionId;
     }
     if (sectionId === null) return;
@@ -1069,14 +1069,14 @@
     card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // ─── Deep-Link: #fig:label / #eq:label / #code:label → Kapitel aufklappen, zum Objekt scrollen ───
+  // ─── Deep-Link: #fig:label / #eq:label / #code:label / #box:label → Kapitel aufklappen, zum Objekt scrollen ───
   async function handleObjectHash() {
-    const m = location.hash.match(/^#(fig|eq|code):(.+)$/);
+    const m = location.hash.match(/^#(fig|eq|code|box):(.+)$/);
     if (!m) return;
     const kind = m[1];
     const label = decodeURIComponent(m[2]);
     const refMap = await getCourseRefMap();
-    const entry = refMap && refMap.labels ? refMap.labels[label] : null;
+    const entry = refMap && refMap.labels ? refMap.labels[kind + ':' + label] : null;
     if (!entry || entry.kind !== kind) return;
     const card = document.querySelector(`#script-reading [data-section-id="${entry.sectionId}"]`);
     if (!card) return;

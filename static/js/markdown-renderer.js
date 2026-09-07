@@ -150,9 +150,11 @@ function _chapterRef(refMap, sectionId) {
   return refMap.chapters[String(sectionId)] || null;
 }
 
-// ─── Hinweis-/Merksatz-Boxen: @box:{typ} … @endbox ─────────────────────────
+// ─── Hinweis-/Merksatz-/Mathe-Boxen: @box:{typ} … @endbox ──────────────
 // Bekannte Typen mit Icon & Überschrift. Unbekannte Typen werden als neutrale
 // Box mit dem rohen Typen als Titel gerendert (Inhalt geht nicht verloren).
+// Mathe-Typen (definition, satz, …): Referenzen auf beschriftete Boxen
+// ({#box:label}) zeigen den Typ-Titel („Satz N“), s. Xref-Auflösung unten.
 const CALLOUT_TYPES = {
   merksatz: { icon: '📌', title: 'Merksatz' },
   hinweis: { icon: '💡', title: 'Hinweis' },
@@ -160,6 +162,13 @@ const CALLOUT_TYPES = {
   warnung: { icon: '⚠️', title: 'Warnung' },
   beispiel: { icon: '📎', title: 'Beispiel' },
   code: { icon: '💻', title: 'Code' },
+  definition: { icon: '📖', title: 'Definition' },
+  satz: { icon: '📜', title: 'Satz' },
+  lemma: { icon: '🧩', title: 'Lemma' },
+  proposition: { icon: '📃', title: 'Proposition' },
+  korollar: { icon: '🌟', title: 'Korollar' },
+  beweis: { icon: '🧮', title: 'Beweis' },
+  frage: { icon: '❔', title: 'Frage' },
 };
 
 // ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
@@ -392,6 +401,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const { preview = false, sectionId = null, slideMode = false } = options;
 
   // Globale Label-Map für Querverweise (gecacht; null auf Nicht-Kurs-Seiten).
+  // Keys sind kind-prefixed ("eq:test" ≠ "box:test"), s. script-refmap.
   const refMap = await getCourseRefMap();
   const globalLabels = (refMap && refMap.labels) || {};
   const chapterRef = _chapterRef(refMap, sectionId);
@@ -404,6 +414,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const slidesMaxSFig = (slidesRefMap && slidesRefMap.maxSFig) || 0;
   const slidesMaxSEq = (slidesRefMap && slidesRefMap.maxSEq) || 0;
   const slidesMaxSCode = (slidesRefMap && slidesRefMap.maxSCode) || 0;
+  const slidesMaxSBox = (slidesRefMap && slidesRefMap.maxSBox) || 0;
 
   // 0. Kapitel-Label ({#sec:label} als erste nicht-leere Zeile) → kein Content, entfernen
   text = text.replace(/^(?:[ \t]*\n)*[ \t]*\{#sec:[\p{L}0-9_-]+\}[ \t]*(?:\r?\n|$)/u, '');
@@ -436,16 +447,54 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // 1d. Convert callout boxes: @box:{typ} … @endbox
   //     → statischer HTML-Wrapper (marked lässt HTML-Blöcke unverändert
   //     durch, DOMPurify behält die divs). Der INHALT bleibt im Fließtext →
-  //     $...$/{#fig:…}/@fig:/@task:… darin werden wie gewohnt extrahiert.
+  //     $...$/{#fig:…}/@fig:/@box:/@task:… darin werden wie gewohnt extrahiert.
   //     Code-Blöcke sind zu diesem Zeitpunkt bereits extrahiert →
   //     in Code bleibt @box:… literal.
+  //     {#box:label} auf der @box:-Zeile (direkt nach dem Typ, ohne weiteren
+  //     Zeilentext): nummerierte Box ("Satz N", "Definition N", …) mit Anker
+  //     — Nummer wie bei Abbildungen/Gleichungen/Code (im Skript gespeichertes
+  //     Label → Skript-Nummer, in Slides: eigene Labels → S1, S2, …). In
+  //     Slides ist die Nummer eines Skript-Labels klickbar (→ Skript).
+  //     Ungültige Label-Schreibweise → die Box bleibt literal (Tippfehler fallen auf).
+  const boxLabelNumbers = {};
+  const boxLabelTypes = {};
+  const boxFallbackBase = chapterRef ? (chapterRef.maxBox || 0) : 0;
+  let boxFallbackCount = 0;
+  // Slide-Decks: slide-eigene Box-Labels → S1, S2, … (wie eq/fig/code).
+  let slideBoxCount = 0;
   processed = processed.replace(
-    /@box:([\p{L}0-9_-]+)\r?\n([\s\S]*?)\r?\n@endbox/gu,
-    (match, type, content) => {
+    /@box:([\p{L}0-9_-]+)(?:[ \t]*\{#box:([\p{L}0-9_-]+)\})?[ \t]*\r?\n([\s\S]*?)\r?\n@endbox/gu,
+    (match, type, label, content) => {
+      let boxNum = null;
+      if (label) {
+        if (label in boxLabelNumbers) {
+          boxNum = boxLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
+        } else {
+          const g = globalLabels['box:' + label];
+          if (g && g.kind === 'box') {
+            boxNum = g.num; // gespeichertes Label → exakte globale Nummer
+          } else if (slideMode) {
+            const sl = slidesLabels['box:' + label]; // typ-qualifiziert (s. slides-refmap)
+            if (sl && sl.kind === 'box') {
+              boxNum = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+            } else {
+              slideBoxCount += 1;
+              boxNum = 'S' + (slidesMaxSBox + slideBoxCount); // ungespeichert
+            }
+          } else {
+            boxFallbackCount += 1;
+            boxNum = boxFallbackBase + boxFallbackCount; // neues (ungespeichertes) Label
+          }
+          boxLabelNumbers[label] = boxNum;
+          boxLabelTypes[label] = type;
+        }
+      }
       if (type === 'highlight') {
         // Headless-Box (kein Kopf). Optional: ERSTE Zeile @boxcolor:<farbe>
         // → normalisierter Inline-Style (ungültig → CSS-Default, Primärfarbe);
-        // die @boxcolor-Zeile wird im Match-Fall immer entfernt.
+        // die @boxcolor-Zeile wird im Match-Fall immer entfernt. Ein Label
+        // ist erlaubt (Anker + Nummerierung, aber ohne sichtbaren Kopf).
+        const idAttr = label ? ` id="box:${label}"` : '';
         let body = content;
         const m = /^@boxcolor:\s*(.+?)\s*\r?\n([\s\S]*)$/u.exec(body);
         if (m) {
@@ -453,23 +502,41 @@ async function renderMarkdown(text, targetElement, options = {}) {
           body = m[2];
           if (rgba) {
             return (
-              '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' +
+              '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr +
               ' style="background-color:' + rgba + '">\n\n' + body.trim() + '\n\n</div>\n\n'
             );
           }
         }
         return (
-          '\n\n<div class="tutorai-callbox tutorai-callbox-highlight">\n\n' +
-          body.trim() + '\n\n</div>\n\n'
+          '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr +
+          '>\n\n' + body.trim() + '\n\n</div>\n\n'
         );
       }
       const info = CALLOUT_TYPES[type] || { icon: '📄', title: type.charAt(0).toUpperCase() + type.slice(1) };
       const body = content.trim();
+      const idAttr = label ? ` id="box:${label}"` : '';
+      // Nummer im Kopf: in Slides trägt ein im Skript vorhandenes Label die
+      // Skript-Nummer als Link zur Box im Skript (wie bei eq/fig/code).
+      let headTitle;
+      if (boxNum !== null) {
+        const g = globalLabels['box:' + label];
+        if (slideMode && g && g.kind === 'box') {
+          const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+          headTitle =
+            escapeHtml(info.title) +
+            ` <a class="tutorai-callbox-num-link" href="/courses/${cid}/script#box:${label}"` +
+            ` title="Zur Box im Skript">${boxNum}</a>`;
+        } else {
+          headTitle = escapeHtml(info.title) + ' ' + boxNum;
+        }
+      } else {
+        headTitle = escapeHtml(info.title);
+      }
       return (
-        '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '">\n' +
+        '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '"' + idAttr + '>\n' +
         '<div class="tutorai-callbox-head">' +
         '<span class="tutorai-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
-        escapeHtml(info.title) + '</div>\n' +
+        headTitle + '</div>\n' +
         '<div class="tutorai-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n'
       );
     }
@@ -571,7 +638,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
           if (a.label in figLabelNumbers) {
             num = figLabelNumbers[a.label]; // Duplikat → erstes Vorkommen gewinnt
           } else {
-            const g = globalLabels[a.label];
+            const g = globalLabels['fig:' + a.label];
             if (g && g.kind === 'fig') {
               num = g.num; // gespeichertes Label → exakte globale Nummer
             } else if (slideMode) {
@@ -634,7 +701,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     (match, latex, label, fchar, id, aaid) => {
       latexBlocks.push(latex.trim());
       if (label && !(label in eqLabelNumbers)) {
-        const g = globalLabels[label];
+        const g = globalLabels['eq:' + label];
         if (g && g.kind === 'eq') {
           eqLabelNumbers[label] = g.num; // gespeichertes Label → exakte globale Nummer
         } else if (slideMode) {
@@ -664,9 +731,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
   });
 
-  // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @sec:label / @kap:label
+  // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @box:label / @sec:label / @kap:label
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq|sec|kap|code):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap|code|box):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -804,7 +871,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         if (codeLabel in codeLabelNumbers) {
           codeNum = codeLabelNumbers[codeLabel]; // Duplikat → erstes Vorkommen
         } else {
-          const g = globalLabels[codeLabel];
+          const g = globalLabels['code:' + codeLabel];
           if (g && g.kind === 'code') {
             codeNum = g.num; // gespeichertes Label → exakte globale Nummer
           } else if (slideMode) {
@@ -824,7 +891,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       }
       let numHtml = '';
       if (codeNum !== null) {
-        const g = globalLabels[codeLabel];
+        const g = globalLabels['code:' + codeLabel];
         if (slideMode && g && g.kind === 'code') {
           const cid = (refMap && refMap.courseId) || _getCourseId() || '';
           numHtml =
@@ -866,7 +933,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const aaidAttr = aaid ? ` data-id="${aaid}"` : '';
     if (label) {
       const num = eqLabelNumbers[label];
-      const g = globalLabels[label];
+      const g = globalLabels['eq:' + label];
       let numHtml;
       if (slideMode && g && g.kind === 'eq') {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
@@ -993,7 +1060,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const figAaidAttr = f.aaid ? ` data-id="${f.aaid}"` : '';
     // Nummer: im Skript gespeichertes Label → in Slides klickbar (→ Skript),
     // wie bei den Formeln; sonst (auch slide-eigene S-Nummern) plain.
-    const g = globalLabels[f.label];
+    const g = globalLabels['fig:' + f.label];
     const numHtml = (slideMode && g && g.kind === 'fig')
       ? (() => {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
@@ -1129,41 +1196,67 @@ async function renderMarkdown(text, targetElement, options = {}) {
   }
 
   // 6b. Restore cross-references (@fig:label / @eq:label / @code:label /
-  //     @sec:label; @kap:label = Legacy-Alias für @sec:label)
+  //     @box:label / @sec:label; @kap:label = Legacy-Alias für @sec:label)
   //     Auflösung: 1) in diesem Dokument (nur außerhalb der Slides: dort
   //                  würde Reveal den In-Page-Hash als Folien-Übergang lesen)
   //                  → In-Page-Anker,
   //               2) Skript-Ref-Map → direkter Link zum Objekt
-  //                  (#fig:label / #eq:label / #code:label / #sec:label) auf
+  //                  (#fig:label / #eq:label / #code:label / #box:label / #sec:label) auf
   //                  der Skript-Seite (alle Rollen; das Kapitel wird dort
   //                  aufgeklappt); Kapitel-Labels (chapter: true) verlinken auf
   //                  #chapter-{id} und werden als „Kap. N“ angezeigt,
   //               3) Slide-Ref-Map → Link auf die Folie im Slide-Deck
   //                  (/slides/{deckId}/present#/{h}/{v}, Anzeige „… S{n}“),
   //               4) unbekannt → ❓
+  //     @box:-Referenzen zeigen den Box-Typ-Titel an (z. B. „Satz N“ —
+  //     CALLOUT_TYPES; Typ-Quelle: Skript-Ref-Map → Slide-Ref-Map → lokal).
   xrefs.forEach((x, idx) => {
     const kind = x.kind === 'kap' ? 'sec' : x.kind;
     const local =
       kind === 'fig' ? figLabelNumbers[x.label]
       : kind === 'eq' ? eqLabelNumbers[x.label]
       : kind === 'code' ? codeLabelNumbers[x.label]
+      : kind === 'box' ? boxLabelNumbers[x.label]
       : secLabelNumbers[x.label];
-    const g = globalLabels[x.label];
+    const g = globalLabels[kind + ':' + x.label]; // kind-prefixed (s. script-refmap)
     const sl = slidesLabels[kind + ':' + x.label]; // typ-qualifiziert (s. slides-refmap)
-    const kindText = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : kind === 'code' ? 'Code' : 'Abs.';
+    // Hover-Vorschau (refmap-"preview"): zeigt das Zielobjekt beim Hovern an.
+    // JSON im data-Attribut: &/-"-Escape für HTML (beim getAttribute wird das
+    // automatisch zurück-dekodiert), $$-Escape, damit der
+    // html.replace(`%%XREF_${idx}%%`, …) unten keine $-Backrefs einliest.
+    const tipPreview =
+      (g && g.kind === kind && g.preview) ||
+      (sl && sl.kind === kind && sl.preview) ||
+      null;
+    const tipAttr = tipPreview
+      ? ` data-xref-tip="${JSON.stringify({ k: kind, p: tipPreview })
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/\$/g, '$$$$')}"`
+      : '';
+    let kindText;
+    if (kind === 'box') {
+      const boxType =
+        (g && g.kind === 'box' && g.type) ||
+        (sl && sl.kind === 'box' && sl.type) ||
+        boxLabelTypes[x.label] || null;
+      kindText = boxType && CALLOUT_TYPES[boxType] ? CALLOUT_TYPES[boxType].title : 'Box';
+    } else {
+      kindText = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : kind === 'code' ? 'Code' : 'Abs.';
+    }
     let refHtml;
     const useLocalAnchor = kind === 'sec' || !slideMode;
     if (useLocalAnchor && local) {
-      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref">${kindText} ${local}</a>`;
+      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref"${tipAttr}>${kindText} ${local}</a>`;
     } else if (g && g.kind === kind) {
       const cid = (refMap && refMap.courseId) || '';
       const text = g.chapter ? 'Kap.' : kindText;
       const anchor = g.chapter ? `chapter-${g.sectionId}` : `${kind}:${x.label}`;
-      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref">${text} ${g.num}</a>`;
+      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref"${tipAttr}>${text} ${g.num}</a>`;
     } else if (sl && sl.kind === kind) {
       // Slide-eigenes Objekt (kein Skript-Label): Link auf die Folie.
       const cid = (slidesRefMap && slidesRefMap.courseId) || (refMap && refMap.courseId) || '';
-      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref">${kindText} S${sl.num}</a>`;
+      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref"${tipAttr}>${kindText} S${sl.num}</a>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
@@ -1836,4 +1929,128 @@ function createMarkdownEditor(containerId, options = {}) {
   }
 
   return { textarea, previewDiv, toggleBtn, isPreview: () => isPreview };
+}
+
+// ─── Xref-Hover-Previews (data-xref-tip) ────────────────────────────────
+// Beim Hovern auf eine aufgelöste Referenz (@eq:/@fig:/@code:/@box:/@sec:)
+// zeigt ein einzelnes Tooltip-Element eine Vorschau des Zielobjekts an:
+// Gleichungen gerendert per KaTeX, Code in <pre>, Boxen/Abschnitte/Abb.
+// als (serverseitig auf ~320 Zeichen gekürzter) Text. Die Previews selbst
+// liefert die Ref-Map (Feld "preview" pro Label); das Attribut
+// data-xref-tip ist JSON {k: kind, p: preview} ("-escaped fürs HTML).
+let _xrefTipEl = null;
+let _xrefTipBound = false;
+let _xrefTipTimer = null; // ausstehende Show (Delay)
+let _xrefTipPending = null; // Anker, für den gelayt wird
+let _xrefTipShown = null; // Anker, dessen Vorschau gerade sichtbar ist
+
+function _ensureXrefTipEl() {
+  if (_xrefTipEl) return _xrefTipEl;
+  const el = document.createElement('div');
+  el.id = 'tutorai-xref-tip';
+  el.innerHTML =
+    '<div class="tutorai-xref-tip-title"></div><div class="tutorai-xref-tip-body"></div>';
+  document.body.appendChild(el);
+  _xrefTipEl = el;
+  return el;
+}
+
+function _xrefTipSetContent(anchor) {
+  let data = null;
+  try {
+    data = JSON.parse(anchor.getAttribute('data-xref-tip') || '');
+  } catch (e) {
+    data = null;
+  }
+  if (!data || typeof data.p !== 'string' || !data.p) return false;
+  const tip = _ensureXrefTipEl();
+  tip.querySelector('.tutorai-xref-tip-title').textContent = anchor.textContent.trim();
+  const body = tip.querySelector('.tutorai-xref-tip-body');
+  if (data.k === 'eq') {
+    // LaTeX-Vorschau: KaTeX falls geladen, sonst Rohtext.
+    if (typeof katex !== 'undefined') {
+      body.innerHTML = renderLatexBlock(data.p);
+    } else {
+      body.innerHTML = '<pre class="tutorai-xref-tip-code">' + escapeHtml(data.p) + '</pre>';
+    }
+  } else if (data.k === 'code') {
+    body.innerHTML =
+      '<pre class="tutorai-xref-tip-code"><code>' + escapeHtml(data.p) + '</code></pre>';
+  } else {
+    // fig / box / sec: Plain-Text (pre-wrap im CSS).
+    body.innerHTML = '<span class="tutorai-xref-tip-text">' + escapeHtml(data.p) + '</span>';
+  }
+  return true;
+}
+
+function _xrefTipHide() {
+  if (_xrefTipTimer) {
+    clearTimeout(_xrefTipTimer);
+    _xrefTipTimer = null;
+  }
+  _xrefTipPending = null;
+  _xrefTipShown = null;
+  if (_xrefTipEl) _xrefTipEl.style.display = 'none';
+}
+
+function _xrefTipPosition(anchor) {
+  const r = anchor.getBoundingClientRect();
+  const tip = _xrefTipEl;
+  // Sichtbarkeits-Trick: display:block + hidden → messen → positionieren → zeigen.
+  tip.style.display = 'block';
+  tip.style.visibility = 'hidden';
+  const tw = tip.offsetWidth;
+  const th = tip.offsetHeight;
+  let left = r.left;
+  left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+  let top = r.bottom + 6;
+  if (top + th > window.innerHeight - 8) {
+    top = r.top - th - 6; // Platz unten nicht ausreichend → über den Anker
+  }
+  if (top < 8) top = 8;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+  tip.style.visibility = 'visible';
+}
+
+function _xrefTipShow(anchor) {
+  if (!_xrefTipSetContent(anchor)) return;
+  _xrefTipPosition(anchor);
+}
+
+function _bindXrefTip() {
+  if (_xrefTipBound || typeof document === 'undefined' || !document.body) return;
+  _xrefTipBound = true;
+  _ensureXrefTipEl();
+  document.addEventListener('mouseover', (e) => {
+    const a =
+      e.target && e.target.closest ? e.target.closest('a.tutorai-xref[data-xref-tip]') : null;
+    if (a === _xrefTipPending) return; // bereits in Bearbeitung
+    if (_xrefTipTimer) {
+      clearTimeout(_xrefTipTimer);
+      _xrefTipTimer = null;
+    }
+    // Vorschau eines anderen Ankers ist nicht mehr passend → sofort aus
+    // (vorher setzen, weil _xrefTipHide() auch _xrefTipPending zurücksetzt).
+    if (_xrefTipShown && _xrefTipShown !== a) _xrefTipHide();
+    _xrefTipPending = a;
+    if (!a) return;
+    _xrefTipTimer = setTimeout(() => {
+      _xrefTipTimer = null;
+      if (_xrefTipPending === a) {
+        _xrefTipShow(a);
+        _xrefTipShown = a;
+      }
+    }, 350);
+  });
+  // Beim Scrollen (capture: auch Scroll-Container) / Resizen / Klicken ausblenden.
+  document.addEventListener('scroll', _xrefTipHide, true);
+  window.addEventListener('resize', _xrefTipHide);
+  document.addEventListener('click', _xrefTipHide);
+}
+
+if (typeof document !== 'undefined' && document.body) {
+  _bindXrefTip();
+} else if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', _bindXrefTip);
 }

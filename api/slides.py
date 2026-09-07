@@ -18,10 +18,12 @@ from sqlmodel import Session, select
 from api.script import (
     _chapter_label,
     _get_membership,
+    _scan_box_labels,
     _scan_code_labels,
     _scan_figures,
     _scan_headings,
     _scan_labels,
+    _scan_previews,
 )
 from database.base import get_session
 from database.models import (
@@ -201,6 +203,8 @@ async def ai_generate_slide_deck(
         .order_by(ScriptSection.display_order.asc())  # type: ignore[attr-defined]
     ).all()[:20]:
         figs, eqs = _scan_labels(s.content)
+        code_labels = [l for l, _cap in _scan_code_labels(s.content)]
+        box_labels = [f"@box:{l} ({t})" for l, t in _scan_box_labels(s.content)]
         sec_labels = [h["label"] for h in _scan_headings(s.content) if h["label"]]
         ch_label = _chapter_label(s.content)
         if ch_label and ch_label in sec_labels:
@@ -212,6 +216,8 @@ async def ai_generate_slide_deck(
                 "labels":
                     [f"@fig:{l}" for l in figs]
                     + [f"@eq:{l}" for l in eqs]
+                    + [f"@code:{l}" for l in code_labels]
+                    + box_labels
                     + [f"@sec:{l}" for l in sec_labels],
                 "content": (s.content or "")[:4000],
             }
@@ -314,7 +320,7 @@ async def slides_refmap(
     tragen ihre Nummer dort und sind hier NICHT enthalten (keine Doppel-
     Nummerierung). Alle übrigen (slide-eigenen) Labels werden über alle
     Slide-Decks hinweg in kanonischer Deck-Reihenfolge (display_order, id)
-    fortlaufend mit S-Nummern nummeriert (S1, S2, …) — je Typ (fig/eq/code)
+    fortlaufend mit S-Nummern nummeriert (S1, S2, …) — je Typ (fig/eq/code/box)
     ein eigener Zähler, analog zur Skript-Nummerierung. Die Reihenfolge kommt
     aus der DB (nicht aus der Render-Reihenfolge), damit sie bei Reorder der
     Decks stabil bleibt. Duplikate: erstes Vorkommen gewinnt (wie script-refmap).
@@ -323,15 +329,17 @@ async def slides_refmap(
         mode:       "edit" (PROF/TUTOR/Admin) bzw. "reading" (Student)
         courseId:   Kurs-ID
         deckOrder:  Deck-IDs in kanonischer Reihenfolge (display_order, id)
-        labels:     {"<kind>:<label>": {kind, deckId, h, v, num}}
+        labels:     {"<kind>:<label>": {kind, deckId, h, v, num, type?, preview?}}
                     # Key ist typ-qualifiziert, weil derselbe Label-NAME in
                     # verschiedenen Typen verschiedene Objekte bezeichnet
-                    # (wie die @kind:label-Referenzen); kind: fig/eq/code;
+                    # (preview: gekürzter Objektinhalt für Hover-Tooltips)
+                    # (wie die @kind:label-Referenzen); kind: fig/eq/code/box;
+                    # box: type = Box-Typ (z. B. "satz" → Referenz-Text „Satz S{n}“);
                     # num = S-Nummer (int, ohne „S");
                     # deckId/h/v = Reveal-Koordinaten der Folie (h = Block-, v =
                     # Stack-Index, 0-basiert) → Link-Ziel:
                     # /courses/{cid}/slides/{deckId}/present#/{h}/{v}
-        maxSFig/maxSEq/maxSCode: höchst vergebene S-Nummer je Typ — Basis für
+        maxSFig/maxSEq/maxSCode/maxSBox: höchst vergebene S-Nummer je Typ — Basis für
                     ungespeicherte Labels in der Editor-Vorschau
     """
     _check_member(user, session, course_id)
@@ -351,11 +359,12 @@ async def slides_refmap(
     sq = select(ScriptSection).where(ScriptSection.course_id == course_id)
     if not is_tutor:
         sq = sq.where(ScriptSection.is_visible == True)  # noqa: E712
-    script_labels: dict[str, set[str]] = {"fig": set(), "eq": set(), "code": set()}
+    script_labels: dict[str, set[str]] = {"fig": set(), "eq": set(), "code": set(), "box": set()}
     for s in session.exec(sq.order_by(ScriptSection.display_order.asc())).all():  # type: ignore[attr-defined]
         script_labels["fig"].update(label for _cap, label in _scan_figures(s.content))
         script_labels["eq"].update(_scan_labels(s.content)[1])
         script_labels["code"].update(label for label, _cap in _scan_code_labels(s.content))
+        script_labels["box"].update(label for label, _typ in _scan_box_labels(s.content))
 
     # 2) Decks in kanonischer Reihenfolge; slide-eigene Labels → S-Nummern
     #    (fortlaufend über ALLE Decks, je Typ eigener Zähler).
@@ -371,16 +380,29 @@ async def slides_refmap(
 
     labels: dict[str, dict[str, object]] = {}
     deck_order: list[str] = []
-    counters = {"fig": 0, "eq": 0, "code": 0}
+    counters = {"fig": 0, "eq": 0, "code": 0, "box": 0}
 
-    def _claim(kind: str, label: str, deck_id: Optional[int], h: int, v: int) -> None:
+    def _claim(
+        kind: str,
+        label: str,
+        deck_id: Optional[int],
+        h: int,
+        v: int,
+        box_type: Optional[str] = None,
+        preview: Optional[str] = None,
+    ) -> None:
         # Key "<kind>:<label>": gleicher Label-NAME in verschiedenen Typen
         # (z. B. eq + fig + code „demo_1“) sind verschiedene Objekte mit
         # eigenen S-Nummern — analog zu den @kind:label-Referenzen.
         if label in script_labels[kind] or f"{kind}:{label}" in labels:
             return  # Skript-Label (gleicher Typ) oder Duplikat → keine S-Vergabe
         counters[kind] += 1
-        labels[f"{kind}:{label}"] = {"kind": kind, "deckId": deck_id, "h": h, "v": v, "num": counters[kind]}
+        entry: dict[str, object] = {"kind": kind, "deckId": deck_id, "h": h, "v": v, "num": counters[kind]}
+        if box_type is not None:
+            entry["type"] = box_type
+        if preview:
+            entry["preview"] = preview
+        labels[f"{kind}:{label}"] = entry
 
     for deck in decks:
         try:
@@ -391,12 +413,15 @@ async def slides_refmap(
             leaves = slide.children if slide.children else [slide]
             for v, leaf in enumerate(leaves):
                 for part in _slide_md_parts(leaf):
+                    previews = _scan_previews(part)  # "kind:label" → Hover-Preview
                     for _cap, label in _scan_figures(part):
-                        _claim("fig", label, deck.id, h, v)
+                        _claim("fig", label, deck.id, h, v, preview=previews.get(f"fig:{label}"))
                     for label in _scan_labels(part)[1]:
-                        _claim("eq", label, deck.id, h, v)
+                        _claim("eq", label, deck.id, h, v, preview=previews.get(f"eq:{label}"))
                     for label, _cap in _scan_code_labels(part):
-                        _claim("code", label, deck.id, h, v)
+                        _claim("code", label, deck.id, h, v, preview=previews.get(f"code:{label}"))
+                    for label, box_type in _scan_box_labels(part):
+                        _claim("box", label, deck.id, h, v, box_type=box_type, preview=previews.get(f"box:{label}"))
         deck_order.append(str(deck.id))
 
     return {
@@ -407,4 +432,5 @@ async def slides_refmap(
         "maxSFig": counters["fig"],
         "maxSEq": counters["eq"],
         "maxSCode": counters["code"],
+        "maxSBox": counters["box"],
     }

@@ -393,6 +393,7 @@
   border-radius: 0.75rem;
   background: #f8fafc;
   margin: 1.25rem 0;
+  scroll-margin-top: 100px;
 }
 
 .tutorai-callbox-head {
@@ -425,6 +426,23 @@
 .tutorai-callbox-warnung .tutorai-callbox-head { color: #b91c1c; }
 .tutorai-callbox-beispiel { border-left-color: #22c55e; background: #f0fdf4; }
 .tutorai-callbox-beispiel .tutorai-callbox-head { color: #15803d; }
+
+/* Mathe-Boxen: Definition, Satz, Lemma, … (Typen in CALLOUT_TYPES,
+   markdown-renderer.js) */
+.tutorai-callbox-definition { border-left-color: #8b5cf6; background: #f5f3ff; }
+.tutorai-callbox-definition .tutorai-callbox-head { color: #6d28d9; }
+.tutorai-callbox-satz { border-left-color: #6366f1; background: #eef2ff; }
+.tutorai-callbox-satz .tutorai-callbox-head { color: #4338ca; }
+.tutorai-callbox-lemma { border-left-color: #14b8a6; background: #f0fdfa; }
+.tutorai-callbox-lemma .tutorai-callbox-head { color: #0f766e; }
+.tutorai-callbox-proposition { border-left-color: #0ea5e9; background: #f0f9ff; }
+.tutorai-callbox-proposition .tutorai-callbox-head { color: #0369a1; }
+.tutorai-callbox-korollar { border-left-color: #a855f7; background: #faf5ff; }
+.tutorai-callbox-korollar .tutorai-callbox-head { color: #7e22ce; }
+.tutorai-callbox-beweis { border-left-color: #78716c; background: #fafaf9; }
+.tutorai-callbox-beweis .tutorai-callbox-head { color: #44403c; }
+.tutorai-callbox-frage { border-left-color: #ec4899; background: #fdf2f8; }
+.tutorai-callbox-frage .tutorai-callbox-head { color: #be185d; }
 
 /* Code-Box (@box:code): dunkle Fläche (atom-one-dark-Ton); die Box liefert
    den Hintergrund, das innere <pre> wird nahtlos (kein eigener
@@ -601,4 +619,64 @@
 .markdown-preview-area,
 textarea {
   transition: opacity 150ms ease-in-out;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Xref Hover-Previews (#tutorai-xref-tip)
+   Vorschau des Zielobjekts bei Hover auf @eq:/@fig:/@code:/@box:/@sec:
+   Referenzen (JS: markdown-renderer.js, data-xref-tip).
+   pointer-events: none, damit das Tooltip sich nicht selbst ausblendet,
+   wenn die Maus darüber wandert.
+   ═══════════════════════════════════════════════════════════════ */
+
+#tutorai-xref-tip {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  max-width: 400px;
+  background: #fff;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+#tutorai-xref-tip .tutorai-xref-tip-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+/* max-height = Frontend-Abkürzung sehr großer Vorschauen (serverseitig
+   sind die Previews zudem auf ~320 Zeichen gekürzt). */
+#tutorai-xref-tip .tutorai-xref-tip-body {
+  max-height: 220px;
+  overflow: hidden;
+}
+
+#tutorai-xref-tip .tutorai-xref-tip-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#tutorai-xref-tip .tutorai-xref-tip-code {
+  margin: 0;
+  padding: 8px;
+  background: #f3f4f6;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow: hidden;
+}
+
+#tutorai-xref-tip .katex-display {
+  margin: 0;
 }

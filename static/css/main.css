@@ -629,6 +629,12 @@ textarea {
    wenn die Maus darüber wandert.
    ═══════════════════════════════════════════════════════════════ */
 
+/* Long-Press auf Referenz-Links = Vorschau: iOS-Link-Callout deaktivieren
+   (Zusatz zur contextmenu-Unterdrückung im JS; nur für Xref-Links). */
+a.tutorai-xref {
+  -webkit-touch-callout: none;
+}
+
 #tutorai-xref-tip {
   position: fixed;
   z-index: 9999;

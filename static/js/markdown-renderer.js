@@ -1955,6 +1955,27 @@ function _ensureXrefTipEl() {
   return el;
 }
 
+// Tooltip-Text mit optionalen Formeln: Rest HTML-escaped, $…$-Spans (und
+// $$…$$-Blöcke) per KaTeX gerendert — falls die Lib geladen ist, sonst
+// Rohtext der Formel. (Wichtig für Box-Previews mit Inline-Math.)
+function _xrefTipRenderText(text) {
+  const out = [];
+  let last = 0;
+  const re = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(escapeHtml(text.slice(last, m.index)));
+    if (typeof katex !== "undefined") {
+      out.push(m[1] != null ? renderLatexBlock(m[1]) : renderLatexInline(m[2]));
+    } else {
+      out.push(escapeHtml(m[1] != null ? m[1] : m[2]));
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(escapeHtml(text.slice(last)));
+  return out.join("");
+}
+
 function _xrefTipSetContent(anchor) {
   let data = null;
   try {
@@ -1977,8 +1998,9 @@ function _xrefTipSetContent(anchor) {
     body.innerHTML =
       '<pre class="tutorai-xref-tip-code"><code>' + escapeHtml(data.p) + '</code></pre>';
   } else {
-    // fig / box / sec: Plain-Text (pre-wrap im CSS).
-    body.innerHTML = '<span class="tutorai-xref-tip-text">' + escapeHtml(data.p) + '</span>';
+    // fig / box / sec: Text mit optionalen Formeln (KaTeX, pre-wrap im CSS).
+    body.innerHTML =
+      '<span class="tutorai-xref-tip-text">' + _xrefTipRenderText(data.p) + '</span>';
   }
   return true;
 }
@@ -2042,6 +2064,15 @@ function _bindXrefTip() {
         _xrefTipShown = a;
       }
     }, 350);
+  });
+  // Touch-Long-Press = Preview (über emuliertes mouseover): das native
+  // Link-Kontextmenü (iOS-Callout / Android-Menü) nur unterdrücken, wenn
+  // für diesen Anker gerade eine Vorschau aktiv ist oder ansteht — sonst
+  // bleibt „Link in neuem Tab öffnen“ etc. für normale Links erhalten.
+  document.addEventListener("contextmenu", (e) => {
+    const a =
+      e.target && e.target.closest ? e.target.closest('a.tutorai-xref[data-xref-tip]') : null;
+    if (a && (a === _xrefTipShown || a === _xrefTipPending)) e.preventDefault();
   });
   // Beim Scrollen (capture: auch Scroll-Container) / Resizen / Klicken ausblenden.
   document.addEventListener('scroll', _xrefTipHide, true);

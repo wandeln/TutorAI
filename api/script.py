@@ -135,21 +135,45 @@ _CODE_BLOCK_RE = re.compile(r"^```([^\n]*)\n?([\s\S]*?)^```[ \t]*$", re.MULTILIN
 _BOX_CONTENT_RE = re.compile(
     r"@box:([\w-]+)[ \t]*\{#box:([\w-]+)\}[ \t]*\r?\n([\s\S]*?)\r?\n@endbox"
 )
+# Formel-Span ($$…$$-Block oder $…$ inline) — für math-bewusste Preview-Bearbeitung.
+_MATH_SPAN_RE = re.compile(r"\$\$[\s\S]*?\$\$|\$[^$\n]+?\$")
 
 
 def _truncate_preview(text: str, limit: int = _PREVIEW_LIMIT) -> str:
+    """Kürzt auf limit Zeichen — aber nie mitten in einer Formel (sonst
+    bliebe ein offenes $ stehen, das das Frontend nicht rendern kann)."""
     t = (text or "").strip()
-    return t if len(t) <= limit else t[:limit].rstrip() + " …"
+    if len(t) <= limit:
+        return t
+    pos = limit
+    for m in _MATH_SPAN_RE.finditer(t):
+        if m.start() >= pos:
+            break
+        if m.end() > pos:  # Schnitt liegt im Formel-Span → vor ihn schieben
+            pos = m.start()
+    return t[:pos].rstrip() + " …"
 
 
 def _preview_plain(text: str, limit: int = _PREVIEW_LIMIT) -> str:
-    """Markdown → grober Plain-Text (für Box-Previews im Tooltip)."""
+    """Markdown → grober Plain-Text (für Box-Previews im Tooltip).
+
+    Formeln ($…$ / $$…$$) bleiben ERKÄNNBAR erhalten (das Frontend rendert
+    sie im Tooltip per KaTeX); Emphasis-Marker werden nur AUSSERHALB von
+    Formeln entfernt, damit z. B. $x_i^2$ nicht zu $xi^2$ wird.
+    """
     t = _CODE_FENCED_RE.sub(" ", text or "")
     t = _CODE_INLINE_RE.sub(lambda m: m.group(0).strip("`"), t)
     t = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r" [\1] ", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
     t = re.sub(r"^\s{0,3}#{1,6}\s+", "", t, flags=re.MULTILINE)
-    t = re.sub(r"[*_~]+", "", t)
+    parts: list[str] = []
+    last = 0
+    for m in _MATH_SPAN_RE.finditer(t):
+        parts.append(re.sub(r"[*_~]+", "", t[last : m.start()]))
+        parts.append(m.group(0))
+        last = m.end()
+    parts.append(re.sub(r"[*_~]+", "", t[last:]))
+    t = "".join(parts)
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n{3,}", "\n\n", t)
     return _truncate_preview(t, limit)

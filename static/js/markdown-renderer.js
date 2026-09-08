@@ -832,7 +832,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
 
   // 2. Render Markdown (marked)
   let html = marked.parse(processed, {
-    breaks: true,
+    breaks: false,
     gfm: true,
     headerIds: false,
     mangle: false,
@@ -984,7 +984,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     imgLiteralTails.forEach((tail, i) => {
       tableMd = tableMd.split(`%%IMGLIT_${i}%%`).join(tail);
     });
-    const tableHtml = marked.parse(tableMd, { breaks: true, gfm: true, headerIds: false, mangle: false });
+    const tableHtml = marked.parse(tableMd, { breaks: false, gfm: true, headerIds: false, mangle: false });
     const g = globalLabels['tab:' + t.label];
     const numHtml = (slideMode && g && g.kind === 'tab')
       ? (() => {
@@ -1438,23 +1438,25 @@ async function renderMarkdown(text, targetElement, options = {}) {
   if (slideMode) _applyFragmentMarkers(targetElement);
 }
 
-// Byproducts aufräumen: Figure-/Applet-/Code-/Taskbox-Placeholders sind
-// Inline-Tokens — marked (breaks:true) erzeugt aus „Token-Zeile + Textzeile
-// (ohne Leerzeile dazwischen)“ ein <p>…<br>TOKEN<br>…</p>. Beim
-// innerHTML-Parsen schließen <figure>/<pre>/<div> das umgebende <p>
-// IMPLIZIT (HTML-Parser-Regel), sodass (a) ein <p>-Rest mit trailing <br>
-// vor dem Block bleibt und (b) das <br> + der Folgetext (inkl. Inline-
-// Elemente wie <code>/Katex-Spans) als Direktkinder der .markdown-preview
-// landen. Aufräumen:
-//   (1) Top-Level-<br> entfernen (erzeugen je eine Zeile Abstand),
+// Byproducts aufräumen: Figure-/Applet-/Code-/Taskbox-/Tabellen-Placeholders
+// sind Inline-Tokens. marked rendert mit Standards-Markdown (breaks:false):
+// ein Zeilenumbruch im Quelltext ohne Leerzeile wird nur zu Leerraum, d. h.
+// ein Token mitten zwischen Textzeilen liegt INLINE im selben <p> wie der
+// umgebende Text. Beim Restore ersetzt der Block-HTML des Tokens das Token
+// im <p>; beim innerHTML-Parsen schließen <figure>/<pre>/<div> das umgebende
+// <p> IMPLIZIT (HTML-Parser-Regel), sodass (a) ein <p>-Rest mit Text vor dem
+// Block bleibt und (b) der Folgetext (inkl. Inline-Elemente wie
+// <code>/Katex-Spans) als Direktkinder der .markdown-preview landet.
+// Aufräumen:
+//   (1) Top-Level-<br> entfernen,
 //   (2) laufende Inline-Läufe (Text + inline gerenderte Elemente) in
 //       EINEM <p> hüllen — würde jeder Textknoten sein eigenes <p>
 //       bekommen, bricht der Satz an den Inline-Elementen um (falsche
 //       Zeilenumbrüche um Formeln/`<code>`),
 //   (3) leere Top-Level-<p> entfernen,
 //   (4) trailing <br> am Ende eines <p> entfernen, wenn danach (über
-//       Whitespace hinweg) ein Block-Element folgt (Byproduct-Lücke vor
-//       dem Figure-/Code-Block).
+//       Whitespace hinweg) ein Block-Element folgt (z. B. manueller
+//       Zeilenumbruch via 2 Leerzeichen direkt vor der Token-Zeile).
 // Legitime <br> (z. B. in Listen oder zwischen zwei Zeilen desselben
 // Absatzes) liegen nie als Direktkind der Preview und bleiben erhalten.
 function _cleanupBlockArtifacts(root) {
@@ -1497,8 +1499,8 @@ function _cleanupBlockArtifacts(root) {
     }
 
     // (4) Trailing <br> am <p>-Ende entfernen, wenn danach ein Block-Element
-    // folgt (das <br> ist das Byproduct der Token-Zeile, nicht ein
-    // absichtlicher Zeilenumbruch).
+    // folgt (z. B. manueller Zeilenumbruch via 2 Leerzeichen direkt vor
+    // der Token-Zeile — kein absichtlicher Abstand).
     const isBlockEl = (el) => !!(el && isBlockTag.test(el.tagName));
     for (const p of Array.from(mp.querySelectorAll(':scope > p'))) {
       let sib = p.nextSibling;
@@ -1571,7 +1573,7 @@ function _applyFragmentMarkers(container) {
     }
     if (!host) {
       // Marker steht direkt im Wrapper (Codeblock ohne Leerzeile): vorheriges
-      // Block-Element nehmen, <br> von marked (breaks:true) überspringen.
+      // Block-Element nehmen, evtl. dazwischenliegendes <br> überspringen.
       let sib = span.previousElementSibling;
       while (sib && sib.tagName === 'BR') sib = sib.previousElementSibling;
       host = sib && blockRe.test(sib.tagName) ? sib : null;
@@ -1585,7 +1587,7 @@ function _applyFragmentMarkers(container) {
         if (fragId) host.setAttribute('data-frag-id', fragId);
       }
     }
-    // Vom Sentinel getrenntes <br> (marked, breaks:true) wieder entfernen
+    // Vom Sentinel getrenntes <br> (manueller Zeilenumbruch) wieder entfernen
     if (span.previousElementSibling && span.previousElementSibling.tagName === 'BR') {
       span.previousElementSibling.remove();
     }

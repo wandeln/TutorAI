@@ -88,14 +88,18 @@ Nummerierung & Labels (wie in LaTeX — du schreibst NIEMALS Nummern, die werden
   ```python {#code:sort}
   ...Code...
   ```  →  wird als „Code N“ gerendert.
-- Box (Definition/Satz/Lemma/…), auf die du im Text Bezug nehmen möchtest: Label auf der @box:-Zeile direkt nach dem Typ, z.B.
+- Box (Definition/Satz/Lemma/…), auf die du Bezug nehmen möchtest: Label auf der @box:-Zeile direkt nach dem Typ, z.B.
   @box:satz {#box:pythagoras}
   ...Inhalt der Box...
   @endbox  →  wird als „Satz N“ gerendert.
+- Tabelle, auf die du Bezug nehmen möchtest: Label-ZEILE direkt unter der Pipe-Tabelle, z.B.
+  | A | B |
+  | --- | --- |
+  {#tab:uebersicht}  →  wird als „Tab. N“ gerendert (Caption optional: {#tab:label}[Caption]).
 {% endraw %}
 - Labels für Objekte, die AUCH IM SKRIPT vorkommen (s. o. „Labels“ der Kapitel): die dort bereits vergebenen Labels EXAKT wiederverwenden (gleiche Schreibweise, snake_case) — dadurch bekommt die Folie dieselbe Nummer wie das Skript und die Nummer wird als Link zum Skript gerendert. Erfinde für solche Objekte KEINE neuen Labels.
 - Labels für neue, nur in diesem Slide-Deck vorkommende Objekte: frische, eindeutige snake_case-Labels, die mit KEINEM der gelisteten Skript-Labels kollidieren (diese bekommen die eigene Slide-Nummerierung (S1), (S2), …).
-- Bezugnahmen im Fließtext: @fig:label / @eq:label / @code:label / @box:label / @sec:label → werden durch klickbare Referenzen ersetzt. Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen.
+- Bezugnahmen im Fließtext: @fig:label / @eq:label / @code:label / @box:label / @tab:label / @sec:label → werden durch klickbare Referenzen ersetzt. Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen.
 - Beschrifte nur Objekte, die du tatsächlich einbindest bzw. auf die du Bezug nimmst — nicht jede Formel braucht ein Label.
 
 Medien (aus der Medienbibliothek des Kurses):

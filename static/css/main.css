@@ -334,6 +334,28 @@
   text-align: center;
 }
 
+/* Beschriftete Tabellen ({#tab:label}[caption] als Zeile unter der
+   Pipe-Tabelle): Caption unter der Tabelle, analog zu Abbildungen/Code.
+   Kein text-align:center — die Tabelle füllt die Breite, nur die Caption
+   steht mittig darunter. */
+.tutorai-table-figure {
+  margin: 1.25rem 0;
+  scroll-margin-top: 100px;
+}
+
+/* Generische Tabellen-Unterseite (0.75rem !important) dämpfen, damit die
+   Caption nah unter der Tabelle steht (wie beim Code). */
+.tutorai-table-figure table {
+  margin-bottom: 0.25rem !important;
+}
+
+.tutorai-table-figure figcaption {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+  text-align: center;
+}
+
 .tutorai-equation {
   position: relative;
   scroll-margin-top: 100px;

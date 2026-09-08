@@ -121,6 +121,26 @@ def _scan_box_labels(content: str) -> list[tuple[str, str]]:
     return [(m.group(2), m.group(1)) for m in _BOX_LABEL_RE.finditer(text)]
 
 
+# Beschriftete Tabellen: Pipe-Tabellen-Block (Zeilen beginnend mit |) +
+# Label-Zeile {#tab:label} direkt darunter, optional mit Caption [text]
+# (Syntax {#tab:label}[caption], s. markdown-renderer.js). Leerzeilen zwischen
+# Tabelle und Label sind erlaubt (wie \s* bei eq/fig). Caption-Zeichenkette
+# [^\]]* ≈ JS-Token (bis zum ersten ]). Text nach der Caption → kein Match
+# (Tippfehler bleiben literal, wie bei den Box-Labels).
+_TAB_CAPTION_RE = re.compile(
+    r"(?:^[ \t]*\|[^\n]*\r?\n)+[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)",
+    re.MULTILINE,
+)
+
+
+def _scan_tables(content: str) -> list[tuple[str, str]]:
+    """(Caption, Label) beschrifteter Tabellen in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
+    text = _CODE_FENCED_RE.sub("", content or "")
+    text = _CODE_INLINE_RE.sub("", text)
+    # Gruppen-Reihenfolge im Regex ist (Label, Caption) → hier auf (Caption, Label) drehen
+    return [(m.group(2) or "", m.group(1)) for m in _TAB_CAPTION_RE.finditer(text)]
+
+
 # ─── Hover-Previews für Referenz-Tooltips ─────────────────────────────────
 # Label → gekürzter Objektinhalt (eq: LaTeX-Quelltext, code: Code, box:
 # Box-Inhalt als Plain-Text, fig: Caption). Das Frontend rendert den Wert
@@ -134,6 +154,11 @@ _CODE_BLOCK_RE = re.compile(r"^```([^\n]*)\n?([\s\S]*?)^```[ \t]*$", re.MULTILIN
 # Box inkl. Inhalt (Label auf der @box:-Zeile, s. _BOX_LABEL_RE).
 _BOX_CONTENT_RE = re.compile(
     r"@box:([\w-]+)[ \t]*\{#box:([\w-]+)\}[ \t]*\r?\n([\s\S]*?)\r?\n@endbox"
+)
+# Tabelle inkl. Block (Label-Zeile nach dem Block, s. _TAB_CAPTION_RE).
+_TAB_CONTENT_RE = re.compile(
+    r"((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)",
+    re.MULTILINE,
 )
 # Formel-Span ($$…$$-Block oder $…$ inline) — für math-bewusste Preview-Bearbeitung.
 _MATH_SPAN_RE = re.compile(r"\$\$[\s\S]*?\$\$|\$[^$\n]+?\$")
@@ -183,9 +208,10 @@ def _scan_previews(content: str) -> dict[str, str]:
     """Kind-prefixed Label → Preview-Text (gekürzt) der beschrifteten Objekte.
 
     Ergänzt die _scan_*-Funktionen um den INHALT (für Hover-Tooltips).
-    Pro „kind:label“ gewinnt das erste Vorkommen. fig/eq/box werden wie die
-    jeweiligen _scan_* außerhalb von Code-Blöcken gesucht, code IN den
-    Code-Blöcken (Label auf der öffnenden ```-Zeile).
+    Pro „kind:label“ gewinnt das erste Vorkommen. fig/eq/box/tab werden wie
+    die jeweiligen _scan_* außerhalb von Code-Blöcken gesucht, code IN den
+    Code-Blöcken (Label auf der öffnenden ```-Zeile). tab = Tabellen-Zeilen
+    als Plain-Text (Formeln bleiben erkennbar, s. _preview_plain).
     """
     out: dict[str, str] = {}
     text = _CODE_FENCED_RE.sub("", content or "")
@@ -196,6 +222,8 @@ def _scan_previews(content: str) -> dict[str, str]:
         out.setdefault(f"eq:{m.group(2)}", _truncate_preview(m.group(1)))
     for m in _BOX_CONTENT_RE.finditer(text):
         out.setdefault(f"box:{m.group(2)}", _preview_plain(m.group(3)))
+    for m in _TAB_CONTENT_RE.finditer(text):
+        out.setdefault(f"tab:{m.group(2)}", _preview_plain(m.group(1)))
     for m in _CODE_BLOCK_RE.finditer(content or ""):
         lm = _CODE_LABEL_IN_HEAD_RE.search(m.group(1))
         if lm:
@@ -589,13 +617,13 @@ async def script_refmap(
         mode:     "reading" (Student) bzw. "edit" (PROF/TUTOR/Admin) — beeinflusst nur das
                   Layout der @task:-Boxen (Querverweise verlinken alle auf die Skript-Seite)
         courseId: Kurs-ID
-        chapters: {id: {title, label, num, visible, maxFig, maxEq, maxCode, maxBox,
+        chapters: {id: {title, label, num, visible, maxFig, maxEq, maxCode, maxBox, maxTab,
                         sections: [{num, title, label, anchor}]}}
                   # num = Kapitelnummer (rollenabhängig), sections = h2–h4-Liste fürs TOC
-                  # maxFig/maxEq/maxCode/maxBox = Preview-Fallback (neue, ungespeicherte Labels)
+                  # maxFig/maxEq/maxCode/maxBox/maxTab = Preview-Fallback (neue, ungespeicherte Labels)
         labels:   {"<kind>:<label>": {kind, sectionId, num, chapter?, type?, preview?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt (pro Kind)
-                  # keys sind kind-prefixed ("eq:test" ≠ "box:test"), kinds: fig / eq / sec / code / box (sec: num = "N.M…"-String, box: type = Box-Typ,
-                  # z. B. "satz" → Referenz-Text „Satz N“). Kapitel-Label = {#sec:label}
+                  # keys sind kind-prefixed ("eq:test" ≠ "box:test"), kinds: fig / eq / sec / code / box / tab (sec: num = "N.M…"-String, box: type = Box-Typ,
+                  # z. B. "satz" → Referenz-Text „Satz N"). Kapitel-Label = {#sec:label}
                   # als erste nicht-leere Zeile im Inhalt → sec-Entry mit chapter: true und num = Kapitelnummer
                   # preview: gekürzter Objektinhalt für Hover-Tooltips (eq: LaTeX, code: Code,
                   # box: Text, fig: Caption, sec: Titel)
@@ -605,6 +633,8 @@ async def script_refmap(
         figures:  [{num, caption, label, sectionId}]  # Abbildungsverzeichnis fürs TOC
         codes:    [{num, caption, label, sectionId}]  # Codes-Tabelle fürs TOC
                   # ({#code:label} in der öffnenden Zeile eines Fenced-Blocks)
+        tables:   [{num, caption, label, sectionId}]  # Tabellenverzeichnis fürs TOC
+                  # ({#tab:label} in der Zeile direkt unter der Pipe-Tabelle)
         tasks:    {id: {id, title, taskType, maxPoints, myPoints, attemptsUsed, maxAttempts, deadline}}
                   # für @task:{id}-Referenzen. Student: nur freigeschaltete Aufgaben +
                   # eigene Punkte (analog Aufgabenübersicht); PROF/TUTOR/Admin: alle.
@@ -628,20 +658,24 @@ async def script_refmap(
     labels: dict[str, dict[str, object]] = {}
     figures: list[dict[str, object]] = []
     codes: list[dict[str, object]] = []
+    tables: list[dict[str, object]] = []
     fig_running = 0
     eq_running = 0
     code_running = 0
     box_running = 0
+    tab_running = 0
     for ch_num, s in enumerate(sections, start=1):
         fig_pairs = _scan_figures(s.content)  # (Caption, Label) in Vorkommensreihenfolge
         eqs = _scan_labels(s.content)[1]
         code_items = _scan_code_labels(s.content)  # (Label, Caption) in Vorkommensreihenfolge
         box_items = _scan_box_labels(s.content)  # (Label, Typ) in Vorkommensreihenfolge
+        tab_items = _scan_tables(s.content)  # (Caption, Label) in Vorkommensreihenfolge
         previews = _scan_previews(s.content)  # "kind:label" → Hover-Preview (Tooltip)
         max_fig = 0
         max_eq = 0
         max_code = 0
         max_box = 0
+        max_tab = 0
         for caption, label in fig_pairs:
             fig_running += 1
             if f"fig:{label}" not in labels:
@@ -676,6 +710,15 @@ async def script_refmap(
                     e["preview"] = p
                 labels[f"box:{label}"] = e
             max_box = max(max_box, box_running)
+        for caption, label in tab_items:
+            tab_running += 1
+            if f"tab:{label}" not in labels:
+                e: dict[str, object] = {"kind": "tab", "sectionId": s.id, "num": tab_running}
+                if p := previews.get(f"tab:{label}"):
+                    e["preview"] = p
+                labels[f"tab:{label}"] = e
+            max_tab = max(max_tab, tab_running)
+            tables.append({"num": tab_running, "caption": caption, "label": label, "sectionId": s.id})
         # Sections (h2–h4): kapitellokale Nummerierung, Labels, Anker fürs TOC
         headings = _scan_headings(s.content)
         ch_label = _chapter_label(s.content)
@@ -710,6 +753,7 @@ async def script_refmap(
             "maxEq": max_eq,
             "maxCode": max_code,
             "maxBox": max_box,
+            "maxTab": max_tab,
             "sections": sec_entries,
         }
 
@@ -762,6 +806,7 @@ async def script_refmap(
         "labels": labels,
         "figures": figures,
         "codes": codes,
+        "tables": tables,
         "tasks": tasks_map,
     }
 
@@ -994,6 +1039,7 @@ async def ai_generate_section(
         figs, eqs = _scan_labels(s.content)
         code_labels = [l for l, _cap in _scan_code_labels(s.content)]
         box_labels = [f"@box:{l} ({t})" for l, t in _scan_box_labels(s.content)]
+        tab_labels = [l for _cap, l in _scan_tables(s.content)]
         # Section-Labels fürs @sec:-Referenzieren; das Kapitel-Label
         # ({#sec:label} als eigene Zeile) wird gekennzeichnet, damit das LLM
         # es als Kapitel-Referenz erkennt und nicht doppelt belegt.
@@ -1011,6 +1057,7 @@ async def ai_generate_section(
                     + [f"@eq:{l}" for l in eqs]
                     + [f"@code:{l}" for l in code_labels]
                     + box_labels
+                    + [f"@tab:{l}" for l in tab_labels]
                     + [f"@sec:{l}" for l in sec_labels],
             }
         )

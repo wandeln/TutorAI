@@ -13,11 +13,14 @@
  * Escaped dollar: \$                              → literal $ (no LaTeX)
  * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
+ * Nummerierte Tabelle: Pipe-Tabelle + Zeile {#tab:label}[Caption] darunter
+ *                                                            → "Tab. N: Caption" unter der Tabelle
+ *                                                              (Anker tab:label)
  * Nummerierte Section: ## Titel {#sec:label}      → "K.N[.M]" vor der Überschrift (h2–h4,
  *                                                            kapitellokal; Kapitelnummer aus dem refmap);
  *                                                            Anker sec:label bzw. sec:{sectionId}-{num}
- * Querverweise:       @fig:label / @eq:label / @sec:label
- *                                                            → klickbares "Abb. N" / "Gl. N" / "Abs. N.M"
+ * Querverweise:       @fig:label / @eq:label / @tab:label / @sec:label
+ *                                                            → klickbares "Abb. N" / "Gl. N" / "Tab. N" / "Abs. N.M"
  *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
  *                    @kap:label = Legacy-Alias für @sec:label. Kapitel-Label = {#sec:label}
  *                    als EIGENE ZEILE (erste nicht-leere Zeile) am Kapitelanfang → "Kap. N"
@@ -415,6 +418,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const slidesMaxSEq = (slidesRefMap && slidesRefMap.maxSEq) || 0;
   const slidesMaxSCode = (slidesRefMap && slidesRefMap.maxSCode) || 0;
   const slidesMaxSBox = (slidesRefMap && slidesRefMap.maxSBox) || 0;
+  const slidesMaxSTab = (slidesRefMap && slidesRefMap.maxSTab) || 0;
 
   // 0. Kapitel-Label ({#sec:label} als erste nicht-leere Zeile) → kein Content, entfernen
   text = text.replace(/^(?:[ \t]*\n)*[ \t]*\{#sec:[\p{L}0-9_-]+\}[ \t]*(?:\r?\n|$)/u, '');
@@ -731,9 +735,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%LATEX_INLINE_${latexInlines.length - 1}%%`;
   });
 
-  // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @box:label / @sec:label / @kap:label
+  // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @box:label / @tab:label / @sec:label / @kap:label
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq|sec|kap|code|box):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap|code|box|tab):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -746,6 +750,53 @@ async function renderMarkdown(text, targetElement, options = {}) {
     taskRefs.push(id);
     return `%%TASKREF_${taskRefs.length - 1}%%`;
   });
+
+  // 1j2. Extract labeled tables: Pipe-Tabellen-Block + Label-Zeile
+  //      {#tab:label} (optional mit [caption]) direkt darunter →
+  //      nummerierte Tabelle ("Tab. N: caption") mit Anker — Nummer wie
+  //      bei Abbildungen/Gleichungen/Code/Boxen (im Skript gespeichertes
+  //      Label → Skript-Nummer, in Slides: eigene Labels → S1, S2, …).
+  //      Der Tabellen-Markdown-Text wird beim Restore per marked.parse
+  //      gerendert; darin enthaltene Platzhalter (%%IC%%/%%LATEX_*%%/
+  //      %%XREF%%/%%TASKREF%% — Extraktion erfolgte vor diesem Schritt)
+  //      füllen die nachfolgenden Restore-Schritte in der Tabelle.
+  //      Unlabelte Tabellen bleiben im Fließtext (natives GFM-Table).
+  //      Ungültige Schreibweise (Text nach der Caption, Label ohne
+  //      Tabelle) → bleibt literal (Tippfehler fallen so auf).
+  const tables = [];
+  const tabLabelNumbers = {};
+  const tabFallbackBase = chapterRef ? (chapterRef.maxTab || 0) : 0;
+  let tabFallbackCount = 0;
+  // Slide-Decks: slide-eigene Tabellen-Labels → S1, S2, … (wie eq/fig/code).
+  let slideTabCount = 0;
+  processed = processed.replace(
+    /((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\p{L}0-9_-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)/gmu,
+    (match, tableMd, label, caption) => {
+      let num;
+      if (label in tabLabelNumbers) {
+        num = tabLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
+      } else {
+        const g = globalLabels['tab:' + label];
+        if (g && g.kind === 'tab') {
+          num = g.num; // gespeichertes Label → exakte globale Nummer
+        } else if (slideMode) {
+          const sl = slidesLabels['tab:' + label]; // typ-qualifiziert (s. slides-refmap)
+          if (sl && sl.kind === 'tab') {
+            num = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+          } else {
+            slideTabCount += 1;
+            num = 'S' + (slidesMaxSTab + slideTabCount); // ungespeichert
+          }
+        } else {
+          tabFallbackCount += 1;
+          num = tabFallbackBase + tabFallbackCount; // neues (ungespeichertes) Label
+        }
+        tabLabelNumbers[label] = num;
+      }
+      tables.push({ md: tableMd, label, caption: caption || '', num });
+      return `%%TAB_${tables.length - 1}%%`;
+    }
+  );
 
   // 1k. Slide-Fragments → unsichtbarer Sentinel (Typ/ID als data-Attribute,
   //     überleben die DOMPurify-Sanitize). Formen (Details:
@@ -916,6 +967,35 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const safe = content.replace(escapedDollar, '$');
     const escaped = safe.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\$\$/g, '$$$$$$$$');
     html = html.replace(`%%IC${idx}%%`, `<code>${escaped}</code>`);
+  });
+
+  // 4b. Restore labeled tables: Tabellen-Markdown per marked.parse → <table>,
+  //     in <figure class="tutorai-table-figure"> mit Caption "Tab. N: caption"
+  //     + Anker tab:label (wie Abbildungen/Code). MUST vor Schritt 6
+  //     (Inline-Math) stehen: die Zell-Platzhalter (%%LATEX_INLINE%%/
+  //     %%XREF%%/%%TASKREF%%) füllen die nachfolgenden html.replace direkt
+  //     in der Tabelle. Nummer: im Skript gespeichertes Label → in Slides
+  //     klickbar (→ Skript), wie bei eq/fig/code.
+  tables.forEach((t, idx) => {
+    // Bild-Literal-Tails, die IN der Tabelle liegen, hier mit-restaurieren
+    // (1l hat nur den Haupttext behandelt — die Tabelle ist zu dem Zeitpunkt
+    // bereits extrahiert).
+    let tableMd = t.md;
+    imgLiteralTails.forEach((tail, i) => {
+      tableMd = tableMd.split(`%%IMGLIT_${i}%%`).join(tail);
+    });
+    const tableHtml = marked.parse(tableMd, { breaks: true, gfm: true, headerIds: false, mangle: false });
+    const g = globalLabels['tab:' + t.label];
+    const numHtml = (slideMode && g && g.kind === 'tab')
+      ? (() => {
+        const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+        return `<a class="tutorai-tab-num-link" href="/courses/${cid}/script#tab:${t.label}" title="Zur Tabelle im Skript">Tab. ${t.num}</a>`;
+      })()
+      : `Tab. ${t.num}`;
+    const figHtml =
+      `<figure id="tab:${t.label}" class="tutorai-table-figure">${tableHtml}` +
+      `<figcaption>${numHtml}${t.caption ? `: ${escapeHtml(t.caption)}` : ''}</figcaption></figure>`;
+    html = html.replace(`%%TAB_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
   // 5. Restore LaTeX blocks (labeled ones as numbered equation "(N)")
@@ -1196,7 +1276,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   }
 
   // 6b. Restore cross-references (@fig:label / @eq:label / @code:label /
-  //     @box:label / @sec:label; @kap:label = Legacy-Alias für @sec:label)
+  //     @box:label / @tab:label / @sec:label; @kap:label = Legacy-Alias für @sec:label)
   //     Auflösung: 1) in diesem Dokument (nur außerhalb der Slides: dort
   //                  würde Reveal den In-Page-Hash als Folien-Übergang lesen)
   //                  → In-Page-Anker,
@@ -1217,6 +1297,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       : kind === 'eq' ? eqLabelNumbers[x.label]
       : kind === 'code' ? codeLabelNumbers[x.label]
       : kind === 'box' ? boxLabelNumbers[x.label]
+      : kind === 'tab' ? tabLabelNumbers[x.label]
       : secLabelNumbers[x.label];
     const g = globalLabels[kind + ':' + x.label]; // kind-prefixed (s. script-refmap)
     const sl = slidesLabels[kind + ':' + x.label]; // typ-qualifiziert (s. slides-refmap)
@@ -1242,7 +1323,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         boxLabelTypes[x.label] || null;
       kindText = boxType && CALLOUT_TYPES[boxType] ? CALLOUT_TYPES[boxType].title : 'Box';
     } else {
-      kindText = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : kind === 'code' ? 'Code' : 'Abs.';
+      kindText = kind === 'fig' ? 'Abb.' : kind === 'eq' ? 'Gl.' : kind === 'code' ? 'Code' : kind === 'tab' ? 'Tab.' : 'Abs.';
     }
     let refHtml;
     const useLocalAnchor = kind === 'sec' || !slideMode;

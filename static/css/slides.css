@@ -360,12 +360,12 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
    normale Nummern (kein Accent, keine Underline) — der Verweis ist erst
    beim Hover erkennbar (wie .tutorai-eq-num). Muss nach der a-Regel
    stehen: gleiche Selektorstärke + !important → Source-Order gewinnt. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) a {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) a {
   color: inherit !important;
   text-decoration: none !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) a:hover {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) a:hover {
   text-decoration: underline !important;
 }
 
@@ -478,9 +478,9 @@ html.print-pdf .reveal .slides .markdown-preview pre {
   border-radius: 0.3em !important;
 }
 
-/* Figure-/Applet-/Code-Captions: in Slides größer als im Skript
+/* Figure-/Applet-/Code-/Tabellen-Captions: in Slides größer als im Skript
    (0.875rem) — em-basiert, damit sie mit dem Reveal-Zoom skalieren. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure) figcaption {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) figcaption {
   font-size: 1.2rem;
 }
 

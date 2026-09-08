@@ -35,7 +35,7 @@ Mögliche Schlüssel und deren Bedeutung:
 {% if current_content and '"content"' in generate_list %}
 - "content_edits": NUR als Alternative zu "content" (nie beide zusammen in einer Antwort), wenn die Anweisung nur lokale Änderungen am vorhandenen Inhalt verlangt — eine Liste stellenweiser Edit-Objekte (Format siehe unten, „Stellenweise Bearbeitung“)
 {% endif %}
-- "summary": Interne Zusammenfassung des Kapitels in 3-6 Sätzen: zentrale Begriffe, verwendete Notation (Symbole, Schreibweisen), wichtige Definitionen/Sätze. Nimm AUCH alle wichtigen fig/eq/code/box-Labels des Kapitels mit auf — schreibe sie als Referenz mit @-Präfix, so wie im Fließtext (z.B. „Hauptformel: @eq:shannon; Verteilungsdiagramm: @fig:entropie; Algorithmus: @code:sort; Satz: @box:pythagoras“), damit spätere Kapitel und Übungsaufgaben darauf referenzieren können! Sie dient NUR der internen Konsistenz zwischen den Kapiteln und wird den Studenten NICHT angezeigt.
+- "summary": Interne Zusammenfassung des Kapitels in 3-6 Sätzen: zentrale Begriffe, verwendete Notation (Symbole, Schreibweisen), wichtige Definitionen/Sätze. Nimm AUCH alle wichtigen fig/eq/code/box/tab-Labels des Kapitels mit auf — schreibe sie als Referenz mit @-Präfix, so wie im Fließtext (z.B. „Hauptformel: @eq:shannon; Verteilungsdiagramm: @fig:entropie; Algorithmus: @code:sort; Satz: @box:pythagoras; Überblickstabelle: @tab:wahrscheinlichkeiten“), damit spätere Kapitel und Übungsaufgaben darauf referenzieren können! Sie dient NUR der internen Konsistenz zwischen den Kapiteln und wird den Studenten NICHT angezeigt.
 
 Keine weiteren Schlüssel, keine zusätzlichen Texte, keine Code-Blöcke (```json ... ```).
 Achte dabei auf korrektes Escaping von special Characters. In Latex-Umgebungen muss insbesondere der Backslash escaped werden (z.B. $\\text{...}$ oder $$A \\rightarrow B$$). Dollar-Zeichen außerhalb von Code-Blöcken, die kein Latex triggern sollen, können mit Backslash \\$ escaped werden.
@@ -91,7 +91,7 @@ Jedes Edit-Objekt enthält einen Schlüssel "op" mit genau einem dieser Werte:
 Regeln für "content_edits":
 - Verwende NUR Headings und Snippets, die im bestehenden Inhalt tatsächlich vorhanden sind — erfinde keine.
 - Jedes "heading" bzw. "old" muss im Inhalt EXAKT EINMAL vorkommen (eindeutig); die Edits dürfen sich nicht überschneiden.
-- Bewahre vorhandene fig/eq/code/box-Labels und @fig:/@eq:/@code:/@box:/@task:-Referenzen bei, sofern die Anweisung nichts anderes verlangt.
+- Bewahre vorhandene fig/eq/code/box/tab-Labels und @fig:/@eq:/@code:/@box:/@tab:/@task:-Referenzen bei, sofern die Anweisung nichts anderes verlangt.
 - Betrifft die Änderung einen Großteil des Kapitels, nutze STATTDESSEN "content" (Volltext).
 {% endif %}
 
@@ -100,7 +100,7 @@ Regeln:
 - Das Kapitel ist reiner Vorlesungsinhalt: KEINE Übungsaufgaben, keine Aufgabenlisten und keine Aufgabenformulierungen (z.B. „Bestimme …“, „Zeige …“, „Beweise …“) — Übungsaufgaben werden gesondert im Kurs gepflegt und gehören NICHT ins Skript.
 - Falls für ein angefordertes Feld bereits ein Inhalt existiert (s. o.), überarbeite/verbessere ihn gemäß der Anweisung — gestalte das Kapitel nicht grundlos neu, sondern behalte die Struktur bei, soweit die Anweisung nichts anderes vorschreibt.{% if current_content and '"content"' in generate_list %} Bei lokalen Änderungen an vorhandenem Inhalt nutze dafür den Mechanismus „Stellenweise Bearbeitung“ („content_edits“), damit der restliche Inhalt garantiert unverändert bleibt.{% endif %}
 - Falls ein Feld KEINEN Inhalt hat, ist der zugehörige Schlüssel PFLICHT — erstelle den Inhalt neu passend zum Thema.
-- Wird der Inhalt geändert und betrifft die Änderung zentrale Begriffe, Notation, Definitionen/Sätze oder fig/eq/code/box-Labels, MUSST du die „summary“ aktualisieren (nicht weglassen) — sie dient der Konsistenz der anderen Kapitel.
+- Wird der Inhalt geändert und betrifft die Änderung zentrale Begriffe, Notation, Definitionen/Sätze oder fig/eq/code/box/tab-Labels, MUSST du die „summary“ aktualisieren (nicht weglassen) — sie dient der Konsistenz der anderen Kapitel.
 - Der Inhalt ist Markdown für ein Vorlesungsskript: lehrbuchartige, präzise und strukturierte Darstellung (Definitionen, Sätze, Beweisskizzen, Beispiele, Übungshinweise) auf dem Niveau einer Universität.
 - Beginne den Inhalt NICHT mit einer H1-Überschrift (der Kapiteltitel wird separat angezeigt); verwende ## für Abschnitte und ### für Unterabschnitte.
 - Verwende $...$ für Inline-Math und $$...$$ für Display-Math.
@@ -126,6 +126,11 @@ Regeln:
     ```python {#code:sort}
     ...Code...
     ```  →  wird als „Code N“ gerendert.
+  - Tabelle, auf die du Bezug nehmen möchtest: Label-ZEILE direkt unter der Pipe-Tabelle, z.B.
+    | Größe | Wahrscheinlichkeit |
+    | --- | --- |
+    | 0 | 0.2 |
+    {#tab:wahrscheinlichkeiten}  →  wird als „Tab. N“ gerendert (Caption optional: {#tab:label}[Caption]).
   - Box (Definition/Satz/Lemma/…), auf die du im Text Bezug nehmen möchtest: Label auf der @box:-Zeile direkt nach dem Typ, z.B.
     @box:satz {#box:pythagoras}
     ...Inhalt der Box...
@@ -136,11 +141,11 @@ Regeln:
   - Kapitel-Label: Ganz am Anfang des Kapitels steht als EIGENE ZEILE (die erste nicht-leere Zeile des Inhalts, VOR der ersten Überschrift) das {#sec:label} des Kapitels, z.B.
     {#sec:statistik}
     Diese Zeile wird NICHT gerendert — sie dient nur als Label des Kapitels. Aus ANDEREN Kapiteln referenziert man das ganze Kapitel mit @sec:statistik (wird als „Kap. N“ gerendert).
-  - Bezugnahme im Fließtext: @fig:entropie / @eq:shannon / @code:sort / @box:pythagoras / @sec:grundlagen → wird durch die klickbare Referenz („Abb. N“ / „Gl. N“ / „Code N“ / „Satz N“ bzw. „Abs. N.M“ / „Kap. N“) ersetzt.
-  - @fig:/@eq:/@code:/@box:/@sec:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
+  - Bezugnahme im Fließtext: @fig:entropie / @eq:shannon / @code:sort / @box:pythagoras / @tab:wahrscheinlichkeiten / @sec:grundlagen → wird durch die klickbare Referenz („Abb. N“ / „Gl. N“ / „Code N“ / „Satz N“ / „Tab. N“ bzw. „Abs. N.M“ / „Kap. N“) ersetzt.
+  - @fig:/@eq:/@code:/@box:/@tab:/@sec:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
     Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“.
   - Beschrifte alle Objekte, auf die du im Text Bezug nimmst, UND wichtige Definitionen, Sätze und Formeln (wichtige Definitionen/Sätze als Boxen, z.B. @box:definition {#box:…} bzw. @box:satz {#box:…}) — auch ohne unmittelbare Bezugnahme im Text, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können. Labels klein, snake_case, eindeutig im GESAMTEN Skript (siehe die „Labels“ bei den anderen Kapiteln — benutze bereits vorhandene Labels nicht neu und erfinde keine Labels, die dort bereits vergeben sind).
-  - Querverweise auf Abbildungen/Gleichungen/Code/Boxen/Sections/Kapitel in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie, @eq:shannon, @code:sort, @box:pythagoras, @sec:statistik).
+  - Querverweise auf Abbildungen/Gleichungen/Code/Boxen/Tabellen/Sections/Kapitel in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie, @eq:shannon, @code:sort, @box:pythagoras, @tab:wahrscheinlichkeiten, @sec:statistik).
 {% endraw %}
   - Alle wichtigen Labels müssen in der Zusammenfassung ("summary") vorkommen, damit sie später referenziert werden können. Erfinde aber auch keine Labels, die nicht im Inhalt vorkommen.
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.

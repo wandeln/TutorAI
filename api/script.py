@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from database.base import get_session
 from database.models import (
     Course,
+    CourseReference,
     CourseRole,
     FeedbackSource,
     GlobalUserRole,
@@ -29,7 +30,10 @@ from database.models import (
     User,
     UserCourse,
 )
+from services import bibtex as bib
+from services import content_edits
 from services.auth_service import get_current_user, require_course_access
+from services.content_edits import ContentEditError, mask_code_blocks
 from services.llm_service import LLMService
 from services import media_service
 from services.media_service import sync_media_usages
@@ -47,12 +51,73 @@ _CODE_INLINE_RE = re.compile(r"`[^`]+`")
 _FIG_LABEL_RE = re.compile(r"!\[[^\]]*\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
 _EQ_LABEL_RE = re.compile(r"\$\$[\s\S]*?\$\$\s*\{#eq:([\w-]+)\}")
 
+# Subfiguren (identisch zu markdown-renderer.js): Ein Komplex wird als EINE
+# nummerierte Abbildung gezählt, wenn er ein äußeres {#fig:label} ODER
+# mindestens ein Inner mit {#fig:label} trägt (s. _scan_figures / JS 1e0);
+# die inneren ![…](…) zählen NICHT als eigene Figuren. Die Inners dürfen
+# dort strikt nur {height=X} und/oder ein {#fig:label} tragen (je max.
+# einmal, in beliebiger Reihenfolge — s. _parseSubfigInners), sonst rendert
+# das JS sie als normal beschriftete Figuren → Refmap-Drift.
+_SF_GAP = r"[ \t]*(?:\r?\n[ \t]*)?"
+_SF_H = r"\{\.?height=[\d.]+(?:px)?\}"
+_SF_FIG = r"\{#fig:[\w-]+\}"  # nicht-capturing (wird in _SF_INNER komponiert)
+# ACHTUNG: `!` in src ausschließen — sonst matcht der äußere Komplex-Kopf
+# ![Gesamt]( auf das erste INNER als src (Src = [^)\s!]+, s. auch JS 1e0).
+_SF_INNER = (
+    r"!\[[^\]]*\]\([^)\s!]+\)(?:" + _SF_GAP
+    + r"(?:" + _SF_H + r"(?:" + _SF_GAP + _SF_FIG + r")?|"
+    + _SF_FIG + r"(?:" + _SF_GAP + _SF_H + r")?))?"
+)
+_SF_INNER_RE = re.compile(_SF_INNER)
+_SF_FIG_RE = re.compile(r"\{#fig:([\w-]+)\}")  # capturing: Label-Extraktion
+_SUBFIG_INNERS = _SF_INNER + r"(?:[ \t\r\n]+" + _SF_INNER + r")+"
+_SUBFIG_ANY_RE = re.compile(
+    r"!\[([^\]]*)\]\([ \t]*(?:\r?\n[ \t]*)?" + _SUBFIG_INNERS + r"[ \t]*(?:\r?\n[ \t]*)?\)"
+)
+_OUTER_LABEL_RE = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?\{#fig:([\w-]+)\}")
+
+
+def _outer_fig_label(text: str, pos: int) -> Optional[str]:
+    """Äußeres {#fig:label} eines Subfigure-Komplexes direkt nach dem
+    schließenden ) (oder None) — Gap-Regeln wie JS-ATTR_BLOCK."""
+    m = _OUTER_LABEL_RE.match(text, pos)
+    return m.group(1) if m else None
+
+
+def _mask_subfigs(text: str) -> str:
+    """Subfiguren-Komplexe längentreu maskieren.
+
+    Maskiert JEDEN gültigen Komplex — exakt die Komplexe, die auch das JS
+    maskiert (s. 1e0) — damit die inneren ![…](…) und ihre {#fig:}-Labels
+    nicht als eigene Figuren aufgesammelt werden. Gelabelte Komplexe und
+    gelabelte Inners zählen über _scan_figures / _scan_fig_labels mit.
+    """
+    return _SUBFIG_ANY_RE.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _scan_fig_labels(text: str) -> list[str]:
+    """{#fig:…}-Labels in Reihenfolge des Vorkommens: Komplex-Labels,
+    gelabelte Subfigure-Inners (ebenfalls fig-Labels) und einfache Figuren."""
+    found: list[tuple[int, str]] = []
+    for m in _SUBFIG_ANY_RE.finditer(text):
+        om = _OUTER_LABEL_RE.match(text, m.end())
+        if om:
+            found.append((om.start(1), om.group(1)))  # absolute (re.match mit pos)
+        for im in _SF_INNER_RE.finditer(m.group(0)):
+            sm = _SF_FIG_RE.search(im.group(0))
+            if sm:
+                found.append((m.start() + im.start() + sm.start(1), sm.group(1)))
+    masked = _mask_subfigs(text)
+    for m in _FIG_LABEL_RE.finditer(masked):
+        found.append((m.start(), m.group(1)))
+    return [label for _, label in sorted(found)]
+
 
 def _scan_labels(content: str) -> tuple[list[str], list[str]]:
     """{#fig:…}/{#eq:…}-Labels aus Markdown in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
     text = _CODE_FENCED_RE.sub("", content or "")
     text = _CODE_INLINE_RE.sub("", text)
-    figs = _FIG_LABEL_RE.findall(text)
+    figs = _scan_fig_labels(text)
     eqs = _EQ_LABEL_RE.findall(text)
     return figs, eqs
 
@@ -75,11 +140,44 @@ _HEADING_NUM_LINE_RE = re.compile(r"^(#{2,4})\s+(.*\S)\s*$", re.MULTILINE)
 
 
 
-def _scan_figures(content: str) -> list[tuple[str, str]]:
-    """(Caption, Label) nummerierter Figuren in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
+def _scan_subfig_inners(complex_text: str) -> list[tuple[Optional[str], str]]:
+    """(fig-Label oder None, Caption) der Inners eines Subfigure-Komplexes (Reihenfolge).
+
+    Wird auf einem _SUBFIG_ANY_RE-Match angewendet: der äußere Kopf
+    ``![Gesamt](`` kann nicht als Inner matchen (src schließt `!` aus,
+    s. _SF_INNER) → die Treffer sind exakt die Inners.
+    """
+    inners: list[tuple[Optional[str], str]] = []
+    for m in _SF_INNER_RE.finditer(complex_text):
+        am = re.match(r"!\[([^\]]*)\]", m.group(0))
+        sm = _SF_FIG_RE.search(m.group(0))
+        inners.append((sm.group(1) if sm else None, am.group(1) if am else ""))
+    return inners
+
+
+def _scan_figures(content: str) -> list[tuple[str, Optional[str], Optional[list[tuple[Optional[str], str]]]]]:
+    """(Caption, Label, Inners) nummerierter Figuren in Reihenfolge des Vorkommens (Code-Blöcke ignoriert).
+
+    Nummeriert = einfache Figur mit {#fig:label}, Subfigure-Komplex mit
+    äußerm {#fig:label} ODER Komplex mit mindestens einem gelabelten Inner
+    (dann darf label None sein — der Komplex wird trotzdem nummeriert,
+    Parität s. JS 1e0). Komplexe ohne jegliches Label zählen nicht mit.
+    Inners eines Komplexes zählen nicht als eigene Figuren (s. _mask_subfigs);
+    Inners = [(fig-Label oder None, Inner-Caption)], sonst None.
+    """
     text = _CODE_FENCED_RE.sub("", content or "")
-    text = _CODE_INLINE_RE.sub("", text)
-    return _FIG_CAPTION_RE.findall(text)
+    text = _CODE_INLINE_RE.sub("", text or "")
+    found: list[tuple[int, tuple[str, Optional[str], Optional[list[tuple[Optional[str], str]]]]]] = []
+    for m in _SUBFIG_ANY_RE.finditer(text):
+        inners = _scan_subfig_inners(m.group(0))
+        label = _outer_fig_label(text, m.end())
+        if label is None and not any(l is not None for l, _cap in inners):
+            continue  # kein Label irgendwo → keine Nummer (Parität s. JS 1e0)
+        found.append((m.start(), (m.group(1), label, inners)))
+    masked = _mask_subfigs(text)
+    for m in _FIG_CAPTION_RE.finditer(masked):
+        found.append((m.start(), (m.group(1), m.group(2), None)))
+    return [val for _, val in sorted(found)]
 
 
 def _scan_code_labels(content: str) -> list[tuple[str, str]]:
@@ -101,34 +199,51 @@ def _scan_code_labels(content: str) -> list[tuple[str, str]]:
     return out
 
 
-# Beschriftete Boxen: {#box:label} auf der @box:{typ}-Zeile, direkt nach dem
-# Typ (nahtlos oder mit Leerzeichen, ohne weiteren Zeilentext) — s. Box-Regex
-# in markdown-renderer.js. Ungültige Schreibweise → Box bleibt literal dort,
+# Beschriftete Boxen: {#box:label} und [Caption] je max. einmal auf der
+# @startbox:{typ}-Zeile (oder legacy @box:{typ}), in beliebiger Reihenfolge,
+# ansonsten nur Leerraum —
+# Semantik identisch zum Box-Tokenizer in markdown-renderer.js. WICHTIG:
+# JEDER der beiden Token-Typen ist einzeln zulässig (Label OHNE Caption =
+# nummerierte Box ohne eigene Überschrift — der Normalfall!).
+# Ungültige Schreibweise (weitere Zeilentexte) → Box bleibt literal dort,
 # daher zählt sie hier auch nicht.
-_BOX_LABEL_RE = re.compile(
-    r"^@box:([\w-]+)[ \t]*\{#box:([\w-]+)\}[ \t]*(?:\r\n|\n|$)", re.MULTILINE
+_BOX_LABEL_HEAD = (
+    r"(?:"
+    r"[ \t]*\{#box:(?P<box_lbl1>[\w-]+)\}"
+    r"|[ \t]*\{#box:(?P<box_lbl2>[\w-]+)\}[ \t]*\[(?P<box_cap2>[^\]]*)\]"
+    r"|[ \t]*\[(?P<box_cap3>[^\]]*)\][ \t]*\{#box:(?P<box_lbl3>[\w-]+)\}"
+    r")"
 )
+_BOX_LABEL_RE = re.compile(
+    r"^@(?:start)?box:(?P<box_type>[\w-]+)" + _BOX_LABEL_HEAD + r"[ \t]*(?:\r\n|\n|$)", re.MULTILINE
+)
+
+
+def _box_label_of(m: re.Match) -> str:
+    """Label aus einem _BOX_LABEL_RE/_BOX_CONTENT_RE-Match (eine der drei Gruppen)."""
+    return m["box_lbl1"] or m["box_lbl2"] or m["box_lbl3"] or ""
 
 
 def _scan_box_labels(content: str) -> list[tuple[str, str]]:
     """(Label, Typ) beschrifteter Boxen in Reihenfolge des Vorkommens.
 
-    {#box:label} steht auf der @box:{typ}-Zeile. Code-Blöcke werden ignoriert
-    (@box:… in Code bleibt literal).
+    {#box:label} steht auf der @startbox:{typ}-Zeile (optional mit [Caption]).
+    Code-Blöcke werden ignoriert (@startbox:… in Code bleibt literal).
     """
     text = _CODE_FENCED_RE.sub("", content or "")
     text = _CODE_INLINE_RE.sub("", text)
-    return [(m.group(2), m.group(1)) for m in _BOX_LABEL_RE.finditer(text)]
+    return [(_box_label_of(m), m["box_type"]) for m in _BOX_LABEL_RE.finditer(text)]
 
 
 # Beschriftete Tabellen: Pipe-Tabellen-Block (Zeilen beginnend mit |) +
-# Label-Zeile {#tab:label} direkt darunter, optional mit Caption [text]
-# (Syntax {#tab:label}[caption], s. markdown-renderer.js). Leerzeilen zwischen
+# Label-Zeile {#tab:label} direkt darunter, optional mit Caption [text] und
+# Zoom {zoom=X} (Syntax {#tab:label}[caption]{zoom=X}, s. markdown-renderer.js;
+# Zoom = Tabellenschrift ×X, clientseitig via --tab-zoom). Leerzeilen zwischen
 # Tabelle und Label sind erlaubt (wie \s* bei eq/fig). Caption-Zeichenkette
-# [^\]]* ≈ JS-Token (bis zum ersten ]). Text nach der Caption → kein Match
+# [^\]]* ≈ JS-Token (bis zum ersten ]). Text nach der Caption/Zoom → kein Match
 # (Tippfehler bleiben literal, wie bei den Box-Labels).
 _TAB_CAPTION_RE = re.compile(
-    r"(?:^[ \t]*\|[^\n]*\r?\n)+[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)",
+    r"(?:^[ \t]*\|[^\n]*\r?\n)+[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?(?:[ \t]*\{\.?zoom=[\d.]+\})?[ \t]*(?:\r?\n|$)",
     re.MULTILINE,
 )
 
@@ -151,13 +266,15 @@ _PREVIEW_LIMIT = 320
 _EQ_PREVIEW_RE = re.compile(r"\$\$([\s\S]*?)\$\$\s*\{#eq:([\w-]+)\}")
 # Fenced-Block inkl. Inhalt (Label auf der ÖFFNENDEN Zeile, s. _scan_code_labels).
 _CODE_BLOCK_RE = re.compile(r"^```([^\n]*)\n?([\s\S]*?)^```[ \t]*$", re.MULTILINE)
-# Box inkl. Inhalt (Label auf der @box:-Zeile, s. _BOX_LABEL_RE).
+# Box inkl. Inhalt (Label auf der @startbox:-Zeile, s. _BOX_LABEL_RE;
+# Gruppen: box_type, box_lbl1/2/3, box_cap2/3, box_body=Inhalt).
 _BOX_CONTENT_RE = re.compile(
-    r"@box:([\w-]+)[ \t]*\{#box:([\w-]+)\}[ \t]*\r?\n([\s\S]*?)\r?\n@endbox"
+    r"@(?:start)?box:(?P<box_type>[\w-]+)" + _BOX_LABEL_HEAD + r"[ \t]*\r?\n(?P<box_body>[\s\S]*?)\r?\n@endbox"
 )
-# Tabelle inkl. Block (Label-Zeile nach dem Block, s. _TAB_CAPTION_RE).
+# Tabelle inkl. Block (Label-Zeile nach dem Block, s. _TAB_CAPTION_RE;
+# {zoom=X} nicht erfasst — die Preview braucht nur Tabellen-Block + Label).
 _TAB_CONTENT_RE = re.compile(
-    r"((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)",
+    r"((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\w-]+)\}(?:[ \t]*\[([^\]]*)\])?(?:[ \t]*\{\.?zoom=[\d.]+\})?[ \t]*(?:\r?\n|$)",
     re.MULTILINE,
 )
 # Formel-Span ($$…$$-Block oder $…$ inline) — für math-bewusste Preview-Bearbeitung.
@@ -216,12 +333,19 @@ def _scan_previews(content: str) -> dict[str, str]:
     out: dict[str, str] = {}
     text = _CODE_FENCED_RE.sub("", content or "")
     text = _CODE_INLINE_RE.sub("", text)
-    for m in _FIG_CAPTION_RE.finditer(text):
+    masked = _mask_subfigs(text)
+    for m in _SUBFIG_ANY_RE.finditer(text):
+        if om := _OUTER_LABEL_RE.match(text, m.end()):
+            out.setdefault(f"fig:{om.group(1)}", _truncate_preview(m.group(1)))
+        for sub_label, inner_cap in _scan_subfig_inners(m.group(0)):
+            if sub_label:
+                out.setdefault(f"fig:{sub_label}", _truncate_preview(inner_cap))
+    for m in _FIG_CAPTION_RE.finditer(masked):
         out.setdefault(f"fig:{m.group(2)}", _truncate_preview(m.group(1)))
     for m in _EQ_PREVIEW_RE.finditer(text):
         out.setdefault(f"eq:{m.group(2)}", _truncate_preview(m.group(1)))
     for m in _BOX_CONTENT_RE.finditer(text):
-        out.setdefault(f"box:{m.group(2)}", _preview_plain(m.group(3)))
+        out.setdefault(f"box:{_box_label_of(m)}", _preview_plain(m["box_body"]))
     for m in _TAB_CONTENT_RE.finditer(text):
         out.setdefault(f"tab:{m.group(2)}", _preview_plain(m.group(1)))
     for m in _CODE_BLOCK_RE.finditer(content or ""):
@@ -251,7 +375,7 @@ class _ScannedHeading(TypedDict):
 
 def _scan_headings(content: str) -> list[_ScannedHeading]:
     """Markdown-Sections h2–h4 (Code-Blöcke ignoriert): level, title, optionales {#sec:label}."""
-    masked = _mask_code_blocks(content or "")
+    masked = mask_code_blocks(content or "")
     out: list[_ScannedHeading] = []
     for m in _HEADING_NUM_LINE_RE.finditer(masked):
         title = m.group(2).strip()
@@ -301,194 +425,20 @@ def _chapter_label(content: str) -> str:
 
 # ─── LLM-Edits: stellenweise Änderungen am bestehenden Inhalt ────────────
 # Das LLM darf für lokale Änderungen statt des Volltexts eine Liste von
-# Edit-Objekten liefern („content_edits“). Diese werden hier serverseitig
-# auf den bestehenden Inhalt angewendet — der Anker (Heading bzw. kurzes
-# Snippet) muss dabei eindeutig sein, sonst wird der Edit abgelehnt und
-# der Inhalt bleibt unverändert.
-
-# Markdown-Heading-Zeile (ATX, ## … ######); Code-Blöcke werden vorher maskiert.
-_HEADING_LINE_RE = re.compile(r"^#{1,6}\s+(\S.*?)\s*$", re.MULTILINE)
-
-
-class _Heading(TypedDict):
-    """Eine erkannte Markdown-Heading (Positionen beziehen sich auf den Originaltext)."""
-
-    start: int
-    end: int
-    full: str
-    text: str
-
-
-def _mask_code_blocks(text: str) -> str:
-    """Maskiert den Inhalt gefenceter Code-Blöcke (Länge und Zeilenstruktur bleiben
-    erhalten), damit #-Zeilen in Code nicht als Markdown-Headings erkannt werden."""
-    def _mask(m: re.Match[str]) -> str:
-        return "".join(ch if ch == "\n" else " " for ch in m.group(0))
-    return _CODE_FENCED_RE.sub(_mask, text or "")
-
-
-def _find_headings(content: str) -> list[_Heading]:
-    """Alle Markdown-Headings (außerhalb von Code-Blöcken) mit Position, Level und Text."""
-    masked = _mask_code_blocks(content or "")
-    return [
-        {
-            "start": m.start(),
-            "end": m.end(),
-            "full": m.group(0).strip(),
-            "text": m.group(1).strip(),
-        }
-        for m in _HEADING_LINE_RE.finditer(masked)
-    ]
-
-
-def _section_span(content_len: int, headings: list[_Heading], idx: int) -> tuple[int, int]:
-    """Span eines Abschnitts: von der Heading-Zeile bis zur nächsten Heading
-    (beliebiger Ebene) bzw. zum Dokumentende. Unterabschnitte gehören NICHT
-    zum Abschnitt — so bleibt ein replace_section auf ein ## -Heading ohne
-    die darunterliegenden ### -Abschnitte (kein Copy-Risiko für den LLM)."""
-    start = headings[idx]["start"]
-    end = headings[idx + 1]["start"] if idx + 1 < len(headings) else content_len
-    return start, end
-
-
-def _resolve_heading(heading: str, headings: list[_Heading]) -> int:
-    """Index der eindeutig passenden Heading. Akzeptiert die Heading-Zeile mit oder
-    ohne #-Präfix (auch mit abweichender #-Anzahl)."""
-    want = " ".join((heading or "").split())
-    want_title = " ".join(want.lstrip("#").split())  # Vergleich ohne #-Präfix
-    matches = [
-        i
-        for i, h in enumerate(headings)
-        if want in (" ".join(h["full"].split()), " ".join(h["text"].split()))
-        or (want_title and want_title in (" ".join(h["full"].split()), " ".join(h["text"].split())))
-    ]
-    if not matches:
-        raise HTTPException(400, f"LLM-Edit nicht anwendbar: Heading „{heading}“ wurde im aktuellen Inhalt nicht gefunden.")
-    if len(matches) > 1:
-        raise HTTPException(400, f"LLM-Edit nicht anwendbar: Heading „{heading}“ ist mehrdeutig ({len(matches)} Treffer).")
-    return matches[0]
-
-
-def _normalize_ws(text: str) -> tuple[str, list[int]]:
-    """Komprimiert Whitespace-Runs auf ein einzelnes Leerzeichen.
-    Liefert (normalisierte Zeichenkette, Originalindizes der normalisierten Zeichen)."""
-    chars: list[str] = []
-    pos: list[int] = []
-    in_ws = False
-    for i, ch in enumerate(text):
-        if ch.isspace():
-            if not in_ws:
-                chars.append(" ")
-                pos.append(i)
-            in_ws = True
-        else:
-            chars.append(ch)
-            pos.append(i)
-            in_ws = False
-    return "".join(chars), pos
-
-
-def _resolve_span(content: str, old: str) -> tuple[int, int]:
-    """Span eines kurzen Snippets, das EXAKT EINMAL im Inhalt vorkommt.
-    Zuerst exakte Suche; als Fallback whitespace-insensitive Suche
-    (Zeilenumbrüche/mehrere Leerzeichen normalisiert)."""
-    if not (old or "").strip():
-        raise HTTPException(400, "LLM-Edit nicht anwendbar: „replace_span“ ohne „old“.")
-    idx = content.find(old)
-    if idx >= 0:
-        if content.find(old, idx + 1) >= 0:
-            raise HTTPException(400, f"LLM-Edit nicht anwendbar: Snippet „{old[:60]}…“ ist mehrdeutig (mehrere Treffer).")
-        return idx, idx + len(old)
-    n_content, pos = _normalize_ws(content)
-    n_old, _ = _normalize_ws(old)
-    if n_old:
-        n_idx = n_content.find(n_old)
-        if n_idx >= 0 and n_content.find(n_old, n_idx + 1) < 0:
-            start = pos[n_idx]
-            end = pos[n_idx + len(n_old) - 1] + 1
-            if content[end - 1].isspace():
-                while end < len(content) and content[end].isspace():
-                    end += 1
-            return start, end
-    raise HTTPException(400, f"LLM-Edit nicht anwendbar: Snippet „{old[:60]}…“ wurde im aktuellen Inhalt nicht (eindeutig) gefunden.")
-
-
-def _label_diff_warnings(old: str, new: str) -> list[str]:
-    """Warnungen, wenn Edits fig/eq-Labels entfernen oder Duplikate erzeugen."""
-    warnings: list[str] = []
-    old_figs, old_eqs = _scan_labels(old)
-    new_figs, new_eqs = _scan_labels(new)
-    for kind, old_labels, new_labels in (("fig", old_figs, new_figs), ("eq", old_eqs, new_eqs)):
-        for label in dict.fromkeys(set(old_labels) - set(new_labels)):
-            warnings.append(f"Label {kind}:{label} wurde entfernt — ggf. in anderen Kapiteln referenziert.")
-        for label in dict.fromkeys(new_labels):
-            if new_labels.count(label) > 1:
-                warnings.append(f"Label {kind}:{label} kommt mehrfach vor — Labels müssen im Skript eindeutig sein.")
-    return warnings
-
+# Edit-Objekten liefern („content_edits“). Diese werden serverseitig
+# (services.content_edits) auf den bestehenden Inhalt angewendet — der Anker
+# (Heading bzw. kurzes Snippet) muss dabei eindeutig sein, sonst wird der
+# Edit abgelehnt und der Inhalt bleibt unverändert.
 
 def _apply_content_edits(content: str, edits: object) -> tuple[str, list[str]]:
-    """Wendet die LLM-Edit-Liste („content_edits“) auf den bestehenden Inhalt an.
+    """HTTP-Wrapper um content_edits.apply_content_edits (ContentEditError →
+    HTTP 400; der Inhalt bleibt unverändert). Gibt (neuer_content, warnings)."""
+    try:
+        return content_edits.apply_content_edits(content, edits)
+    except ContentEditError as e:
+        raise HTTPException(400, str(e))
 
-    Gibt (neuer_content, warnings) zurück. Wirft HTTPException(400), wenn ein Edit
-    ungültig oder unklar ist (Anker nicht gefunden/mehrdeutig, Überlappung,
-    unbekanntes op) — dann bleibt der Inhalt unverändert."""
-    if not isinstance(edits, list) or not edits:
-        raise HTTPException(400, "LLM-Antwort ungültig: „content_edits“ ist keine (nicht-leere) Liste von Edit-Objekten.")
-    headings = _find_headings(content)
-    spans: list[tuple[int, int, str]] = []  # (start, end, Ersetzung)
-    for i, edit in enumerate(edits):
-        if not isinstance(edit, dict):
-            raise HTTPException(400, f"LLM-Edit nicht anwendbar: Edit {i + 1} ist kein Objekt.")
-        op = str(edit.get("op") or "").strip()
-        if op in ("replace_section", "insert_after", "delete_section"):
-            heading = str(edit.get("heading") or "")
-            idx = _resolve_heading(heading, headings)
-            s, e = _section_span(len(content), headings, idx)
-            new_body = str(edit.get("content") or "")
-            if op == "replace_section":
-                if not new_body.strip():
-                    raise HTTPException(400, f"LLM-Edit nicht anwendbar: „replace_section“ („{heading}“) ohne Inhalt.")
-                # Heading bleibt erhalten, nur der Abschnittsbody wird ersetzt.
-                spans.append((headings[idx]["end"], e, "\n" + new_body.strip("\n") + "\n"))
-            elif op == "delete_section":
-                spans.append((s, e, ""))
-            else:  # insert_after
-                if not new_body.strip():
-                    raise HTTPException(400, f"LLM-Edit nicht anwendbar: „insert_after“ („{heading}“) ohne Inhalt.")
-                spans.append((e, e, "\n\n" + new_body.strip("\n") + "\n"))
-        elif op == "replace_span":
-            old = str(edit.get("old") or "")
-            new = str(edit.get("new") or "")
-            s, e = _resolve_span(content, old)
-            spans.append((s, e, new))
-        else:
-            raise HTTPException(400, f"LLM-Edit nicht anwendbar: unbekanntes „op“ {op!r} (Edit {i + 1}).")
-    # Überlappungs-Check: Einfügepunkte (0 Breite) konfligieren nur, wenn sie
-    # STRENG innerhalb eines anderen Spans liegen.
-    for a in range(len(spans)):
-        for b in range(a + 1, len(spans)):
-            a1, a2, _ = spans[a]
-            b1, b2, _ = spans[b]
-            if a1 == a2 or b1 == b2:
-                p = a1 if a1 == a2 else b1
-                lo, hi = (b1, b2) if a1 == a2 else (a1, a2)
-                if lo < p < hi:
-                    raise HTTPException(400, "LLM-Edit nicht anwendbar: Edits überschneiden sich.")
-            elif a1 < b2 and b1 < a2:
-                raise HTTPException(400, "LLM-Edit nicht anwendbar: Edits überschneiden sich.")
-    spans.sort(key=lambda sp: (sp[0], sp[1]))
-    parts: list[str] = []
-    pos = 0
-    for s, e, repl in spans:
-        parts.append(content[pos:s])
-        parts.append(repl)
-        pos = e
-    parts.append(content[pos:])
-    new_content = "".join(parts)
-    # Mehrere Leerzeilen, die durch Edits entstehen können, zusammenziehen.
-    new_content = re.sub(r"\n{3,}", "\n\n", new_content)
-    return new_content, _label_diff_warnings(content, new_content)
+
 
 
 def _section_to_dict(s: ScriptSection, include_content: bool = False, include_summary: bool = False) -> dict:
@@ -621,9 +571,10 @@ async def script_refmap(
                         sections: [{num, title, label, anchor}]}}
                   # num = Kapitelnummer (rollenabhängig), sections = h2–h4-Liste fürs TOC
                   # maxFig/maxEq/maxCode/maxBox/maxTab = Preview-Fallback (neue, ungespeicherte Labels)
-        labels:   {"<kind>:<label>": {kind, sectionId, num, chapter?, type?, preview?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt (pro Kind)
+        labels:   {"<kind>:<label>": {kind, sectionId, num, chapter?, type?, sub?, preview?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt (pro Kind)
                   # keys sind kind-prefixed ("eq:test" ≠ "box:test"), kinds: fig / eq / sec / code / box / tab (sec: num = "N.M…"-String, box: type = Box-Typ,
-                  # z. B. "satz" → Referenz-Text „Satz N"). Kapitel-Label = {#sec:label}
+                  # z. B. "satz" → Referenz-Text „Satz N"; fig: sub = Letter a/b/… bei gelabelten
+                  # Subfigure-Innern, num = Nummer des Parent-Komplexes → Referenz „Abb. N a)")
                   # als erste nicht-leere Zeile im Inhalt → sec-Entry mit chapter: true und num = Kapitelnummer
                   # preview: gekürzter Objektinhalt für Hover-Tooltips (eq: LaTeX, code: Code,
                   # box: Text, fig: Caption, sec: Titel)
@@ -638,6 +589,9 @@ async def script_refmap(
         tasks:    {id: {id, title, taskType, maxPoints, myPoints, attemptsUsed, maxAttempts, deadline}}
                   # für @task:{id}-Referenzen. Student: nur freigeschaltete Aufgaben +
                   # eigene Punkte (analog Aufgabenübersicht); PROF/TUTOR/Admin: alle.
+        references: {key: {key, num, authors, year, title, venue, detail, url, entry}}
+                  # für @cite:{key} / @citet:{key} / @citep:{key}. num = kursweite
+                  # stabile Zitations-Nummer (display_order-Reihenfolge) — alle Rollen.
     """
     _check_member(user, session, course_id)
     # Live-berechneter abgeleiteter Wert → niemals cachen (Browser/Proxy)
@@ -665,7 +619,7 @@ async def script_refmap(
     box_running = 0
     tab_running = 0
     for ch_num, s in enumerate(sections, start=1):
-        fig_pairs = _scan_figures(s.content)  # (Caption, Label) in Vorkommensreihenfolge
+        fig_pairs = _scan_figures(s.content)  # (Caption, Label, Inners) in Vorkommensreihenfolge
         eqs = _scan_labels(s.content)[1]
         code_items = _scan_code_labels(s.content)  # (Label, Caption) in Vorkommensreihenfolge
         box_items = _scan_box_labels(s.content)  # (Label, Typ) in Vorkommensreihenfolge
@@ -676,15 +630,29 @@ async def script_refmap(
         max_code = 0
         max_box = 0
         max_tab = 0
-        for caption, label in fig_pairs:
+        for caption, label, inners in fig_pairs:
             fig_running += 1
-            if f"fig:{label}" not in labels:
+            if label and f"fig:{label}" not in labels:
                 e: dict[str, object] = {"kind": "fig", "sectionId": s.id, "num": fig_running}
                 if p := previews.get(f"fig:{label}"):
                     e["preview"] = p
                 labels[f"fig:{label}"] = e
             max_fig = max(max_fig, fig_running)
             figures.append({"num": fig_running, "caption": caption, "label": label, "sectionId": s.id})
+            # Gelabelte Subfigure-Inners: eigene Refmap-Entries (ebenfalls
+            # kind "fig" — @fig:label), num = Nummer des Parent-Komplexes
+            # (beim ersten Claim), sub = Letter (a, b, …) → „Abb. N a)".
+            if inners:
+                for i, (sub_label, _inner_cap) in enumerate(inners):
+                    if not sub_label or f"fig:{sub_label}" in labels:
+                        continue
+                    e2: dict[str, object] = {
+                        "kind": "fig", "sectionId": s.id,
+                        "num": fig_running, "sub": chr(97 + i),
+                    }
+                    if p := previews.get(f"fig:{sub_label}"):
+                        e2["preview"] = p
+                    labels[f"fig:{sub_label}"] = e2
         for label in eqs:
             eq_running += 1
             if f"eq:{label}" not in labels:
@@ -797,6 +765,34 @@ async def script_refmap(
             "deadline": task.deadline,
         }
 
+    # Quellen für @cite:/@citet:/@citep: (alle Rollen; Nummer = display_order)
+    references: dict[str, dict] = {}
+    for num, ref in enumerate(
+        session.exec(
+            select(CourseReference)
+            .where(CourseReference.course_id == course_id)
+            .order_by(CourseReference.display_order.asc())  # type: ignore[attr-defined]
+            .order_by(CourseReference.id.asc())  # type: ignore[attr-defined]
+        ).all(),
+        start=1,
+    ):
+        refs = ref.authors or []
+        references[ref.key] = {
+            "key": ref.key,
+            "num": num,
+            "authors": refs,
+            "year": ref.year or "",
+            "title": ref.title or "",
+            "venue": ref.venue or "",
+            "detail": ref.detail or "",
+            "doi": ref.doi or "",
+            "url": ref.url or "",
+            "entry": bib.format_entry(
+                refs, ref.title or "", ref.year or "",
+                ref.venue or "", ref.detail or "", ref.doi or "", ref.url or "",
+            ),
+        }
+
     return {
         "mode": "edit" if is_tutor else "reading",
         "courseId": course_id,
@@ -808,6 +804,7 @@ async def script_refmap(
         "codes": codes,
         "tables": tables,
         "tasks": tasks_map,
+        "references": references,
     }
 
 

@@ -18,15 +18,20 @@ env/
 *.swp
 *.swo
 
-# Database (generated)
-data/tutor.db
-data/*.db-journal
+# Daten (DB, Import-Staging, hochgeladene Dateien)
+data/
 
-# Kurs-Medien (hochgeladene Dateien)
-data/media/
+# E2E-Test-Artefakte (DBs, Screenshots, Traces)
+.e2e_test/
 
-# Profilbilder (hochgeladene Dateien)
-data/avatars/
+# Deployment / Betrieb (Repo = nur Code-Backup)
+nginx.conf
+deploy.sh
+tutorai.service
+AGENTS.md
+.env.production.example
+.zed/
+migrate_startbox.py
 
 # Environment (contains secrets!)
 .env
@@ -41,3 +46,14 @@ Thumbs.db
 # Logs
 *.log
 logs/
+
+# Third-Party-Libs (minified) — für Code-Suchen unsichtbar machen.
+# Die Dateien bleiben in Git getrackt (Git selbst ignoriert .gitignore
+# bei getrackten Dateien), der Search-Tool überspringt sie aber trotzdem.
+static/vendor/*.js
+static/vendor/katex/
+static/vendor/codemirror/
+static/vendor/reveal/reveal.js
+static/vendor/reveal/reveal.css
+static/vendor/reveal/reset.css
+static/vendor/reveal/plugin/notes/

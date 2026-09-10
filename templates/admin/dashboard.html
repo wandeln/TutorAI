@@ -18,6 +18,9 @@
       <button onclick="showSection('settings')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="settings">
         ⚙️ Systemeinstellungen
       </button>
+      <button onclick="showSection('llm-debug')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="llm-debug">
+        🐛 LLM-Debug-Log
+      </button>
     </div>
 
     <!-- ─── RIGHT: Content Area ──────────────────────────────── -->
@@ -287,6 +290,29 @@
         </div>
       </div>
 
+      <!-- ═══ LLM-DEBUG-LOG ═══ -->
+      <div id="section-llm-debug" class="admin-section hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-semibold text-gray-800">LLM-Debug-Log</h2>
+          <button onclick="loadLlmDebugLog()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition">
+            🔄 Aktualisieren
+          </button>
+        </div>
+
+        <p class="text-sm text-gray-500 mb-3">
+          Alle LLM-Calls der letzten 7 Tage (persistent in der Datenbank gespeichert).
+        </p>
+
+        <input type="text" id="llm-debug-search" placeholder="Suchen (Label, Modell, URL, Fehler, Datum/Uhrzeit …)"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2"
+               oninput="renderLlmDebugLog()">
+        <div id="llm-debug-count" class="text-xs text-gray-400 mb-3"></div>
+
+        <div id="llm-debug-list" class="space-y-2">
+          <div class="text-center py-8 text-gray-400">Log wird geladen …</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -414,6 +440,8 @@
 
     // Beim Aufruf der Systemeinstellungen: Settings vom Server laden
     if (section === 'settings') loadSettings();
+    // Beim Aufruf des LLM-Debug-Logs: Log vom Server laden
+    if (section === 'llm-debug') loadLlmDebugLog();
   }
 
   // ─── Settings Tabs ───────────────────────────────────────────
@@ -890,6 +918,101 @@
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
     }
+  }
+
+  // ─── LLM Debug Log ──────────────────────────────────────────
+  let llmDebugEntries = null;
+
+  function llmDebugEsc(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  async function loadLlmDebugLog() {
+    const list = document.getElementById('llm-debug-list');
+    try {
+      const res = await fetch('/api/admin/llm-debug-log');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      llmDebugEntries = data.entries || [];
+      renderLlmDebugLog();
+    } catch (err) {
+      list.innerHTML = '<div class="text-center py-8 text-red-500">Fehler beim Laden: ' + llmDebugEsc(err.message) + '</div>';
+    }
+  }
+
+  function llmDebugEntryHTML(e) {
+    const badge = e.is_public
+      ? '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">🌐 public</span>'
+      : '<span class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-700">🔒 privat</span>';
+    const status = e.success
+      ? '<span class="text-green-600 font-semibold" title="Erfolgreich">✓</span>'
+      : '<span class="text-red-600 font-semibold" title="' + llmDebugEsc(e.error || 'Fehler') + '">✕</span>';
+    const time = new Date(e.ts).toLocaleString('de-DE');
+
+    const thinkingBlock = e.thinking
+      ? '<details class="mb-2"><summary class="cursor-pointer text-xs font-semibold text-purple-600 hover:text-purple-800">💭 Thinking anzeigen</summary><pre class="mt-2 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.thinking) + '</pre></details>'
+      : '';
+
+    const answerBlock = (e.response || e.thinking)
+      ? '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Antwort</summary><div class="mt-2 p-3 bg-gray-50 border rounded-lg max-h-96 overflow-y-auto">'
+        + thinkingBlock
+        + (e.response ? '<pre class="text-xs whitespace-pre-wrap break-words">' + llmDebugEsc(e.response) + '</pre>' : '')
+        + '</div></details>'
+      : '';
+
+    return '<div class="border rounded-lg bg-white overflow-clip">'
+      + '<details>'
+      + '<summary class="cursor-pointer px-4 py-3 flex items-center gap-2 flex-wrap hover:bg-gray-50">'
+      + badge
+      + '<span class="font-mono text-sm font-semibold text-gray-800">' + llmDebugEsc(e.label) + '</span>'
+      + '<span class="text-xs text-gray-400">' + llmDebugEsc(e.model) + '</span>'
+      + '<span class="text-xs text-gray-400 ml-auto">' + time + '</span>'
+      + status
+      + '</summary>'
+      + '<div class="px-4 pb-4 pt-2 border-t">'
+      + '<div class="text-xs text-gray-500 mb-1">Modell: <span class="font-mono">' + llmDebugEsc(e.model) + '</span> · URL: <span class="font-mono break-all">' + llmDebugEsc(e.url) + '</span> · Latenz: ' + e.latency_ms + ' ms · Versuche: ' + e.attempts + '</div>'
+      + (e.error ? '<div class="mt-2 mb-1 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"><strong>Fehler:</strong> ' + llmDebugEsc(e.error) + '</div>' : '')
+      + '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">System-Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.system_prompt) + '</pre></details>'
+      + '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.prompt) + '</pre></details>'
+      + answerBlock
+      + '</div>'
+      + '</details>'
+      + '</div>';
+  }
+
+  function renderLlmDebugLog() {
+    const list = document.getElementById('llm-debug-list');
+    const countEl = document.getElementById('llm-debug-count');
+    if (!llmDebugEntries) return;
+
+    const searchEl = document.getElementById('llm-debug-search');
+    const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
+    // NUR Metadaten filtern (Prompt/Antwort/Thinking bewusst ausgeschlossen —
+    // dort ist zu viel Text, der matchen könnte); Timestamp als de-DE-String + roh.
+    const tsStr = e => { try { return new Date(e.ts).toLocaleString('de-DE'); } catch { return ''; } };
+    const filtered = q
+      ? llmDebugEntries.filter(e =>
+          [e.label, e.model, e.url, e.error, tsStr(e), e.ts]
+            .some(v => v && String(v).toLowerCase().includes(q)))
+      : llmDebugEntries;
+
+    countEl.textContent = filtered.length + ' von ' + llmDebugEntries.length + ' Einträgen';
+    if (filtered.length === 0) {
+      list.innerHTML = '<div class="text-center py-8 text-gray-400">Keine Einträge' + (q ? ' für diese Suche' : ' (noch keine LLM-Calls getätigt)') + '</div>';
+      return;
+    }
+
+    const MAX_RENDER = 100;
+    const shown = filtered.slice(0, MAX_RENDER);
+    list.innerHTML = shown.map(llmDebugEntryHTML).join('')
+      + (filtered.length > MAX_RENDER
+        ? '<div class="text-center py-2 text-xs text-gray-400">… nur die ersten ' + MAX_RENDER + ' Einträge werden angezeigt (Suche eingrenzen)</div>'
+        : '');
   }
 </script>
 {% endblock %}

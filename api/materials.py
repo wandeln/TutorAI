@@ -79,6 +79,7 @@ def _material_to_dict(m: CourseMaterial, include_content: bool = False) -> dict:
     }
     if m.material_type == MaterialType.SLIDES:
         d["slide_count"] = slide_count(m.content)
+        d["summary"] = m.summary  # Interne LLM-Zusammenfassung (nicht für Studenten)
     if include_content:
         d["content"] = m.content
     return d
@@ -203,7 +204,7 @@ async def update_material(
     session: Session = Depends(get_session),
     user_and_course: tuple[User, int] = Depends(require_course_access(CourseRole.PROF, CourseRole.TUTOR)),
 ):
-    """Skript/Slides aktualisieren (Titel, Content, Sichtbarkeit)."""
+    """Skript/Slides aktualisieren (Titel, Content, Sichtbarkeit, Summary)."""
     material = _get_material(session, course_id, material_id)
     body = await request.json()
 
@@ -224,6 +225,8 @@ async def update_material(
         material.is_visible = bool(body["is_visible"])
     if "display_order" in body and isinstance(body["display_order"], int):
         material.display_order = body["display_order"]
+    if "summary" in body and isinstance(body["summary"], str):
+        material.summary = body["summary"][:2000]
 
     material.updated_at = datetime.now(timezone.utc)
     session.add(material)

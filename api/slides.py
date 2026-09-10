@@ -337,13 +337,23 @@ async def slides_refmap(
                     # verschiedenen Typen verschiedene Objekte bezeichnet
                     # (preview: gekürzter Objektinhalt für Hover-Tooltips)
                     # (wie die @kind:label-Referenzen); kind: fig/eq/code/box/tab;
-                    # box: type = Box-Typ (z. B. "satz" → Referenz-Text „Satz S{n}“);
-                    # num = S-Nummer (int, ohne „S");
+                    # box: type = Box-Typ (z. B. "satz" → Referenz-Text „Satz S{n}");
+                    # fig: sub = Letter a/b/… (Position des Inners im Komplex) bei
+                    # gelabelten Subfigure-Innern, num = S-Nummer des PARENT-Komplexes
+                    # → Referenz „Abb. S{n} a)"; num = S-Nummer (int, ohne „S");
                     # deckId/h/v = Reveal-Koordinaten der Folie (h = Block-, v =
                     # Stack-Index, 0-basiert) → Link-Ziel:
                     # /courses/{cid}/slides/{deckId}/present#/{h}/{v}
         maxSFig/maxSEq/maxSCode/maxSBox/maxSTab: höchst vergebene S-Nummer je Typ — Basis für
                     ungespeicherte Labels in der Editor-Vorschau
+        figures:  [{deckId, h, v, p, num}] — NUR unlabeled Subfigure-Komplexe
+                    (gelabelte Inners, kein äußeres {#fig:label}) mit ihrer
+                    S-Nummer + Position (p = Teil-Index innerhalb der Folie:
+                    Header, Spalten, s. _slide_md_parts). Der Client
+                    (markdown-renderer.js) rendert pro Teil und bekommt so
+                    die exakte Server-Nummer per Positions-Zip (Parität zur
+                    Skript-Refmap `figures`); ohne die Liste müsste er nach
+                    dem Maximum aller Decks weiterzählen (falsche Nummern).
     """
     _check_member(user, session, course_id)
     # Live-berechneter abgeleiteter Wert → niemals cachen (Browser/Proxy)
@@ -364,7 +374,12 @@ async def slides_refmap(
         sq = sq.where(ScriptSection.is_visible == True)  # noqa: E712
     script_labels: dict[str, set[str]] = {"fig": set(), "eq": set(), "code": set(), "box": set(), "tab": set()}
     for s in session.exec(sq.order_by(ScriptSection.display_order.asc())).all():  # type: ignore[attr-defined]
-        script_labels["fig"].update(label for _cap, label in _scan_figures(s.content))
+        for _cap, label, inners in _scan_figures(s.content):
+            if label:
+                script_labels["fig"].add(label)
+            for sub_label, _inner_cap in inners or []:
+                if sub_label:
+                    script_labels["fig"].add(sub_label)
         script_labels["eq"].update(_scan_labels(s.content)[1])
         script_labels["code"].update(label for label, _cap in _scan_code_labels(s.content))
         script_labels["box"].update(label for label, _typ in _scan_box_labels(s.content))
@@ -385,6 +400,7 @@ async def slides_refmap(
     labels: dict[str, dict[str, object]] = {}
     deck_order: list[str] = []
     counters = {"fig": 0, "eq": 0, "code": 0, "box": 0, "tab": 0}
+    figures: list[dict[str, object]] = []  # s. Docstring (Client-Zip)
 
     def _claim(
         kind: str,
@@ -394,19 +410,26 @@ async def slides_refmap(
         v: int,
         box_type: Optional[str] = None,
         preview: Optional[str] = None,
-    ) -> None:
+        sub: Optional[str] = None,
+        num: Optional[int] = None,
+    ) -> Optional[int]:
         # Key "<kind>:<label>": gleicher Label-NAME in verschiedenen Typen
         # (z. B. eq + fig + code „demo_1“) sind verschiedene Objekte mit
         # eigenen S-Nummern — analog zu den @kind:label-Referenzen.
         if label in script_labels[kind] or f"{kind}:{label}" in labels:
-            return  # Skript-Label (gleicher Typ) oder Duplikat → keine S-Vergabe
-        counters[kind] += 1
-        entry: dict[str, object] = {"kind": kind, "deckId": deck_id, "h": h, "v": v, "num": counters[kind]}
+            return None  # Skript-Label (gleicher Typ) oder Duplikat → keine S-Vergabe
+        if num is None:
+            counters[kind] += 1
+            num = counters[kind]
+        entry: dict[str, object] = {"kind": kind, "deckId": deck_id, "h": h, "v": v, "num": num}
+        if sub is not None:
+            entry["sub"] = sub
         if box_type is not None:
             entry["type"] = box_type
         if preview:
             entry["preview"] = preview
         labels[f"{kind}:{label}"] = entry
+        return num
 
     for deck in decks:
         try:
@@ -416,10 +439,31 @@ async def slides_refmap(
         for h, slide in enumerate(slides):
             leaves = slide.children if slide.children else [slide]
             for v, leaf in enumerate(leaves):
-                for part in _slide_md_parts(leaf):
+                for p, part in enumerate(_slide_md_parts(leaf)):
                     previews = _scan_previews(part)  # "kind:label" → Hover-Preview
-                    for _cap, label in _scan_figures(part):
-                        _claim("fig", label, deck.id, h, v, preview=previews.get(f"fig:{label}"))
+                    for _cap, label, inners in _scan_figures(part):
+                        snum = None
+                        if label is not None:
+                            snum = _claim("fig", label, deck.id, h, v, preview=previews.get(f"fig:{label}"))
+                        elif inners and any(l is not None for l, _inner_cap in inners):
+                            # Ungelabelter Komplex mit gelabelten Inners: zahlt eine
+                            # S-Nummer (Parität zum Skript), aber ohne eigenen Key.
+                            # Position mitliefern → Client-Zip (s. Docstring).
+                            counters["fig"] += 1
+                            snum = counters["fig"]
+                            figures.append({"deckId": deck.id, "h": h, "v": v, "p": p, "num": snum})
+                        # Gelabelte Subfigure-Inners: eigene S-Nummerierung NUR
+                        # wenn der Parent-Komplex eine S-Nummer bekommen hat
+                        # (slide-eigenes Label); Komplex-Labels aus dem Skript
+                        # gehören in die script-refmap (num = S-Nummer des Parent).
+                        if inners and snum:
+                            for i, (sub_label, _inner_cap) in enumerate(inners):
+                                if sub_label:
+                                    _claim(
+                                        "fig", sub_label, deck.id, h, v,
+                                        preview=previews.get(f"fig:{sub_label}"),
+                                        sub=chr(97 + i), num=snum,
+                                    )
                     for label in _scan_labels(part)[1]:
                         _claim("eq", label, deck.id, h, v, preview=previews.get(f"eq:{label}"))
                     for label, _cap in _scan_code_labels(part):
@@ -435,6 +479,7 @@ async def slides_refmap(
         "courseId": course_id,
         "deckOrder": deck_order,
         "labels": labels,
+        "figures": figures,
         "maxSFig": counters["fig"],
         "maxSEq": counters["eq"],
         "maxSCode": counters["code"],

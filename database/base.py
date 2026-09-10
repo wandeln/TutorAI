@@ -119,6 +119,18 @@ def migrate_schema():
         },
         "course_materials": {
             "display_order": "INTEGER DEFAULT 0",  # Reihenfolge (mehrere Slide-Decks pro Kurs)
+            "summary": "TEXT",  # Interne LLM-Zusammenfassung (nicht für Studenten; Slide-Decks)
+        },
+        "course_imports": {
+            "slides_plan": "JSON NOT NULL DEFAULT '[]'",  # Folien-Plan (separat vom Skript-Plan)
+            "references_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: Quellen-Import
+            "reference_map": "JSON NOT NULL DEFAULT '{}'",  # detektierte Quellen (BibTeX-Keys)
+            "ref_extract_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: LLM-Quellen-Extraktion
+            "slides_plan_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: Folien-Planner
+            "refine_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: Nachbesserung (Refinement)
+        },
+        "course_media": {
+            "content_hash": "VARCHAR(64)",  # SHA256 der Quelldatei (Medien-Import-Dedup)
         },
     }
     column_drops = {

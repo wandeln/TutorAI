@@ -27,7 +27,10 @@ from database.models import (
     User,
     UserCourse,
 )
+from services import import_service
 from services.auth_service import hash_password, require_global_admin
+from services.llm_service import get_llm_debug_log as get_llm_debug_entries
+from services.llm_service import record_llm_debug_entry
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
@@ -244,6 +247,9 @@ async def delete_course(
     memberships = session.exec(select(UserCourse).where(UserCourse.course_id == course_id)).all()
     for mc in memberships:
         session.delete(mc)
+
+    # 6b. Kurs-Import (DB-Zeile + Staging-Dateien, eigenes Session-Handling)
+    import_service.delete_import(course_id)
 
     # 7. Schließlich den Kurs selbst
     session.delete(course)
@@ -735,11 +741,13 @@ async def test_llm(
         timeout=30,
     )
 
+    test_prompt = "Beantworte nur mit: OK"
+    test_error = None
     start = monotonic()
     try:
         response = await client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": "Beantworte nur mit: OK"}],
+            messages=[{"role": "user", "content": test_prompt}],
             max_tokens=10,
             temperature=0,
         )
@@ -747,6 +755,11 @@ async def test_llm(
 
         msg = response.choices[0].message if response.choices else None
         content = (msg.content or "(keine Antwort)").strip() if msg else "(keine Antwort)"
+        record_llm_debug_entry(
+            label="ADMIN_LLM_TEST", model=model, url=api_url, is_public=False,
+            system_prompt="", prompt=test_prompt,
+            response=content, success=True, latency_ms=latency_ms, attempts=1,
+        )
         return {
             "success": True,
             "latency_ms": latency_ms,
@@ -755,15 +768,37 @@ async def test_llm(
             "source": "global" if not data.api_url else "input",
         }
     except APIConnectionError as e:
-        return {"success": False, "error": f"Keine Verbindung: {e}"}
+        test_error = f"Keine Verbindung: {e}"
     except APITimeoutError:
-        return {"success": False, "error": "Zeitueberschreitung (>30s)."}
+        test_error = "Zeitueberschreitung (>30s)."
     except AuthenticationError as e:
-        return {"success": False, "error": f"Authentifizierung fehlgeschlagen: {e}"}
+        test_error = f"Authentifizierung fehlgeschlagen: {e}"
     except Exception as e:
-        return {"success": False, "error": f"Fehler: {e}"}
+        test_error = f"Fehler: {e}"
     finally:
         await client.close()
+
+    if test_error is not None:
+        record_llm_debug_entry(
+            label="ADMIN_LLM_TEST", model=model, url=api_url, is_public=False,
+            system_prompt="", prompt=test_prompt,
+            response="", success=False, error=test_error, attempts=1,
+        )
+        return {"success": False, "error": test_error}
+
+
+@router.get("/llm-debug-log")
+async def get_llm_debug_log(
+    current_user: User = Depends(require_global_admin()),
+):
+    """
+    Liefert das LLM-Debug-Log (persistent in der Datenbank, neueste zuerst).
+
+    Enthält jeden LLM-Call mit Prompt-Typ, Modell/URL, public/private,
+    System-Prompt, Prompt, Antwort, Thinking und Latenz.
+    Retention: letzte 7 Tage, harte Limits auf Einträge und Größe.
+    """
+    return {"entries": get_llm_debug_entries()}
 
 
 class LdapTestRequest(BaseModel):

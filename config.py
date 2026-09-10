@@ -86,3 +86,36 @@ CODEMIRROR_VERSION = "5.65.16"
 
 # ─── Excel-Export ────────────────────────────────────────────────
 EXCEL_SHEET_NAME = os.getenv("EXCEL_SHEET_NAME", "Punktestand")
+
+# ─── Kurs-Material-Import (Zip) ─────────────────────────────────
+# Staging-Verzeichnis: data/imports/course_{id}/{job_id}/
+# (upload.zip + extracted/ + sidecars/ = .md-Konvertierungen von docx/pptx/pdf)
+IMPORT_DIR = BASE_DIR / "data" / "imports"
+IMPORT_DIR.mkdir(parents=True, exist_ok=True)
+
+IMPORT_MAX_ZIP_BYTES = int(os.getenv("IMPORT_MAX_ZIP_BYTES", str(500 * 1024 * 1024)))            # 500 MB
+IMPORT_MAX_SINGLE_FILE_BYTES = int(os.getenv("IMPORT_MAX_SINGLE_FILE_BYTES", str(100 * 1024 * 1024)))  # 100 MB
+IMPORT_MAX_ENTRIES = int(os.getenv("IMPORT_MAX_ENTRIES", "10000"))
+IMPORT_MAX_EXTRACTED_BYTES = int(os.getenv("IMPORT_MAX_EXTRACTED_BYTES", str(1024 * 1024 * 1024)))  # 1 GB
+IMPORT_MIN_FREE_DISK_FACTOR = float(os.getenv("IMPORT_MIN_FREE_DISK_FACTOR", "3.0"))  # freier Platz ≥ Faktor × Zip-Größe
+IMPORT_LLM_CONCURRENCY = int(os.getenv("IMPORT_LLM_CONCURRENCY", "2"))     # parallele LLM-Calls pro Import (GPU-Schutz)
+IMPORT_FILE_CONCURRENCY = int(os.getenv("IMPORT_FILE_CONCURRENCY", "4"))   # parallele Dateianalysen
+IMPORT_CHUNK_CHARS = int(os.getenv("IMPORT_CHUNK_CHARS", "40000"))         # max. Zeichen pro Text-Chunk (Analyse)
+CHAPTER_INPUT_BUDGET = int(os.getenv("CHAPTER_INPUT_BUDGET", "60000"))     # max. Zeichen Quelltext pro LLM-Call (Skript)
+IMPORT_SLIDE_DECK_SOURCE_BUDGET = int(os.getenv("IMPORT_SLIDE_DECK_SOURCE_BUDGET", "120000"))  # max. Zeichen Quelltext pro LLM-Call (Slide-Decks)
+IMPORT_READ_CHARS = int(os.getenv("IMPORT_READ_CHARS", "30000"))           # pro read_file-Call des Planners
+IMPORT_READ_LINES = int(os.getenv("IMPORT_READ_LINES", "1500"))
+IMPORT_PLAN_MAX_ITERATIONS = int(os.getenv("IMPORT_PLAN_MAX_ITERATIONS", "10"))
+IMPORT_PLAN_TOOL_BUDGET = int(os.getenv("IMPORT_PLAN_TOOL_BUDGET", "150000"))  # Summe der Tool-Ergebnisse (Planner)
+IMPORT_GATHER_MAX_ITERATIONS = int(os.getenv("IMPORT_GATHER_MAX_ITERATIONS", "8"))  # Agentic Quellen-Sammlung (Skript/Folien)
+IMPORT_PNG_DPI = int(os.getenv("IMPORT_PNG_DPI", "300"))                   # PDF-Figur → PNG
+IMPORT_PNG_MAX_DIM = int(os.getenv("IMPORT_PNG_MAX_DIM", "4096"))          # Dimensions-Cap (PNG-Dateigröße)
+IMPORT_SLIDE_DECK_MAX_SLIDES = int(os.getenv("IMPORT_SLIDE_DECK_MAX_SLIDES", "25"))
+IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1 = int(os.getenv("IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1", "150"))  # Sicherheits-Cap Quell-Folien (1:1-Modus)
+IMPORT_ENABLE_REFINEMENT = int(os.getenv("IMPORT_ENABLE_REFINEMENT", "1"))          # 1/0: Verifikations-Refinement nach Kapitel-/Deck-Generierung
+IMPORT_REFINE_MAX_CHARS = int(os.getenv("IMPORT_REFINE_MAX_CHARS", "250000"))       # max. Zeichen (Entwurf + Quellen) für den Refinement-Call
+# Feature-Timeouts in Sekunden (lokale Modelle können langsam sein)
+IMPORT_TIMEOUT_ANALYSIS = int(os.getenv("IMPORT_TIMEOUT_ANALYSIS", "180"))
+IMPORT_TIMEOUT_MEDIA = int(os.getenv("IMPORT_TIMEOUT_MEDIA", "120"))
+IMPORT_TIMEOUT_PLAN = int(os.getenv("IMPORT_TIMEOUT_PLAN", "300"))
+IMPORT_TIMEOUT_CONVERT = int(os.getenv("IMPORT_TIMEOUT_CONVERT", "600"))

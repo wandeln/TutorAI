@@ -17,6 +17,13 @@
 {% block content %}
 <div class="max-w-6xl mx-auto">
 
+  <script>
+    // Kurs-ID für alle Kurs-Seiten (auch von Child-Scripts genutzt).
+    // Muss VOR dem course_content-Block stehen: Child-Template-Skripte im
+    // Block referenzieren courseId teilweise schon bei Parse-Zeit.
+    const courseId = {{ course.id }};
+  </script>
+
   <!-- Course Header -->
   <div class="mb-4">
     <div class="flex items-start justify-between">
@@ -36,9 +43,6 @@
 </div>
 
 <script>
-  // Kurs-ID für alle Kurs-Seiten (auch von Child-Scripts genutzt)
-  const courseId = {{ course.id }};
-
   // Sticky Tab-Leiste: --navbar-height am Main-Nav ausrichten (Top-Offset)
   // und Full-Bleed-Geometrie (--tab-sb / --tab-page-x) aktuell halten.
   (function () {

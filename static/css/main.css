@@ -146,6 +146,13 @@
   color: #374151 !important;
 }
 
+/* Quellenverzeichnis: die [N]-Nummer steht im Eintrag selbst —
+   bündig links, ohne Listen-Einrückung (höhere Spezifität als die
+   !important-Regel oben) */
+.markdown-preview ul.tutorai-bibliography {
+  padding-left: 0 !important;
+}
+
 .markdown-preview ul ul {
   margin-top: 0.15rem !important;
   margin-bottom: 0.15rem !important;
@@ -228,6 +235,11 @@
 .markdown-preview .hljs-title,
 .markdown-preview .hljs-function .hljs-title { color: #61afef !important; }
 .markdown-preview .hljs-type { color: #e5c07b !important; }
+
+/* Code-LaTeX ($…$ in Code-Blöcken, s. applyCodeMath): Standard-Code-
+   Textfarbe (Atom One Dark Foreground, grau) statt der Farbe des
+   umgebenden hljs-Tokens (z. B. Orange/Creme). */
+.tutorai-code-math { color: #abb2bf !important; }
 
 /* ─── Blockquotes ────────────────────────────────────────────── */
 
@@ -319,6 +331,34 @@
   color: #6b7280;
 }
 
+/* Subfiguren: mehrere Medien in EINE Abbildung (s. _parseSubfigInners in
+   markdown-renderer.js) — Flex-Reihe mit Wrap, nebeneinander zentriert. */
+.tutorai-subfig-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-evenly;
+  align-items: flex-start;
+  gap: 0.75rem 1rem;
+}
+
+.tutorai-subfig-item {
+  margin: 0;
+  text-align: center;
+}
+
+.tutorai-subfig-item img,
+.tutorai-subfig-item iframe {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.tutorai-subfig-item figcaption {
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
 /* Beschriftete Code-Blöcke ({#code:label}[caption]): Caption unter dem Code,
    analog zu Abbildungen. Kein text-align:center — der Code füllt die Breite,
    nur die Caption steht mittig darunter. */
@@ -344,9 +384,13 @@
 }
 
 /* Generische Tabellen-Unterseite (0.75rem !important) dämpfen, damit die
-   Caption nah unter der Tabelle steht (wie beim Code). */
+   Caption nah unter der Tabelle steht (wie beim Code).
+   --tab-zoom ({zoom=X} in der Tabellen-Label-Zeile, s. 1j2/4b in
+   markdown-renderer.js): Skript-Kontext — Basisgröße = ererbte Größe,
+   ohne Zoom ist 1em dem inherit-Wert gleich (unverändert). */
 .tutorai-table-figure table {
   margin-bottom: 0.25rem !important;
+  font-size: calc(1em * var(--tab-zoom, 1));
 }
 
 .tutorai-table-figure figcaption {
@@ -408,7 +452,7 @@
   flex-shrink: 0;
 }
 
-/* Hinweis-/Merksatz-Boxen: @box:{typ} … @endbox (Renderer: markdown-renderer.js) */
+/* Hinweis-/Merksatz-Boxen: @startbox:{typ} … @endbox (Renderer: markdown-renderer.js) */
 .tutorai-callbox {
   border: 1px solid #e2e8f0;
   border-left: 4px solid #94a3b8;
@@ -524,10 +568,12 @@
 .badge-platinum { background:linear-gradient(135deg, #e8e8e8, #b9f2ff, #7dd3fc, #b9f2ff); color:#1e3a5f; animation:platinumShine 2s ease-in-out infinite; }
 @keyframes platinumShine { 0%,100%{box-shadow:0 0 8px rgba(125,211,252,0.5);} 50%{box-shadow:0 0 16px rgba(125,211,252,0.8);} }
 
-/* Scroll-Offset für Kapitel-Deep-Links (#chapter-…), damit Kapitel nicht
-   unter der sticky Nav-Bar verschwinden (Tutor-Zeile + Student-Karte) */
+/* Scroll-Offset für Deep-Links (#chapter-…, #ref-…), damit das Ziel nicht
+   unter der sticky Nav-Bar verschwindet (Tutor-Zeile + Student-Karte) */
 #section-list > div,
-.script-chapter-card {
+.script-chapter-card,
+.tutorai-bibliography li,  /* Zitation [N] → Eintrag im Quellenverzeichnis */
+#ref-list > div {           /* Deep-Link #ref-{key} im Quellen-Tab */
   scroll-margin-top: 100px;
 }
 
@@ -547,7 +593,8 @@
    KaTeX
    ════════════════════════════════════════════════════════════ */
 
-.markdown-preview .katex {
+.markdown-preview .katex,
+.script-toc-card .katex {
   font-size: 1em !important;
 }
 
@@ -589,6 +636,9 @@
   scrollbar-color: #555c69 transparent;
   scrollbar-width: thin;
   border-radius: 15px;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  white-space: pre;
 }
 
 .CodeMirror::-webkit-scrollbar,

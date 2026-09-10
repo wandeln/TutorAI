@@ -16,6 +16,10 @@ Format „Markdown plus":
     notes: <eine Zeile>
     background: ![Titel](/media/…/datei.png) oder ![Titel](/media/…/datei.html)
       (Bild bzw. .html-Applet als vollflächiger Folienhintergrund)
+      optionales {zoom=X} (Punkt optional, X > 0) — nur bei .html-Applets,
+      skaliert das Applet um den Faktor X (Iframe selbst wird vergrößert,
+      Layout-Box wird um 1/X verkleinert, damit der Applet-Inhalt scharf
+      vergrößert wird statt gecropped)
 - Spaltentrenner: eine eigene Zeile ``||`` (nur mit ``layout: twocol``,
   höchstens einmal pro Folie).
 
@@ -117,7 +121,12 @@ _CLASS = re.compile(r"^[A-Za-z0-9_-]+$")
 _HEADING_LINE = re.compile(r"^#{1,6}[ \t]\S")
 # background: Markdown-Bild-/Applet-Snippet ![Titel](/media/…) ohne Zusätze
 # (kein Label/Attribute) — der Pfad darf kein Whitespace enthalten.
-_BG_IMAGE = re.compile(r"^!\[[^\]]*\]\([^)\s]+\)$")
+# Optionales {zoom=X} am Ende (Punkt optional) — wird serverseitig nur auf
+# valide Syntax geprüft; die Auswirkung (Iframe skalieren) hat nur .html-
+# Applets (Klient-Seite, s. slides.js/wireBgZoom).
+# { im Pfad ausgeschlossen: sonst würde ein falsch platziertes {zoom=X}
+# (innerhalb der Klammer) stillschweigend als Pfadteil verschluckt.
+_BG_IMAGE = re.compile(r"^!\[[^\]]*\]\([^)\s{]+\)(?:[ \t]*\{\.?zoom=[\d.]+\})?$")
 
 
 def _split_slides(content: str) -> list[str]:
@@ -224,7 +233,8 @@ def _parse_block(block: str, index: int) -> Slide:
             if not _BG_IMAGE.match(value):
                 raise SlideError(
                     f"Folie {index}: Ungültige Hintergrund-Angabe '{value}' "
-                    "(erwartet: „![Titel](/media/…/datei.png)“ oder „![Titel](/media/…/datei.html)“)."
+                    "(erwartet: „![Titel](/media/…/datei.png)“ oder „![Titel](/media/…/datei.html)“; "
+                    "bei .html-Applets optional angehängt: {zoom=2})."
                 )
             slide.background = value
         else:  # notes

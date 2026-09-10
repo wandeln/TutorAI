@@ -4,7 +4,6 @@ Student-Endpoints: Aufgaben ansehen, Lösungen einreichen, Tests ausführen.
 Rolle: Student (im Kurs)
 """
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -21,6 +20,7 @@ from database.models import (
 )
 from services.auth_service import get_current_user
 from services.grading_service import GradingService
+from services.import_service import spawn_job
 from services.llm_service import LLMService
 from services.media_service import all_media_for_course
 from services.sandbox_runner import SandboxedRunner
@@ -244,10 +244,10 @@ async def submit_solution(
     # Type narrowing: Nach refresh() ist die ID gesetzt
     assert submission.id is not None
 
-    # Grading im Hintergrund starten (asyncio.create_task = waehrend Antwort-Generierung)
-    # Der Task laeuft parallel im Event-Loop — blockiert andere Requests NICHT
-    # (Sandbox selbst ist async und gibt den Event-Loop frei waehrend subprocess)
-    _ = asyncio.create_task(
+    # Grading im Hintergrund starten — spawn_job haelt eine starke Referenz
+    # auf den Task, damit er nicht vom GC weggeraeumt wird, waehrend die
+    # Antwort generiert wird (asyncio.haelt nur Weak-References auf Tasks).
+    spawn_job(
         _run_grading_background(
             task_id=task.id,
             submission_id=submission.id,

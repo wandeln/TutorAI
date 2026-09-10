@@ -53,7 +53,7 @@ from database.models import (
     Submission,
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
-from services import media_service
+from services import media_service, import_service
 from services.slides_service import (
     ASPECT_LABELS,
     ASPECT_RATIOS,
@@ -62,7 +62,7 @@ from services.slides_service import (
     slide_count,
 )
 
-from api import admin, auth, forum, media as media_api, materials as materials_api, script as script_api, script_questions, slides as slides_api, student, tutor, user_settings, course_members
+from api import admin, auth, forum, importer, media as media_api, materials as materials_api, references, script as script_api, script_questions, slides as slides_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -101,6 +101,7 @@ async def lifespan(app: FastAPI):
     migrate_schema()
     migrate_script_sections()
     migrate_forum_channels()
+    import_service.mark_interrupted_on_startup()  # aktive Import-Jobs → 'interrupted'
 
     # Admin-User anlegen, wenn DB leer
     with Session(engine) as session:
@@ -269,10 +270,12 @@ app.include_router(course_members.router)
 app.include_router(student.router)
 app.include_router(media_api.router)
 app.include_router(materials_api.router)
+app.include_router(references.router)
 app.include_router(slides_api.router)
 app.include_router(script_api.router)
 app.include_router(forum.router)
 app.include_router(script_questions.router)
+app.include_router(importer.router)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -439,6 +442,16 @@ def _course_tab_context(
                 "label": "Übersicht",
                 "url": f"/courses/{course_id}/overview",
                 "active": active_tab == "overview",
+            }
+        )
+    if is_tutor or is_admin:
+        tabs.append(
+            {
+                "key": "references",
+                "icon": "📚",
+                "label": "Quellen",
+                "url": f"/courses/{course_id}/references",
+                "active": active_tab == "references",
             }
         )
     if is_prof or is_admin:
@@ -1065,6 +1078,21 @@ async def media_page(
         raise HTTPException(403, "Nur PROFs und Administratoren dürfen die Medien verwalten.")
     ctx["page_title"] = f"Medien — {ctx['course']['name']}"
     return templates.TemplateResponse("course/media.html", ctx)
+
+
+@app.get("/courses/{course_id}/references")
+async def references_page(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Tab 'Quellen': Quellenbibliothek (PROF/TUTOR/Admin)."""
+    membership, ctx = _course_tab_context(session, user, request, course_id, active_tab="references")
+    if not (ctx["is_tutor"] or ctx["is_admin"]):
+        raise HTTPException(403, "Nur Tutoren, PROFs und Administratoren dürfen die Quellen verwalten.")
+    ctx["page_title"] = f"Quellen — {ctx['course']['name']}"
+    return templates.TemplateResponse("course/references.html", ctx)
 
 
 @app.get("/courses/{course_id}/applets/new")

@@ -11,6 +11,10 @@ Es liefert ein JSON-Objekt mit einer Untermenge der angeforderten Schlüssel
 (weggelassener Schlüssel = das Feld bleibt unverändert) — für lokale Änderungen
 an vorhandenem Inhalt darf dabei „content_edits“ (Liste stellenweiser
 Edit-Objekte) statt „content“ geliefert werden.
+
+Format-Regeln und Edits-Spezifikation kommen als Template-Variablen aus
+prompts/markdown_manual.py ({{ markdown_manual }} = SCRIPT_MARKDOWN_MANUAL,
+{{ edits_spec }} = SCRIPT_CONTENT_EDITS_SPEC) — beim .render() übergeben.
 """
 
 SCRIPT_SECTION_PROMPT_TEMPLATE = """\
@@ -77,22 +81,7 @@ STELLENWEISE BEARBEITUNG ("content_edits") — für lokale Änderungen am besteh
 Wenn die Anweisung nur LOKALE Änderungen am bestehenden Inhalt verlangt (z.B. ein Beispiel ergänzen, eine Formel oder einen Satz korrigieren, einen Abschnitt umformulieren, einen Abschnitt löschen), gib STATT "content" den Schlüssel "content_edits" mit einer LISTE von Edit-Objekten zurück. Der restliche Inhalt bleibt dabei unverändert — dadurch kann an anderen Stellen nichts versehentlich geändert oder verloren gehen.
 Verwende weiterhin "content" (Volltext) für: Kapitel ohne bestehenden Inhalt und für globale Überarbeitungen (z.B. Neugestaltung, Umstrukturierung, „kürzer fassen“).
 In der Antwort darf genau EINER der Schlüssel "content" bzw. "content_edits" vorkommen — nie beide.
-Jedes Edit-Objekt enthält einen Schlüssel "op" mit genau einem dieser Werte:
-- {"op": "replace_section", "heading": "### 3.2 Beispiel", "content": "..."}
-  Ersetzt den Inhalt des Abschnitts (alles ab der Heading-Zeile bis zur nächsten Heading — Unterabschnitte darunter bleiben davon unberührt) durch den neuen "content".
-  "heading" = die EXISTIERENDE Heading-Zeile des Abschnitts, WORTGLEICH (inkl. #-Zeichen, exakt wie im bestehenden Inhalt).
-  "content" = kompletter NEUER Abschnittsinhalt OHNE die Heading-Zeile selbst (die bleibt erhalten).
-- {"op": "insert_after", "heading": "## 3.1 Grundlagen", "content": "..."}
-  Fügt den "content" direkt NACH dem angegebenen Abschnitt ein. Der content darf eigene Headings enthalten (z.B. ein neuer "###"-Abschnitt).
-- {"op": "delete_section", "heading": "### Altes Beispiel"}
-  Löscht den gesamten Abschnitt (Heading + Inhalt).
-- {"op": "replace_span", "old": "...", "new": "..."}
-  Ersetzt ein KURZES (max. 1-2 Zeilen), im bestehenden Inhalt EXAKT EINMAL vorkommendes Snippet WORTGLEICH durch "new". Nur für Änderungen innerhalb eines Absatzes, die keinen ganzen Abschnitt betreffen. "old" muss exakt so im bestehenden Inhalt vorkommen (inkl. aller Backslashes, Leerzeichen und Zeilenumbrüche).
-Regeln für "content_edits":
-- Verwende NUR Headings und Snippets, die im bestehenden Inhalt tatsächlich vorhanden sind — erfinde keine.
-- Jedes "heading" bzw. "old" muss im Inhalt EXAKT EINMAL vorkommen (eindeutig); die Edits dürfen sich nicht überschneiden.
-- Bewahre vorhandene fig/eq/code/box/tab-Labels und @fig:/@eq:/@code:/@box:/@tab:/@task:-Referenzen bei, sofern die Anweisung nichts anderes verlangt.
-- Betrifft die Änderung einen Großteil des Kapitels, nutze STATTDESSEN "content" (Volltext).
+{{ edits_spec }}
 {% endif %}
 
 Regeln:
@@ -102,54 +91,14 @@ Regeln:
 - Falls ein Feld KEINEN Inhalt hat, ist der zugehörige Schlüssel PFLICHT — erstelle den Inhalt neu passend zum Thema.
 - Wird der Inhalt geändert und betrifft die Änderung zentrale Begriffe, Notation, Definitionen/Sätze oder fig/eq/code/box/tab-Labels, MUSST du die „summary“ aktualisieren (nicht weglassen) — sie dient der Konsistenz der anderen Kapitel.
 - Der Inhalt ist Markdown für ein Vorlesungsskript: lehrbuchartige, präzise und strukturierte Darstellung (Definitionen, Sätze, Beweisskizzen, Beispiele, Übungshinweise) auf dem Niveau einer Universität.
-- Beginne den Inhalt NICHT mit einer H1-Überschrift (der Kapiteltitel wird separat angezeigt); verwende ## für Abschnitte und ### für Unterabschnitte.
-- Verwende $...$ für Inline-Math und $$...$$ für Display-Math.
-- Medien: Bereits vorhandene /media/-Referenzen im bestehenden Inhalt unbedingt beibehalten. Zusätzlich DARFST du Medien aus der obigen Liste „noch nicht verwendet“ einbinden, wenn sie inhaltlich wirklich zum Kapitel passen (max. 1-2 pro Kapitel) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade. Medien mit .html-Endung sind interaktive Applets — sie werden als interaktive Vorschau (Iframe) gerendert und im Markdown genauso eingebunden wie Bilder. Die Größe steuern wir direkt nach dem Snippet: {height=X} = Max-Höhe in Pixeln (Suffix `px` optional) — Bilder nutzen die verfügbare Breite aus, bis die Max-Höhe erreicht ist (Aspektverhältnis bleibt erhalten); bei Applets gilt immer volle Breite, bei Überschreitung der Max-Höhe erscheint eine Scrollbar im Applet, und {zoom=X} setzt den Zoom-Faktor des Applet-Inhalts (z.B. {zoom=1.5} = 150 %, Default: 1.0).
+
+FORMAT (strikt einhalten):
+{{ markdown_manual }}
+
+- Medien: Bereits vorhandene /media/-Referenzen im bestehenden Inhalt unbedingt beibehalten. Zusätzlich DARFST du Medien aus der obigen Liste „noch nicht verwendet“ einbinden, wenn sie inhaltlich wirklich zum Kapitel passen (max. 1-2 pro Kapitel) — verwende dafür exakt den angegebenen /media/-Pfad. Erfinde KEINE anderen Medien-Pfade.
 - Ein eingebundenes Medium IMMER auch im Fließtext per @fig:-Label referenzieren (nicht nur einbinden, sondern z.B. „wie in @fig:entropie dargestellt“), damit die Abbildung nummeriert und verlinkt wird.
+- Alle wichtigen Labels müssen in der Zusammenfassung ("summary") vorkommen, damit sie später referenziert werden können. Erfinde aber auch keine Labels, die nicht im Inhalt vorkommen.
 - Aufgaben: Du KANNST passende Übungsaufgaben aus der obigen Liste im Kapitel einbinden — z.B. direkt nach der passenden Erklärung oder am Kapitelende (max. 1-2 pro Kapitel). Schreibe dafür @task:{id} als EIGENE ZEILE (dann wird eine Aufgaben-Box mit dem Fortschritt der Studenten gerendert). Verwende NUR IDs aus der obigen Liste — andere IDs erscheinen für Studenten als kaputte Referenz (❓).
   WICHTIG: @task:{id} ist KEIN Code — als normalen Fließtext schreiben, NIEMALS in Backticks (`...`) oder Code-Blöcke (``` ... ```) setzen, sonst wird die Aufgabenbox NICHT gerendert. Richtig: „Übe das mit @task:5“ — Falsch: „Übe das mit `@task:5`“.
-- Hinweis-Boxen: Hervorhebe besondere Absätze als farbig markierte Boxen (z.B. zentrale Merksätze, typische Fehler, Nebenbemerkungen, kurze Beispiele). Syntax — Marker JEWEILS auf EIGENER Zeile, Inhalt dazwischen (Markdown, $...$ und @fig:/@eq:-Referenzen im Inhalt erlaubt):
-  @box:merksatz
-  ...Inhalt der Box...
-  @endbox
-  Verfügbare Typen: merksatz, hinweis, bemerkung, warnung, beispiel, definition, satz, lemma, proposition, korollar, beweis, frage. Setze Boxen SPARSAM ein (max. 3-4 pro Kapitel) — nur für wirklich besonders hervorzuhebende Stellen (Definitionen, Sätze, Merksätze, typische Fehler, kurze Beispiele), nicht für normalen Fließtext.
-  WICHTIG: Die Marker @box:… und @endbox sind KEIN Code — NIEMALS in Backticks oder Code-Blöcke setzen, sonst wird die Box NICHT gerendert.
-- Nummerierung & Querverweise (wie in LaTeX — die Nummerierung wird AUTOMATISCH berechnet, du schreibst NIEMALS Nummern):
-  - Keine manuellen Nummern in Überschriften (Falsch: „## 3.1 Grundlagen“, Richtig: „## Grundlagen“) — die Abschnittsnummer (z.B. „3.1“) wird automatisch vor die Überschrift gesetzt.
-{% raw %}
-  - Abbildung, auf die du im Text Bezug nehmen möchtest: Snippet um ein Label ergänzen, z.B.
-    ![Entropieverteilung](/media/1/abc.png){#fig:entropie}  →  wird als „Abb. N: Entropieverteilung“ gerendert.
-  - Größe eines Mediums steuern (sparsam — nur wenn es bewusst groß sein soll): {height=X} direkt nach dem Snippet, X = Max-Höhe in Pixeln (Suffix `px` optional, z.B. {height=300}) — Bilder nutzen die verfügbare Breite aus, bis die Max-Höhe erreicht ist (Aspektverhältnis bleibt erhalten); Applets: immer volle Breite, bei Überschreitung erscheint eine Scrollbar, optional {zoom=X} für den Zoom-Faktor des Applet-Inhalts (z.B. {zoom=1.5} = 150 %).
-  - Formel, auf die du Bezug nehmen möchtest: Label direkt nach dem Display-Math, z.B.
-    $$H(X) = -\\sum_i p_i \\log_2 p_i$$ {#eq:shannon}  →  wird als „(N)“ neben der Formel gerendert.
-  - Code-Block, auf den du Bezug nehmen möchtest: Label auf der öffnenden Fence-Zeile, z.B.
-    ```python {#code:sort}
-    ...Code...
-    ```  →  wird als „Code N“ gerendert.
-  - Tabelle, auf die du Bezug nehmen möchtest: Label-ZEILE direkt unter der Pipe-Tabelle, z.B.
-    | Größe | Wahrscheinlichkeit |
-    | --- | --- |
-    | 0 | 0.2 |
-    {#tab:wahrscheinlichkeiten}  →  wird als „Tab. N“ gerendert (Caption optional: {#tab:label}[Caption]).
-  - Box (Definition/Satz/Lemma/…), auf die du im Text Bezug nehmen möchtest: Label auf der @box:-Zeile direkt nach dem Typ, z.B.
-    @box:satz {#box:pythagoras}
-    ...Inhalt der Box...
-    @endbox  →  wird als „Satz N“ gerendert.
-  - Section (Überschrift): Label am Zeilenende der Überschrift, z.B.
-    ## Grundlagen {#sec:grundlagen}  →  wird als „N.M Grundlagen“ gerendert.
-    LABELLE JEDER ÜBERSCHRIFT (##/###/####) mit einem {#sec:label} — auch solche, auf die im Text kein Bezug genommen wird.
-  - Kapitel-Label: Ganz am Anfang des Kapitels steht als EIGENE ZEILE (die erste nicht-leere Zeile des Inhalts, VOR der ersten Überschrift) das {#sec:label} des Kapitels, z.B.
-    {#sec:statistik}
-    Diese Zeile wird NICHT gerendert — sie dient nur als Label des Kapitels. Aus ANDEREN Kapiteln referenziert man das ganze Kapitel mit @sec:statistik (wird als „Kap. N“ gerendert).
-  - Bezugnahme im Fließtext: @fig:entropie / @eq:shannon / @code:sort / @box:pythagoras / @tab:wahrscheinlichkeiten / @sec:grundlagen → wird durch die klickbare Referenz („Abb. N“ / „Gl. N“ / „Code N“ / „Satz N“ / „Tab. N“ bzw. „Abs. N.M“ / „Kap. N“) ersetzt.
-  - @fig:/@eq:/@code:/@box:/@tab:/@sec:-Referenzen sind KEIN Code: Schreibe sie IMMER als normalen Fließtext, NIEMALS in Backticks (`...`), Code-Blöcke (``` ... ```) oder Anführungszeichen — nur so werden sie aufgelöst.
-    Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“.
-  - Beschrifte alle Objekte, auf die du im Text Bezug nimmst, UND wichtige Definitionen, Sätze und Formeln (wichtige Definitionen/Sätze als Boxen, z.B. @box:definition {#box:…} bzw. @box:satz {#box:…}) — auch ohne unmittelbare Bezugnahme im Text, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können. Labels klein, snake_case, eindeutig im GESAMTEN Skript (siehe die „Labels“ bei den anderen Kapiteln — benutze bereits vorhandene Labels nicht neu und erfinde keine Labels, die dort bereits vergeben sind).
-  - Querverweise auf Abbildungen/Gleichungen/Code/Boxen/Tabellen/Sections/Kapitel in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die unter den anderen Kapiteln gelisteten Labels (z.B. @fig:entropie, @eq:shannon, @code:sort, @box:pythagoras, @tab:wahrscheinlichkeiten, @sec:statistik).
-{% endraw %}
-  - Alle wichtigen Labels müssen in der Zusammenfassung ("summary") vorkommen, damit sie später referenziert werden können. Erfinde aber auch keine Labels, die nicht im Inhalt vorkommen.
-- Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid ... ```) in Markdown.
-  Wichtig: Knotentexte mit Sonderzeichen (z.B. runde Klammern oder <, > in Formeln) MÜSSEN in doppelte
-  Anführungszeichen gesetzt werden: z.B. C["H(X) = log2(n)"] (NICHT C[H(X) = log2(n)]).
 - Der Inhalt soll für sich allein lesbar sein (Kurzeinführung, Bezug zum Thema), aber sich auf das Kapitel beschränken.
 """

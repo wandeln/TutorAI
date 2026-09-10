@@ -20,21 +20,24 @@
   @media (max-width: 639px) {
     #course-tab-bar { margin-bottom: 0; }
   }
-  /* Kapitel-Header sticky: bleibt unter der Tab-Leiste sichtbar, bis das
-     Kapitel durchgescrollt ist. z-10 < Tab-Leiste z-30 < Main-Nav z-50.
+  /* Karten-Header (Kapitel + Inhaltsverzeichnis) sticky: bleiben unter der
+     Tab-Leiste sichtbar, bis die Karte durchgescrollt ist.
+     z-10 < Tab-Leiste z-30 < Main-Nav z-50.
      radius 11px = sm:rounded-xl (12px) − 1px Card-Border. */
   .sq-chapter-header {
     position: sticky;
     top: calc(var(--navbar-height, 60px) + var(--tab-height, 43px));
     z-index: 10;
-    background: #fff;
+    background: rgba(255,255,255,0.8);
+    backdrop-filter: blur(10px);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
   }
   @media (min-width: 640px) {
-    .sq-chapter-header { border-top-left-radius: 11px; border-top-right-radius: 11px; }
+    /*.sq-chapter-header { border-top-left-radius: 11px; border-top-right-radius: 11px; }*/
     /* Einklappt: der Header bildet die Kartenunterkante → unten ebenfalls
        runden (früher hat das overflow-hidden der Card abgeschnitten). */
-    .script-chapter-card:has(> .script-chapter-body.hidden) .sq-chapter-header {
+    .script-chapter-card:has(> .script-chapter-body.hidden) .sq-chapter-header,
+    .script-toc-card:has(> .script-toc-body.hidden) .sq-chapter-header {
       border-bottom-left-radius: 11px;
       border-bottom-right-radius: 11px;
     }
@@ -73,7 +76,7 @@
 
   <!-- Schwebender Fragen-Button (mousedown preventDefault erhält die Text-Auswahl) -->
   <button id="script-question-fab" type="button" onmousedown="event.preventDefault()"
-          class="fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-2xl font-bold shadow-lg transition"
+          class="fixed bottom-10 right-6 z-40 w-14 h-14 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-2xl font-bold shadow-lg transition"
           title="Frage zum Skript stellen">?</button>
 
   <!-- Fragen-Dialog: eigene + alle Fragen, Composer mit Auswahl-Bezug, Markierungs-Modus -->
@@ -381,6 +384,7 @@
           textareaId: 'sqe-content-ta-' + key,
           startInPreview: true,
           sectionId: parseInt(sectionId),
+          bibliography: true, // Ganzes Kapitel → „Quellen“-Liste in der Preview
           onPreviewRender: () => sqApplyMarks(), // Fragen-Markierungen auch in der Preview
         });
         const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
@@ -473,7 +477,7 @@
           const fresh = await r.json();
           const md = card.querySelector('.script-chapter-body .markdown-preview');
           if (md) {
-            await renderMarkdown(fresh.content || '', md, { sectionId: edit.sectionId });
+            await renderMarkdown(fresh.content || '', md, { sectionId: edit.sectionId, bibliography: true });
             md.setAttribute('data-loaded', '1');
           }
           card.setAttribute('data-section-title', fresh.title);
@@ -591,7 +595,7 @@
 
     const key = 'new' + Date.now();
     const card = document.createElement('div');
-    card.className = 'script-chapter-card bg-white border-2 border-dashed border-blue-300 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl';
+    card.className = 'script-chapter-card bg-white border-2 border-dashed border-blue-300 shadow-sm overflow-clip -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl';
     card.setAttribute('data-new', '1');
     card.setAttribute('data-section-title', 'Neues Kapitel');
     card._visible = false;
@@ -623,6 +627,7 @@
       buttonAnchor: 'sqe-content-anchor-' + key,
       textareaId: 'sqe-content-ta-' + key,
       startInPreview: true,
+      bibliography: true, // Ganzes Kapitel → „Quellen“-Liste in der Preview
       onPreviewRender: () => sqApplyMarks(), // Fragen-Markierungen auch in der Preview
     });
     const summaryEditor = createMarkdownEditor('sqe-summary-' + key, {
@@ -777,15 +782,17 @@
     if (!ids.length) return;
 
     const card = document.createElement('div');
-    card.className = 'script-toc-card bg-white border border-gray-200 shadow-sm overflow-hidden -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl';
+    card.className = 'script-toc-card bg-white border border-gray-200 shadow-sm -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl overflow-clip';
     // Ganz analog zur Kapitel-Karte: Header-Zeile (Klick = ein-/ausklappen) +
     // darunter (nur Tutor/Prof, im aufgeklappten Zustand) Toolbar rechtsbündig
     // mit dem Auge — wie bei den Kapiteln (sq-toolbar).
+    // Kein overflow-hidden an der Card (wie bei den Kapiteln): es würde die
+    // Card zum Scroll-Container machen und den Sticky-Header einsperren.
     // Aufbau exakt wie der Kapitel-Header, damit „Inhaltsverzeichnis" am selben
     // x-Startpunkt steht wie die Kapitel-Titel: [Tutor: 20-px-Platzhalter für das
     // Drag-Handle] + titlewrap (Icon w-12 = Chip w-12, gap-2) + Chevron.
     card.innerHTML =
-      '<button type="button" class="sq-toc-toggle w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition">' +
+      '<button type="button" class="sq-toc-toggle sq-chapter-header w-full flex items-center gap-3 px-6 py-4 text-left hover:bg-gray-50 transition">' +
       (SQ_IS_TUTOR ? '<span class="w-5 flex-shrink-0" aria-hidden="true"></span>' : '') +
       '<span class="sq-toc-titlewrap flex items-center gap-2 min-w-0 flex-1"><span class="w-12 text-xl text-center flex-shrink-0" aria-hidden="true">📑</span><span class="text-lg font-semibold text-blue-600 truncate">Inhaltsverzeichnis</span>' +
       (SQ_IS_TUTOR && !tocVisible ? '<span class="sq-hidden-badge px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0">versteckt</span>' : '') +
@@ -825,6 +832,17 @@
       a.textContent = text;
       return a;
     };
+    // Link mit Caption: Präfix (Nummer) als Text, Caption via renderCaptionMath
+    // (LaTeX $…$ → gerenderte Formel, Rest HTML-escaped) — Captions aus der
+    // Refmap sind Server-Plain-Text mit möglichen $…$-Paaren.
+    const tocCaptionLink = (href, prefix, caption, cls) => {
+      const a = document.createElement('a');
+      if (href) a.href = href;
+      a.className = cls;
+      a.appendChild(document.createTextNode(caption ? prefix + ': ' : prefix));
+      if (caption) a.insertAdjacentHTML('beforeend', renderCaptionMath(caption));
+      return a;
+    };
 
     // Inhalte: Kapitel + eingerückte Sections
     body.appendChild(subHead('Inhalte'));
@@ -860,7 +878,10 @@
       for (const f of figs) {
         const frow = document.createElement('div');
         frow.className = 'py-0.5 text-sm';
-        frow.appendChild(tocLink('#fig:' + encodeURIComponent(f.label), 'Abb. ' + f.num + (f.caption ? ': ' + f.caption : ''), 'text-gray-500 hover:text-blue-600 hover:underline'));
+        // Ungelabelte, nummerierte Figuren (Subfigure-Komplexe mit gelabelten
+        // Inners): kein Anker-Link, nur Anzeige.
+        const href = f.label != null ? '#fig:' + encodeURIComponent(f.label) : null;
+        frow.appendChild(tocCaptionLink(href, 'Abb. ' + f.num, f.caption, href != null ? 'text-gray-500 hover:text-blue-600 hover:underline' : 'text-gray-500'));
         body.appendChild(frow);
       }
     }
@@ -878,7 +899,7 @@
       for (const c of codeList) {
         const crow = document.createElement('div');
         crow.className = 'py-0.5 text-sm';
-        crow.appendChild(tocLink('#code:' + encodeURIComponent(c.label), 'Code ' + c.num + (c.caption ? ': ' + c.caption : ''), 'text-gray-500 hover:text-blue-600 hover:underline'));
+        crow.appendChild(tocCaptionLink('#code:' + encodeURIComponent(c.label), 'Code ' + c.num, c.caption, 'text-gray-500 hover:text-blue-600 hover:underline'));
         body.appendChild(crow);
       }
     }
@@ -896,7 +917,7 @@
       for (const t of tabList) {
         const trow = document.createElement('div');
         trow.className = 'py-0.5 text-sm';
-        trow.appendChild(tocLink('#tab:' + encodeURIComponent(t.label), 'Tab. ' + t.num + (t.caption ? ': ' + t.caption : ''), 'text-gray-500 hover:text-blue-600 hover:underline'));
+        trow.appendChild(tocCaptionLink('#tab:' + encodeURIComponent(t.label), 'Tab. ' + t.num, t.caption, 'text-gray-500 hover:text-blue-600 hover:underline'));
         body.appendChild(trow);
       }
     }
@@ -990,7 +1011,7 @@
         // -mx-4 mit, keine Rundung, keine Seitenbänder). Ab sm: gewöhnliche Karte.
         // Kein overflow-hidden: würde die Card zum Scroll-Container machen
         // und den Sticky-Kapitel-Header in der Card einsperren.
-        card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl";
+        card.className = "script-chapter-card bg-white border border-gray-200 shadow-sm -mx-4 border-x-0 border-t-0 rounded-none sm:mx-0 sm:border-t sm:border-x sm:rounded-xl overflow-clip";
         card.setAttribute("data-section-id", s.id);
         card.setAttribute("data-section-title", s.title);
         card._visible = !!s.is_visible;
@@ -1065,7 +1086,8 @@
               const r = await fetch(`/api/script-sections/${s.id}`, { credentials: "same-origin" });
               if (!r.ok) throw new Error("Nicht geladen");
               const data = await r.json();
-              await renderMarkdown(data.content || "", md, { sectionId: s.id });
+              // bibliography: Ganzes Kapitel → „Quellen“-Liste für @cite:-Zitationen
+              await renderMarkdown(data.content || "", md, { sectionId: s.id, bibliography: true });
               loaded = true;
               md.setAttribute("data-loaded", "1");
             } catch (e) {

@@ -30,3 +30,9 @@ psutil==6.1.1
 # Student code dependencies (allowed in sandbox)
 matplotlib==3.9.2
 # numpy -> unpinned, damit pip die mit dem Rest kompatible Version wählt
+
+# Kurs-Material-Import (Zip): Office/PDF-Quellen → Text (Sidecars)
+python-docx==1.1.2
+python-pptx==1.0.2
+pypdf==5.1.0
+pymupdf==1.24.9

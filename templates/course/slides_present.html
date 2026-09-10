@@ -125,9 +125,10 @@ function togglePageFullscreen() {
   const slidesEl = document.getElementById("reveal-slides");
   // Footer am Canvas-Element (wandert nicht mit den Slide-Transitions)
   if (FOOTER_ENABLED && FOOTER_TEXT) slidesEl.setAttribute("data-footer", FOOTER_TEXT);
-  for (const slide of slides) {
+  for (let h = 0; h < slides.length; h++) {
     const footer = FOOTER_ENABLED && FOOTER_TEXT ? FOOTER_TEXT : null;
-    slidesEl.appendChild(await buildSlideSection(slide, footer));
+    // Folien-Position (S-Nummern unlabeled Subfigure-Komplexe):
+    slidesEl.appendChild(await buildSlideSection(slides[h], footer, { deckId: DECK_ID, h }));
   }
 
   // Feste Logik-Größe laut Design (Seitenverhältnis): Präsentation, Vorschau
@@ -165,6 +166,8 @@ function togglePageFullscreen() {
     keyboard: { 70: togglePageFullscreen },
     plugins: [RevealHighlight, ...(HAS_NOTES ? [RevealNotes] : [])],
   });
+  // Code-LaTeX nach Reveal's Highlight-Pass
+  tutoraiWireCodeMath(reveal);
   await reveal.initialize();
 
   // Visuelle Fragment-Reihenfolge (KaTeX-Underbraces): neu ableiten,
@@ -172,6 +175,9 @@ function togglePageFullscreen() {
   // Sections noch display:none). Print-Modus: alle Folien, sobald
   // html.print-pdf gesetzt ist (vor der Fragment-PDF-Paginierung).
   wireKatexFragmentResort(reveal, slidesEl);
+
+  // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
+  wireBgZoom(reveal);
 
   // Toolbar + Shortcuts-Panel nur in der Reveal-Overview (Esc) anzeigen —
   // die Präsentation selbst läuft ohne die dunkle Leiste, nur die Folien

@@ -309,11 +309,11 @@ class PrivateTest(unittest.TestCase):
   {% endif %}
   {% endif %}
 
-  // ─── Initialize Markdown Editors ─────────────────────────────
-  // Description editor (immer)
-  const descEditor = createMarkdownEditor('description-editor-container', { buttonAnchor: 'description-preview-anchor', textareaId: 'description-textarea', startInPreview: true });
+  // ─── Initialize Markdown Editors ─────────────────────────
+  // Description editor (immer) — bibliography: Ganze Aufgabe → „Quellen“-Liste für @cite:-Zitationen
+  const descEditor = createMarkdownEditor('description-editor-container', { buttonAnchor: 'description-preview-anchor', textareaId: 'description-textarea', startInPreview: true, bibliography: true });
   // Model solution — immer als Markdown Editor (auch bei Code-Aufgaben)
-  const solEditor = createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'solution-preview-anchor', startInPreview: true });
+  const solEditor = createMarkdownEditor('model-solution-editor-container', { buttonAnchor: 'solution-preview-anchor', startInPreview: true, bibliography: true });
 
   // ─── Toggle Code Section based on Task Type ─────────────────
   document.getElementById("task_type_select").addEventListener("change", (e) => {
@@ -463,7 +463,7 @@ class PrivateTest(unittest.TestCase):
       if (generateFields.description && data.description) {
         descEditor.textarea.value = data.description;
         (async () => {
-          await renderMarkdown(data.description, descEditor.previewDiv, { preview: true });
+          await renderMarkdown(data.description, descEditor.previewDiv, { preview: true, bibliography: true });
           if (!descEditor.isPreview()) descEditor.toggleBtn.click();
         })();
         populated.push("Aufgabenstellung");

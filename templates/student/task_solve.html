@@ -685,7 +685,8 @@
     const taskDescRaw = document.getElementById('task-description-raw');
     if (taskDescEl && taskDescRaw) {
       const rawDesc = JSON.parse(taskDescRaw.innerHTML);
-      renderMarkdown(rawDesc, taskDescEl);
+      // Ganzes Dokument → „Quellen“-Liste für @cite:-Zitationen
+      renderMarkdown(rawDesc, taskDescEl, { bibliography: true });
     }
 
     // ─── Render existing feedback as Markdown ───────────────────
@@ -708,11 +709,11 @@
         {% if task.task_type == 'code' %}
         const { wrapper, inner } = createSolutionWrapper(raw, true);
         el.replaceWith(wrapper);
-        renderMarkdown('```python\n' + raw + '\n```', inner);
+        renderMarkdown('```python\n' + raw + '\n```', inner, { bibliography: true });
         {% else %}
         const { wrapper, inner } = createSolutionWrapper(raw, false);
         el.replaceWith(wrapper);
-        renderMarkdown(raw, inner);
+        renderMarkdown(raw, inner, { bibliography: true });
         {% endif %}
       } catch(e) {
         console.warn('Failed to render solution:', e, el.innerHTML);
@@ -1806,11 +1807,11 @@
             {% if task.task_type == 'code' %}
             const { wrapper, inner } = createSolutionWrapper(raw2, true);
             el.replaceWith(wrapper);
-            renderMarkdown('```python\n' + raw2 + '\n```', inner);
+            renderMarkdown('```python\n' + raw2 + '\n```', inner, { bibliography: true });
             {% else %}
             const { wrapper, inner } = createSolutionWrapper(raw2, false);
             el.replaceWith(wrapper);
-            renderMarkdown(raw2, inner);
+            renderMarkdown(raw2, inner, { bibliography: true });
             {% endif %}
           } catch(e) {
             console.warn('Failed to render solution markdown:', e, el.getAttribute('data-raw'));

@@ -236,9 +236,30 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slid
   z-index: 0;
 }
 
+/* Gezoomtes Applet-Bg ({zoom=X}, s. buildSlideSection in slides.js):
+   Sections sind im print-pdf-Mode overflow:visible → bei z<1 (Box größer
+   als die Folie) in einem foliengroßen Clip-Wrapper abschneiden, sonst
+   würde das Bg in die Nachbar-PDF-Seiten bluten. */
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+}
+
+/* Bg im Clip-Wrapper: relativ zum (foliengroßen) Wrapper positioniert —
+   die Inline-Styles (calc(100%/z) + transform) bleiben wirksam. */
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg-clip > .tutorai-slide-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 /* Folieninhalt über dem Hintergrund (ein positioniertes Element würde
    sonst in-flow-Content übermalen). */
-html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutorai-slide-bg) {
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutorai-slide-bg):not(.tutorai-slide-bg-clip) {
   position: relative;
   z-index: 1;
 }
@@ -453,9 +474,11 @@ html.print-pdf .reveal .slides .markdown-preview pre {
 }
 
 /* :not(.hljs-ln) — die Code-Zeilennummern-Tabelle (highlight.js-Plugin) ist
-   KEINE Datentabelle: padding:0/border:0 gehören zum Code-Layout. */
+   KEINE Datentabelle: padding:0/border:0 gehören zum Code-Layout.
+   --tab-zoom ({zoom=X} in der Tabellen-Label-Zeile, s. 1j2/4b in
+   markdown-renderer.js) skaliert die 0.85em-Basisgröße. */
 :is(.reveal .slides, .slides-canvas) .markdown-preview table:not(.hljs-ln) {
-  font-size: 0.85em !important;
+  font-size: calc(0.85em * var(--tab-zoom, 1)) !important;
 }
 
 :is(.reveal .slides, .slides-canvas) .markdown-preview th {

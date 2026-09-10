@@ -23,7 +23,7 @@ from services.llm_service import LLMService
 from services.settings_resolver import get_effective_llm_config
 from services import media_service
 from services.media_service import RefInfo
-from api.script import _resolve_span
+from services.content_edits import ContentEditError, _resolve_span
 
 router = APIRouter(prefix="/api", tags=["Medien"])
 llm_service = LLMService()
@@ -47,7 +47,10 @@ def _apply_html_edits(html: str, edits: object) -> str:
             raise HTTPException(400, f"LLM-Edit nicht anwendbar: unbekanntes „op“ {op!r} (Edit {i + 1}).")
         old = str(edit.get("old") or "")
         new = str(edit.get("new") or "")
-        s, e = _resolve_span(html, old)
+        try:
+            s, e = _resolve_span(html, old)
+        except ContentEditError as err:
+            raise HTTPException(400, str(err))
         spans.append((s, e, new))
     # Überlappungs-Check: Einfügepunkte (0 Breite) konfligieren nur, wenn sie
     # STRENG innerhalb eines anderen Spans liegen.

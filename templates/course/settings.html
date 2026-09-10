@@ -1,45 +1,92 @@
 {% extends "course/base.html" %}
 
 {% block course_content %}
-  <!-- Kurs-Einstellungen -->
-  <div class="max-w-2xl">
-    <div class="card p-6">
-      <h2 class="text-lg font-bold text-gray-800 mb-4">Kurs-Einstellungen</h2>
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      <form id="course-settings-form" class="space-y-4">
-        <div>
-          <label for="settings-name" class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
-          <input id="settings-name" type="text"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                 value="{{ course.name }}" maxlength="200" required>
-        </div>
+    <!-- ─── LEFT: Navigation ─────────────────────────────────── -->
+    <div class="space-y-2">
+      <button onclick="showSettingsTab('settings')" class="settings-tab w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition" data-tab="settings">
+        📝 Kurs-Einstellungen
+      </button>
+      <button onclick="showSettingsTab('import')" class="settings-tab w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-tab="import">
+        📦 Kurs-Material Import
+      </button>
+    </div>
 
-        <div>
-          <label for="settings-semester" class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
-          <input id="settings-semester" type="text"
-                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                 value="{{ course.semester }}" maxlength="50" placeholder="z.B. WS 2025/26">
-        </div>
+    <!-- ─── RIGHT: Content Area ──────────────────────────────── -->
+    <div class="lg:col-span-2">
 
-        <div>
-          <label for="settings-description" class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
-          <textarea id="settings-description" rows="4"
-                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    maxlength="2000">{{ course.description }}</textarea>
-        </div>
+  <!-- Tab: Kurs-Einstellungen -->
+  <div id="settings-tab-settings" class="settings-panel">
+    <div class="max-w-2xl">
+      <div class="card py-6">
+        <form id="course-settings-form" class="space-y-4">
+          <div>
+            <label for="settings-name" class="block text-sm font-medium text-gray-700 mb-1">Titel</label>
+            <input id="settings-name" type="text"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   value="{{ course.name }}" maxlength="200" required>
+          </div>
 
-        <div class="flex justify-end pt-2">
-          <button type="submit"
-                  class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
-            Speichern
-          </button>
-        </div>
-      </form>
+          <div>
+            <label for="settings-semester" class="block text-sm font-medium text-gray-700 mb-1">Semester</label>
+            <input id="settings-semester" type="text"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   value="{{ course.semester }}" maxlength="50" placeholder="z.B. WS 2025/26">
+          </div>
+
+          <div>
+            <label for="settings-description" class="block text-sm font-medium text-gray-700 mb-1">Beschreibung</label>
+            <textarea id="settings-description" rows="4"
+                      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                      maxlength="2000">{{ course.description }}</textarea>
+          </div>
+
+          <div class="flex justify-end pt-2">
+            <button type="submit"
+                    class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+              Speichern
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
-{% endblock %}
 
-<script>
+  <!-- Tab: Kurs-Material Import (3-Stufen-Wizard) -->
+  <div id="settings-tab-import" class="settings-panel hidden">
+    <div class="max-w-4xl">
+      <div class="card py-6">
+        <div id="import-root"></div>
+        <style>
+          /* Chevron der Import-Abschnitte: animiert (wie bei den Skript-Kapiteln) */
+          details[data-sec] .imp-chevron { transition: transform 0.2s ease; }
+          details[data-sec][open] .imp-chevron { transform: rotate(180deg); }
+        </style>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function showSettingsTab(tab) {
+    if (tab !== 'settings' && tab !== 'import') tab = 'settings';
+    document.querySelectorAll('.settings-panel').forEach((el) => el.classList.add('hidden'));
+    document.getElementById('settings-tab-' + tab).classList.remove('hidden');
+
+    document.querySelectorAll('.settings-tab').forEach((btn) => {
+      btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-medium', 'hover:bg-blue-100');
+      btn.classList.add('text-gray-600', 'hover:bg-gray-50');
+    });
+    const activeBtn = document.querySelector('.settings-tab[data-tab="' + tab + '"]');
+    activeBtn.classList.add('bg-blue-50', 'text-blue-700', 'font-medium', 'hover:bg-blue-100');
+    activeBtn.classList.remove('text-gray-600', 'hover:bg-gray-50');
+
+    history.replaceState(null, '', tab === 'import' ? '#import' : location.pathname);
+  }
+  showSettingsTab(location.hash.slice(1));
+  </script>
+
+  <script>
   document.getElementById('course-settings-form').addEventListener('submit', async function (e) {
     e.preventDefault();
 
@@ -81,4 +128,1614 @@
       showToast('Fehler: ' + err.message, 'error');
     }
   });
-</script>
+  </script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    const API = '/api/courses/' + courseId + '/import';
+    const root = document.getElementById('import-root');
+
+    let state = null;          // aktueller Import-State (null = kein Import)
+    let pollTimer = null;
+    let mediaSel = null;       // Set: ausgewählte Medien-Pfade
+    let mediaKnownPaths = new Set(); // Medien, die der Auswahl schon bekannt waren
+    let refSel = null;         // Set: ausgewählte Quellen-Keys
+    let refKnownKeys = new Set();    // Quellen-Keys, die der Auswahl schon bekannt waren
+    let deleteOriginal = null; // null = Default (true); Checkbox-Status Folien
+    let chapters = [];            // lokale Editor-Kopie des Skript-Plans
+    let chaptersBuiltFor = null;  // Server-State, für den die Kapitel-Liste gebaut ist
+    let chaptersDirty = false;    // ungespeicherte Skript-Plan-Edits
+    let decks = [];               // lokale Editor-Kopie des Folien-Plans
+    let decksBuiltFor = null;
+    let decksDirty = false;
+    let dragIdx = null;
+    let dragList = null;         // 'chapters' | 'decks'
+    let chaptersDescOpen = new Set();  // offene Beschreibung-Details (Skript-Plan, per Index)
+    let decksDescOpen = new Set();     // dito für Folien-Plan
+    let ghostSectionEdits = {};        // id → editierte LLM-Beschreibung (bestehende Kapitel, Ghost-Zeilen)
+    let ghostDeckEdits = {};           // dito für bestehende Decks
+    let ghostSectionDescOpen = new Set();  // offene Ghost-Beschreibungen (per id)
+    let ghostDeckDescOpen = new Set();
+    let openSec = { filemap: false, media: false, references: false, script: false, slides: false, report: false };
+    let forceOpenSec = null;   // Abschnitt, der beim nächsten Render erzwungen geöffnet wird
+    let prevReportCount = 0;   // Bericht: auto-öffnen, wenn neue Meldungen eintreffen
+    let firstImportRender = true; // Bericht: beim ersten Render NICHT auto-öffnen
+
+    const SECTIONS = [
+      { key: 'filemap',    icon: '📄', label: 'Dateianalyse' },
+      { key: 'media',      icon: '🖼️', label: 'Medien' },
+      { key: 'references', icon: '📚', label: 'Quellen' },
+      { key: 'script',     icon: '📖', label: 'Skript' },
+      { key: 'slides',     icon: '📽️', label: 'Folien' },
+    ];
+
+    const STATUS = {
+      pending:     ['Wartet',      'bg-gray-100 text-gray-600'],
+      running:     ['Läuft',       'bg-blue-100 text-blue-700'],
+      paused:      ['Pausiert',    'bg-amber-100 text-amber-700'],
+      interrupted: ['Unterbrochen','bg-amber-100 text-amber-700'],
+      done:        ['Fertig',      'bg-green-100 text-green-700'],
+      skipped:     ['Übersprungen','bg-gray-100 text-gray-500'],
+      error:       ['Fehler',      'bg-red-100 text-red-700'],
+      cancelled:   ['Abgebrochen', 'bg-gray-100 text-gray-500'],
+    };
+
+    // ─── Helfer ─────────────────────────────────────────────────────
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s == null ? '' : String(s);
+      return d.innerHTML;
+    }
+
+    function fmtBytes(n) {
+      if (n == null) return '';
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      return (n / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    async function api(path, opts) {
+      const res = await fetch(API + path, Object.assign({
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+      }, opts || {}));
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* leerer Body */ }
+      if (!res.ok) throw new Error(data.detail || 'Fehler (' + res.status + ')');
+      return data;
+    }
+
+    async function refresh() {
+      try {
+        const res = await fetch(API, { credentials: 'same-origin' });
+        if (res.ok) {
+          const ns = (await res.json()).import;
+          if (ns) {
+            const prev = state;
+            if (!prev) {
+              // Erstes Laden: alte Auswahl aus einem zuvor gelöschten Import verwerfen
+              mediaSel = null;
+              refSel = null;
+            } else {
+              // Neu laufende Stufe → zugehöriger Abschnitt automatisch öffnen
+              // (wird in render() NACH dem DOM-Sync angewendet, damit der
+              //  gelesene Zustand nicht wieder überschrieben wird)
+              const secFor = {
+                plan: 'script', slides_plan: 'slides', ref_extract: 'references',
+                refine: (((ns.report || {}).refine_options || {}).scope === 'slides') ? 'slides' : 'script',
+              };
+              for (const k of ['filemap', 'media', 'references', 'ref_extract', 'plan', 'slides_plan', 'script', 'slides', 'refine']) {
+                if (ns[k + '_status'] === 'running' && prev[k + '_status'] !== 'running') {
+                  forceOpenSec = secFor[k] || k;
+                }
+              }
+            }
+          }
+          state = ns;
+        }
+      } catch (e) { /* Server kurz nicht erreichbar – nächster Poll */ }
+      render();
+      schedulePoll();
+    }
+
+    function schedulePoll() {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+      if (state && state.has_active) pollTimer = setTimeout(refresh, 2000);
+    }
+
+    function prog(st, stage) {
+      return (st.progress && st.progress.stages && st.progress.stages[stage]) || {};
+    }
+
+    function refineScope() {
+      const ro = (state && state.report) ? (state.report.refine_options || {}) : {};
+      return ro.scope || null;
+    }
+
+    // ─── Render: kein Import → Upload ───────────────────────────────
+
+    function render() {
+      // Offen-Zustand der Abschnitte vor dem DOM-Tausch aus den bestehenden
+      // Elementen übernehmen: das Live-DOM ist die einzige Quelle für openSec.
+      // Bewusst kein toggle-Event-Listener: Beim innerHTML-Tausch feuern die
+      // entfernten, offenen <details>-Elemente toggle-Events mit open=false,
+      // deren Zustellung an den Handler zeitlich nicht determiniert ist —
+      // das Lesen des DOMs direkt vor dem Tausch ist dagegen eindeutig.
+      root.querySelectorAll('details[data-sec]').forEach((d) => {
+        if (d.dataset.sec in openSec) openSec[d.dataset.sec] = d.open;
+      });
+      if (forceOpenSec) { openSec[forceOpenSec] = true; forceOpenSec = null; }
+      if (!state) { renderUpload(); return; }
+      renderImport();
+    }
+
+    function renderUpload() {
+      root.innerHTML = `
+      <p class="text-sm text-gray-600 mb-3">
+        Importiere Kurs-Materialien aus Zip-Archiven: TeX/Markdown-Quellen, PDFs,
+        Word-/PowerPoint-Dokumente und Bilder. Die Dateien werden gestaged und klassifiziert;
+        ein LLM-Wizard importiert danach Medien und Quellen und erstellt Skript-Kapitel und
+        Slide-Decks. Weitere Zips können später ergänzt, einzelne Dateien entfernt werden.
+      </p>
+      <div id="dropzone" class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition">
+        <div class="text-3xl mb-2">📦</div>
+        <p class="text-sm font-medium text-gray-700">Zip hierher ziehen oder klicken zum Auswählen</p>
+        <p class="text-xs text-gray-400 mt-1">Max. 500 MB · .zip</p>
+        <input type="file" id="import-file" accept=".zip,application/zip" class="hidden">
+      </div>
+      <div id="upload-progress" class="hidden mt-4">
+        <div class="flex justify-between text-xs text-gray-500 mb-1">
+          <span id="upload-name"></span><span id="upload-pct">0%</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2">
+          <div id="upload-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width:0%"></div>
+        </div>
+      </div>`;
+
+      const dz = document.getElementById('dropzone');
+      const fi = document.getElementById('import-file');
+      dz.addEventListener('click', () => fi.click());
+      fi.addEventListener('change', () => { if (fi.files[0]) upload(fi.files[0]); });
+      dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('border-blue-400'); });
+      dz.addEventListener('dragleave', () => dz.classList.remove('border-blue-400'));
+      dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('border-blue-400');
+        const f = e.dataTransfer.files[0];
+        if (f) upload(f);
+      });
+    }
+
+    function upload(file, p) {
+      p = p || 'upload';
+      if (!/\.zip$/i.test(file.name)) {
+        showToast('Bitte eine .zip-Datei wählen.', 'error');
+        return;
+      }
+      const progEl = document.getElementById(p + '-progress');
+      const bar = document.getElementById(p + '-bar');
+      const pct = document.getElementById(p + '-pct');
+      const nameEl = document.getElementById(p + '-name');
+      if (!progEl || !bar || !pct || !nameEl) return;
+      progEl.classList.remove('hidden');
+      nameEl.textContent = file.name + ' (' + fmtBytes(file.size) + ')';
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API);
+      xhr.setRequestHeader('X-File-Name', file.name);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const p = Math.round((e.loaded / e.total) * 100);
+          bar.style.width = p + '%';
+          pct.textContent = p + '%';
+        }
+      };
+      xhr.onload = async () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore */ }
+        if (xhr.status === 202) {
+          showToast(data.message || 'Upload erfolgreich.', 'success');
+          await refresh();
+        } else {
+          progEl.classList.add('hidden');
+          showToast(data.detail || 'Upload fehlgeschlagen (' + xhr.status + ').', 'error');
+        }
+      };
+      xhr.onerror = () => showToast('Upload fehlgeschlagen (Netzwerkfehler).', 'error');
+      xhr.send(file);
+    }
+
+    // ─── Render: Import vorhanden ───────────────────────────────────
+
+    function renderImport() {
+      const st = state;
+      const zipNames = (st.report && (st.report.uploads || []).length) ? st.report.uploads : [st.zip_name];
+
+      let html = `
+      <div class="flex items-center justify-between mb-4">
+        <div class="text-sm">
+          <span class="font-medium text-gray-700">📦 ${esc(zipNames.join(' · '))}</span>
+          <span class="text-gray-400 ml-2">${esc((st.created_at || '').slice(0, 16).replace('T', ' '))}</span>
+        </div>
+        <button data-act="delete-import" class="text-xs text-red-600 hover:underline">Import löschen</button>
+      </div>`;
+
+      if (st.has_active) {
+        html += `<div class="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        ⚠️ Ein Import-Lauf ist aktiv – bitte den Kurs in dieser Zeit nicht parallel bearbeiten.</div>`;
+      }
+
+      for (const s of SECTIONS) {
+        html += section(s, st);
+      }
+
+      // Bericht: auto-öffnen, wenn neue Meldungen eintreffen (nicht beim ersten Render)
+      const rep = st.report || {};
+      const nMsg = (rep.warnings || []).length + (rep.errors || []).length;
+      if (!firstImportRender && nMsg > prevReportCount) openSec.report = true;
+      firstImportRender = false;
+      prevReportCount = nMsg;
+      html += reportSection(st);
+
+      // Scroll-Position der Plan-Listen über den Re-Render hinweg erhalten
+      // (Polling würde andernfalls die Listen ständig nach oben scrollen)
+      const chapScroll = (document.getElementById('chapter-list') || {}).scrollTop || 0;
+      const deckScroll = (document.getElementById('deck-list') || {}).scrollTop || 0;
+      const repScroll = (document.getElementById('report-log') || {}).scrollTop || 0;
+      const refScroll = (document.getElementById('ref-list') || {}).scrollTop || 0;
+      const fmScroll = (document.getElementById('filemap-list') || {}).scrollTop || 0;
+      const fmProgScroll = (document.getElementById('filemap-progress') || {}).scrollTop || 0;
+
+      root.innerHTML = html;
+      syncChapters();
+      syncDecks();
+      const cl = document.getElementById('chapter-list');
+      if (cl) cl.scrollTop = chapScroll;
+      const dl = document.getElementById('deck-list');
+      if (dl) dl.scrollTop = deckScroll;
+      const rl = document.getElementById('report-log');
+      if (rl) rl.scrollTop = repScroll;
+      const refl = document.getElementById('ref-list');
+      if (refl) refl.scrollTop = refScroll;
+      const fml = document.getElementById('filemap-list');
+      if (fml) fml.scrollTop = fmScroll;
+      const fmp = document.getElementById('filemap-progress');
+      if (fmp) fmp.scrollTop = fmProgScroll;
+    }
+
+    // ─── Collapsible-Abschnitte ─────────────────────────────────────
+
+    function controlsRow(st, keys) {
+      let html = '';
+      for (const k of keys) {
+        const s = st[k + '_status'];
+        if (s === 'running') {
+          html += `<button data-act="pause" data-stage="${k}" title="Pausieren"
+          class="text-sm border border-gray-300 rounded-md px-2 py-0.5 hover:bg-gray-100">⏸</button>
+          <button data-act="cancel" data-stage="${k}" title="Abbrechen"
+          class="text-sm border border-gray-300 rounded-md px-2 py-0.5 text-red-600 hover:bg-red-50">✕</button>`;
+        } else if (s === 'paused' || s === 'interrupted') {
+          html += `<button data-act="resume" data-stage="${k}" title="Fortsetzen"
+          class="text-sm border border-gray-300 rounded-md px-2 py-0.5 hover:bg-gray-100">▶</button>
+          <button data-act="cancel" data-stage="${k}" title="Abbrechen"
+          class="text-sm border border-gray-300 rounded-md px-2 py-0.5 text-red-600 hover:bg-red-50">✕</button>`;
+        }
+      }
+      if (!html) return '';
+      return `<div class="flex justify-end gap-1 mb-2">${html}</div>`;
+    }
+
+    function section(s, st) {
+      // Nachbesserung (refine) zeigt auf der Karte ihres Scopes (script/slides)
+      const refineSt = st.refine_status || 'pending';
+      const refineHere = refineScope() === s.key &&
+        (refineSt === 'running' || refineSt === 'paused' || refineSt === 'interrupted');
+      const status = refineHere ? refineSt : st[s.key + '_status'];
+      let label, cls;
+      if (refineHere) {
+        const base = STATUS[status] || ['?', 'bg-gray-100 text-gray-600'];
+        label = '🔧 ' + base[0]; cls = base[1];
+      } else {
+        [label, cls] = STATUS[status] || ['?', 'bg-gray-100 text-gray-600'];
+      }
+      const isOpen = !!openSec[s.key];
+      const p = refineHere ? prog(st, 'refine') : prog(st, s.key);
+      const total = p.total || 0;
+      const done = Math.min(p.done || 0, total);
+      const failed = Math.min(p.failed || 0, total);
+
+      let headerProgress = '';
+      if (status === 'running' && total > 0) {
+        const pctW = Math.min(100, Math.round((done / total) * 100));
+        headerProgress = `<div class="flex items-center gap-2 min-w-[110px] max-w-[170px]">
+          <div class="flex-1 bg-gray-200 rounded-full h-1.5 overflow-hidden">
+            <div class="bg-blue-600 h-1.5 rounded-full" style="width:${pctW}%"></div>
+          </div>
+          <span class="text-xs text-gray-500 whitespace-nowrap">${done}/${total}${failed ? ' (✕' + failed + ')' : ''}</span>
+        </div>`;
+      }
+
+      // Steuer-Buttons pro Abschnitt (Hauptstufe + Unterstufen: Planner/Extraktion)
+      const keys = {
+        filemap: ['filemap'],
+        media: ['media'],
+        references: ['ref_extract', 'references'],
+        script: ['plan', 'script'],
+        slides: ['slides_plan', 'slides'],
+      }[s.key] || [s.key];
+      if (refineHere) keys.push('refine');
+      const body = {
+        filemap: filemapPanel,
+        media: mediaPanel,
+        references: referencesPanel,
+        script: scriptPanel,
+        slides: slidesPanel,
+      }[s.key](st);
+
+      return `<details data-sec="${s.key}" class="border border-gray-200 rounded-lg bg-white mb-3"${isOpen ? ' open' : ''}>
+        <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="text-lg">${s.icon}</span>
+          <span class="text-sm font-semibold text-gray-700">${s.label}</span>
+          <span class="text-xs px-2 py-0.5 rounded-full ${cls} whitespace-nowrap">${label}</span>
+          ${headerProgress}
+          <span class="ml-auto flex items-center">
+            <svg class="imp-chevron h-5 w-5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </span>
+        </summary>
+        <div class="px-4 pb-4 pt-3 border-t border-gray-100">
+          ${controlsRow(st, keys)}
+          ${body}
+        </div>
+      </details>`;
+    }
+
+    function reportSection(st) {
+      const rep = st.report || {};
+      const errs = rep.errors || [];
+      const warns = rep.warnings || [];
+      const logs = rep.log || [];
+      const isOpen = !!openSec.report;
+      const badge = errs.length
+        ? `<span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 whitespace-nowrap">${errs.length} ✕</span>`
+        : warns.length
+          ? `<span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 whitespace-nowrap">${warns.length} !</span>`
+          : `<span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 whitespace-nowrap">keine</span>`;
+      return `<details data-sec="report" class="border border-gray-200 rounded-lg bg-white mb-3"${isOpen ? ' open' : ''}>
+        <summary class="flex items-center gap-3 px-4 py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span class="text-lg">📋</span>
+          <span class="text-sm font-semibold text-gray-700">Bericht</span>
+          ${badge}
+          <span class="ml-auto flex items-center">
+            <svg class="imp-chevron h-5 w-5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </span>
+        </summary>
+        <div class="px-4 pb-4 pt-3 border-t border-gray-100">
+          <div id="report-log" class="bg-orange-50 border border-orange-200 rounded-lg p-3 max-h-64 overflow-y-auto pr-2 space-y-1">
+            ${errs.map((e) => `<p class="text-xs text-red-700">✕ ${esc(e)}</p>`).join('')}
+            ${warns.map((e) => `<p class="text-xs text-orange-700">! ${esc(e)}</p>`).join('')}
+            ${(!errs.length && !warns.length) ? '<p class="text-xs text-gray-500">Keine Meldungen.</p>' : ''}
+          </div>
+          ${logs.length ? `<div class="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto pr-2 space-y-1">
+            <p class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Debug-Log (Quellen pro Kapitel/Deck)</p>
+            ${logs.map((e) => `<p class="text-[11px] leading-snug text-gray-500">› ${esc(e)}</p>`).join('')}
+          </div>` : ''}
+        </div>
+      </details>`;
+    }
+
+    // ─── Abschnittsinhalte ──────────────────────────────────────────
+
+    function filemapPanel(st) {
+      const p = st.filemap_status;
+      if (p === 'done') {
+        const manifest = st.manifest || [];
+        const nText = manifest.filter((m) => m.read_path).length;
+        const nMedia = manifest.filter((m) => ['image', 'figure_pdf', 'svg', 'eps'].includes(m.type)).length;
+        const nBib = manifest.filter((m) => m.type === 'bib').length;
+        const nOther = manifest.length - nText - nMedia - nBib;
+        let html = `<div class="text-sm text-green-700">
+          ✓ Analyse abgeschlossen: ${nText} Text-Datei(en), ${nMedia} Medium/Medien${nBib ? ', ' + nBib + ' BibTeX-Datei(en)' : ''}${nOther ? ', ' + nOther + ' ignoriert' : ''}.</div>`;
+        html += fileList(st);
+        html += addZipBlock();
+        return html;
+      }
+      if (p === 'error') {
+        return `<div class="text-sm text-red-700">Analyse fehlgeschlagen (Details im Bericht unten).</div>`;
+      }
+      if (p === 'pending') {
+        return `<div class="text-xs text-gray-500">Startet automatisch nach dem Upload …</div>`;
+      }
+
+      // running / paused / interrupted: Per-Datei-Progress
+      const textFiles = (st.manifest || []).filter((m) => m.read_path);
+      const cur = (st.progress && st.progress.current) || 'Wird vorbereitet …';
+      if (!textFiles.length) return `<div class="text-xs text-gray-500">${esc(cur)}</div>`;
+
+      const units = (st.progress && st.progress.units) || {};
+      const fmap = st.file_map || {};
+      const rows = textFiles.map((m) => {
+        const u = units['filemap:' + m.path] || {};
+        const fe = fmap[m.path] || {};
+        const total = u.total || 0;
+        const done = u.done || 0;
+        let status;
+        if (fe.status === 'done') status = '<span class="text-green-600">✓</span>';
+        else if (fe.status === 'error') status = `<span class="text-red-600" title="${esc(fe.error || '')}">✕</span>`;
+        else if (done > 0 && total) status = `<span class="text-blue-600">${done}/${total}</span>`;
+        else status = '<span class="text-gray-400">…</span>';
+        const pctW = total ? Math.round((done / total) * 100) : 0;
+        return `<div class="flex items-center gap-2">
+          <span class="text-xs text-gray-700 truncate flex-1" title="${esc(m.path)}">${esc(m.path)}</span>
+          <div class="w-24 bg-gray-200 rounded-full h-1"><div class="bg-blue-500 h-1 rounded-full" style="width:${pctW}%"></div></div>
+          <span class="text-xs w-8 text-right">${status}</span>
+        </div>`;
+      }).join('');
+
+      return `<div>
+        <p class="text-xs text-gray-500 mb-2">${esc(cur)}</p>
+        <div id="filemap-progress" class="space-y-1 max-h-48 overflow-y-auto pr-1">${rows}</div>
+      </div>`;
+    }
+
+    function fileList(st) {
+      const manifest = st.manifest || [];
+      if (!manifest.length) return '';
+      const fmap = st.file_map || {};
+      const rows = manifest.map((m) => {
+        let badge;
+        if (m.read_path) {
+          const fe = fmap[m.path] || {};
+          badge = fe.status === 'error'
+            ? `<span class="text-red-600 text-[11px] whitespace-nowrap" title="${esc(fe.error || '')}">✕ Digest</span>`
+            : `<span class="text-green-600 text-[11px] whitespace-nowrap">✓ Text</span>`;
+        } else if (['image', 'figure_pdf', 'svg', 'eps'].includes(m.type)) {
+          badge = `<span class="text-blue-600 text-[11px] whitespace-nowrap">🖼️ Medium</span>`;
+        } else if (m.type === 'bib') {
+          badge = `<span class="text-purple-600 text-[11px] whitespace-nowrap">📚 BibTeX</span>`;
+        } else {
+          badge = `<span class="text-gray-400 text-[11px] whitespace-nowrap">– ignoriert</span>`;
+        }
+        const delBtn = st.has_active
+          ? ''
+          : `<button data-act="file-del" data-path="${esc(m.path)}" class="text-gray-300 hover:text-red-600 text-xs" title="Datei aus der Stage entfernen">🗑</button>`;
+        return `<div class="flex items-center gap-2 px-3 py-1.5">
+          <span class="text-xs text-gray-700 truncate flex-1" title="${esc(m.path)}">${esc(m.path)}</span>
+          <span class="text-[10px] text-gray-400 whitespace-nowrap">${fmtBytes(m.size)}</span>
+          ${badge}
+          ${delBtn}
+        </div>`;
+      }).join('');
+
+      return `<div class="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+        <div class="px-3 py-2 bg-gray-50 border-b border-gray-100 text-[11px] font-semibold text-gray-500">Gefundene Dateien (${manifest.length})</div>
+        <div id="filemap-list" class="max-h-64 overflow-y-auto divide-y divide-gray-50">${rows}</div>
+      </div>`;
+    }
+
+    function addZipBlock() {
+      return `<div class="mt-4 border-t border-gray-100 pt-3">
+        <div id="add-dropzone" class="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center cursor-pointer hover:border-blue-400 transition">
+          <div class="text-xl mb-1">➕</div>
+          <p class="text-xs font-medium text-gray-700">Weitere Zip-Datei hinzufügen (wird in dieselbe Stage gemerged)</p>
+          <p class="text-[11px] text-gray-400 mt-0.5">Max. 500 MB · .zip</p>
+          <input type="file" id="add-file" accept=".zip,application/zip" class="hidden">
+        </div>
+        <div id="add-progress" class="hidden mt-3">
+          <div class="flex justify-between text-xs text-gray-500 mb-1">
+            <span id="add-name"></span><span id="add-pct">0%</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2">
+            <div id="add-bar" class="bg-blue-600 h-2 rounded-full transition-all" style="width:0%"></div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // Planner-Vorschlags-Block oben in Skript-/Folien-Panel (pro Art eigener Planner)
+    function planSuggestBlock(st, kind) {
+      const isChap = kind === 'script';
+      const p = st[(isChap ? 'plan' : 'slides_plan') + '_status'];
+      const [label, cls] = STATUS[p] || ['?', 'bg-gray-100 text-gray-600'];
+      const act = isChap ? 'plan-generate' : 'slides-plan-generate';
+      let html = `<div class="mb-3 border border-gray-200 rounded-lg p-3">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="text-sm font-semibold text-gray-700">${isChap ? '📑 Kapitel vorschlagen' : '📽️ Decks vorschlagen'} <span class="text-gray-400 font-normal">(LLM-Planner)</span></span>
+          <span class="text-xs px-2 py-0.5 rounded-full ${cls}">${label}</span>`;
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        html += `<p class="text-xs text-gray-500 w-full">${esc((st.progress && st.progress.current) || 'Planner läuft …')}</p>`;
+      } else {
+        const noText = !(st.manifest || []).some((m) => m.read_path);
+        if (noText) {
+          html += `<p class="text-xs text-gray-400">Keine Text-Dateien im Import — es können keine Vorschläge erstellt werden (manuelle Einträge per „+ ${isChap ? 'Kapitel' : 'Deck'}“ möglich).</p>`;
+        } else {
+          const btnLabel = p === 'done' ? '✓ vorgeschlagen — erneut ausführen'
+            : (p === 'error' || p === 'cancelled' ? 'Vorschläge erneut generieren' : 'Vorschläge generieren');
+          html += `<button data-act="${act}" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">${btnLabel}</button>`;
+        }
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    function mediaItems(st) {
+      return (st.manifest || []).filter((m) =>
+        m.type === 'image' || m.type === 'figure_pdf' || m.type === 'svg' || m.type === 'eps'
+        || m.path.toLowerCase().endsWith('.svg') || m.path.toLowerCase().endsWith('.eps'));
+    }
+
+    function mediaPanel(st) {
+      if (st.filemap_status !== 'done') return '';
+      const p = st.media_status;
+      const items = mediaItems(st);
+
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        return `<div>
+          <p class="text-xs text-gray-500 mb-2">${esc((st.progress && st.progress.current) || '…')}</p>
+          ${mediaGridHTML(st, items, false)}
+        </div>`;
+      }
+
+      if (!items.length) {
+        if (p === 'skipped' || p === 'done') return '<div class="text-sm text-gray-500">Keine Medien (Bilder/SVG/EPS/PDF-Figuren) im Zip gefunden — nichts zu importieren.</div>';
+        return `<div class="text-sm text-gray-500">Keine Medien (Bilder/SVG/EPS/PDF-Figuren) im Zip gefunden.
+        <div class="mt-2"><button data-act="media-skip" class="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100">Überspringen</button></div></div>`;
+      }
+
+      // Default-Auswahl: zuletzt gespeicherte Auswahl (media_options), sonst alle.
+      // Neu hinzugekommene Dateien (z.B. aus weiterer Zip) sind per Default angehakt.
+      if (mediaSel === null) {
+        const opts = (st.report && st.report.media_options && st.report.media_options.paths) || null;
+        mediaSel = new Set(opts || items.map((m) => m.path));
+        mediaKnownPaths = new Set(items.map((m) => m.path));
+      }
+      for (const m of items) {
+        if (!mediaKnownPaths.has(m.path)) { mediaKnownPaths.add(m.path); mediaSel.add(m.path); }
+      }
+      const mm = st.media_map || {};
+      const imported = items.filter((m) => (mm[m.path] || {}).url).length;
+      const failed = items.filter((m) => { const e = mm[m.path]; return e && !e.url && e.error; }).length;
+
+      let html = '<div>';
+      if (p === 'done') {
+        html += `<div class="text-sm text-green-700 mb-2">✓ ${imported} von ${items.length} Medien importiert${failed ? ' · ' + failed + ' mit Fehler (✕)' : ''}.</div>`;
+      } else if (p === 'error' || p === 'cancelled') {
+        html += `<p class="text-sm text-amber-700 mb-2">⚠ Medien-Import ${p === 'cancelled' ? 'abgebrochen' : 'fehlgeschlagen'} — bitte erneut versuchen (Fehler im Bericht unten).</p>`;
+      } else if (p === 'skipped') {
+        html += `<div class="text-sm text-gray-500 mb-2">Medien-Import übersprungen — unten können Medien nachträglich importiert werden.</div>`;
+      } else {
+        html += `<div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-700">Medien auswählen <span class="text-gray-400 font-normal">(${items.length} gefunden, Default: alle)</span></h3>
+          <div class="flex gap-3 text-xs">
+            <button data-act="media-all" class="text-blue-600 hover:underline">alle</button>
+            <button data-act="media-none" class="text-blue-600 hover:underline">keine</button>
+          </div>
+        </div>`;
+      }
+      html += mediaGridHTML(st, items, true);
+      // Stabile Action-Kontainer-ID: die Checkbox-Handler rendern die Buttons
+      // live neu, damit der Button bei Auswahl 0 → >0 auch (wieder) erscheint.
+      html += `<div id="media-actions">${mediaActionsHTML(st)}</div>`;
+      html += '</div>';
+      return html;
+    }
+
+    // Import-Button(-Zeile) der Medien-Sektion; todo wird live aus der
+    // aktuellen Auswahl berechnet.
+    function mediaActionsHTML(st) {
+      const mm = st.media_map || {};
+      const todo = mediaItems(st).filter((m) => (mediaSel || new Set()).has(m.path) && !(mm[m.path] || {}).url).length;
+      if (!todo) return '';
+      const label = st.media_status === 'done' ? `Weitere Medien importieren (${todo})` : `Medien importieren (${todo})`;
+      let h = `<div class="flex gap-2 mt-3">
+        <button data-act="media-start" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">${label}</button>`;
+      if (st.media_status === 'pending') {
+        h += `<button data-act="media-skip" class="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100">Überspringen</button>`;
+      }
+      return h + '</div>';
+    }
+
+    function mediaGridHTML(st, items, editable) {
+      const mm = st.media_map || {};
+      return `<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 max-h-96 overflow-y-auto pr-1">
+        ${items.map((m) => mediaCard(m, mm[m.path], editable)).join('')}
+      </div>`;
+    }
+
+    function mediaCard(m, e, editable) {
+      const url = API + '/preview?path=' + encodeURIComponent(m.path);
+      const imported = !!(e && e.url);
+      const failed = !!(e && !e.url && e.error);
+      const checked = editable && !imported && (mediaSel ? mediaSel.has(m.path) : true);
+      // Effektiver Medientyp (Extension-Fallback für altes Manifest)
+      const t = (m.path.toLowerCase().endsWith('.svg') || m.type === 'svg') ? 'svg'
+        : (m.path.toLowerCase().endsWith('.eps') || m.type === 'eps') ? 'eps'
+        : (m.type === 'figure_pdf') ? 'figure_pdf' : 'image';
+      const thumb = (t === 'image' || t === 'svg')
+        ? `<img src="${url}" alt="" class="w-full h-24 object-cover bg-gray-100" loading="lazy">`
+        : t === 'figure_pdf'
+          ? `<iframe src="${url}" title="PDF-Vorschau" class="w-full h-24 bg-white" loading="lazy"></iframe>`
+          : `<div class="w-full h-24 flex items-center justify-center bg-gray-100 text-[11px] text-gray-400">EPS — Vorschau n. V.</div>`;
+      let badge;
+      if (imported) badge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 whitespace-nowrap">✓ importiert</span>`;
+      else if (failed) badge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 whitespace-nowrap" title="${esc(e.error || '')}">✕ ${esc(e.error || 'Fehler')}</span>`;
+      else if (editable) badge = `<span class="text-[10px] text-gray-400 whitespace-nowrap">offen</span>`;
+      else badge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 whitespace-nowrap">wartend</span>`;
+      const cb = (editable && !imported)
+        ? `<input type="checkbox" data-media="${esc(m.path)}" ${checked ? 'checked' : ''} class="accent-blue-600 shrink-0">`
+        : '<span class="w-4 shrink-0"></span>';
+      return `<label class="border border-gray-200 rounded-lg overflow-hidden ${editable && !imported ? 'cursor-pointer ' + (checked ? 'ring-2 ring-blue-500' : '') : ''}">
+        ${thumb}
+        <div class="p-1.5 flex items-center gap-1.5 bg-white">
+          ${cb}
+          <div class="min-w-0 flex-1">
+            <p class="text-[11px] text-gray-700 truncate" title="${esc(m.path)}">${esc(m.path.split('/').pop())}</p>
+            <p class="text-[10px] text-gray-400">${fmtBytes(m.size)}${m.pages ? ' · ' + m.pages + ' S.' : ''}</p>
+          </div>
+          ${badge}
+        </div>
+      </label>`;
+    }
+
+    function refExtractBlock(st) {
+      const p = st.ref_extract_status;
+      const [label, cls] = STATUS[p] || ['?', 'bg-gray-100 text-gray-600'];
+      let html = `<div class="mb-3 border border-gray-200 rounded-lg p-3">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="text-sm font-semibold text-gray-700">🤖 Quellen mit LLM extrahieren <span class="text-gray-400 font-normal">(aus Text- und Bib-Dateien, mit Dedup)</span></span>
+          <span class="text-xs px-2 py-0.5 rounded-full ${cls}">${label}</span>`;
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        html += `<p class="text-xs text-gray-500 w-full">${esc((st.progress && st.progress.current) || 'Extraktion läuft …')}</p>`;
+      } else {
+        const noText = !(st.manifest || []).some((m) => m.read_path || m.type === 'bib');
+        if (noText) {
+          html += `<p class="text-xs text-gray-400">Keine Text-/Bib-Dateien im Import — keine LLM-Extraktion möglich.</p>`;
+        } else {
+          const btnLabel = p === 'done' ? '✓ extrahiert — erneut ausführen'
+            : (p === 'error' || p === 'cancelled' ? 'Extraktion erneut starten' : 'Quellen extrahieren');
+          html += `<button data-act="ref-extract" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">${btnLabel}</button>`;
+        }
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    function referencesPanel(st) {
+      if (st.filemap_status !== 'done') return '';
+      const p = st.references_status;
+      const refmap = st.reference_map || {};
+      const entries = Object.keys(refmap).map((k) => ({ key: k, ...(refmap[k] || {}) }));
+
+      let html = refExtractBlock(st);
+
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        html += `<div class="text-xs text-gray-500">${esc((st.progress && st.progress.current) || '…')}</div>`;
+        return html;
+      }
+
+      if (!entries.length) {
+        html += `<div class="text-sm text-gray-500">Keine Quellen (keine .bib-Files, keine \\cite-Keys) im Zip gefunden — ggf. oben per LLM-Extraktion aus den Text-Dateien erzeugen.
+        <div class="mt-2"><button data-act="references-skip" class="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100">Überspringen</button></div></div>`;
+        return html;
+      }
+
+      // Default-Auswahl: zuletzt gespeicherte Auswahl (references_options), sonst alle
+      // nicht importierten. Bereits importierte Quellen sind per Default abgehakt
+      // (anhaken = neu importieren/überschreiben). Neu entdeckte Quellen (z.B. nach
+      // LLM-Extraktion) sind per Default angehakt.
+      if (refSel === null) {
+        const opts = (st.report && st.report.references_options && st.report.references_options.keys) || null;
+        refSel = new Set((opts || entries.map((r) => r.key)).filter((k) => !(refmap[k] || {}).imported_ref_id));
+        refKnownKeys = new Set(entries.map((r) => r.key));
+      }
+      for (const r of entries) {
+        if (!refKnownKeys.has(r.key)) { refKnownKeys.add(r.key); if (!r.imported_ref_id) refSel.add(r.key); }
+      }
+      const importedN = entries.filter((r) => r.imported_ref_id).length;
+
+      let sel = '<div>';
+      if (p === 'done') {
+        sel += `<div class="text-sm text-green-700 mb-2">✓ ${importedN} von ${entries.length} Quellen importiert (siehe Tab „Quellen“).</div>`;
+      } else if (p === 'error' || p === 'cancelled') {
+        sel += `<p class="text-sm text-amber-700 mb-2">⚠ Quellen-Import ${p === 'cancelled' ? 'abgebrochen' : 'fehlgeschlagen'} — bitte erneut versuchen (Fehler im Bericht unten).</p>`;
+      } else if (p === 'skipped') {
+        sel += `<div class="text-sm text-gray-500 mb-2">Quellen-Import übersprungen — unten können Quellen nachträglich importiert werden.</div>`;
+      } else {
+        sel += `<div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-700">Quellen auswählen <span class="text-gray-400 font-normal">(${entries.length} gefunden, Default: alle noch offenen · importierte anhaken = überschreiben)</span></h3>
+          <div class="flex gap-3 text-xs">
+            <button data-act="references-all" class="text-blue-600 hover:underline">alle</button>
+            <button data-act="references-none" class="text-blue-600 hover:underline">keine</button>
+          </div>
+        </div>`;
+      }
+      sel += `<div id="ref-list" class="space-y-1 max-h-80 overflow-y-auto p-1">${entries.map(refRow).join('')}</div>`;
+      // Stabile Action-Kontainer-ID: die Checkbox-Handler rendern die Buttons
+      // live neu, damit der Button bei Auswahl 0 → >0 auch (wieder) erscheint.
+      sel += `<div id="ref-actions">${refActionsHTML(st)}</div>`;
+      sel += '</div>';
+      return html + sel;
+    }
+
+    // Import-Button(-Zeile) der Quellen-Sektion; todo wird live aus der
+    // aktuellen Auswahl berechnet.
+    function refActionsHTML(st) {
+      const refmap = st.reference_map || {};
+      const entries = Object.keys(refmap).map((k) => ({ key: k, ...(refmap[k] || {}) }));
+      const todo = entries.filter((r) => (refSel || new Set()).has(r.key)).length;
+      if (!todo) return '';
+      const label = st.references_status === 'done' ? `Weitere Quellen importieren (${todo})` : `Quellen importieren (${todo})`;
+      let h = `<div class="flex gap-2 mt-3">
+        <button data-act="references-start" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">${label}</button>`;
+      if (st.references_status === 'pending') {
+        h += `<button data-act="references-skip" class="border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg text-sm hover:bg-gray-100">Überspringen</button>`;
+      }
+      return h + '</div>';
+    }
+
+    function refRow(r) {
+      const imported = !!r.imported_ref_id;
+      const checked = refSel ? refSel.has(r.key) : !imported;
+      const title = r.title
+        ? esc(r.title)
+        : '<span class="italic text-gray-400">keine Titel-Daten (Stub aus \\cite / .bbl — im Quellen-Tab auffüllen)</span>';
+      const meta = [(r.authors || []).join(' & '), r.year, r.venue].filter(Boolean).join(' · ');
+      const srcs = (r.sources || []).join(', ');
+      return `<label class="flex items-center gap-2 border border-gray-200 rounded-lg px-2.5 py-1.5 ${checked ? 'ring-1 ring-blue-400 bg-blue-50/40' : (imported ? 'bg-gray-50' : 'bg-white')} cursor-pointer">
+        <input type="checkbox" data-ref="${esc(r.key)}" ${checked ? 'checked' : ''} class="accent-blue-600 shrink-0"
+          title="${imported ? 'Anhaken: erneut importieren (überschreibt die bestehende Quelle)' : 'Anhaken: in die Kurs-Quellenbibliothek importieren'}">
+        <div class="min-w-0 flex-1">
+          <p class="text-xs text-gray-700 truncate"><code class="font-mono">${esc(r.key)}</code> — ${title}</p>
+          <p class="text-[10px] text-gray-400 truncate">${esc(meta)}${srcs ? ' · aus ' + esc(srcs) : ''}</p>
+        </div>
+        ${imported ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 whitespace-nowrap">✓ importiert</span>' : ''}
+      </label>`;
+    }
+
+    function toggleAllRefs(val) {
+      refSel = new Set();
+      root.querySelectorAll('input[data-ref]').forEach((cb) => {
+        if (cb.disabled) return;
+        cb.checked = val;
+        if (val) refSel.add(cb.dataset.ref);
+        const label = cb.closest('label');
+        if (label) {
+          label.classList.toggle('ring-1', val);
+          label.classList.toggle('ring-blue-400', val);
+          label.classList.toggle('bg-blue-50/40', val);
+        }
+      });
+      const c = document.getElementById('ref-actions');
+      if (c && state) c.innerHTML = refActionsHTML(state);
+    }
+
+    function scriptPanel(st) {
+      if (st.filemap_status !== 'done') {
+        return `<div class="text-xs text-gray-500">Bitte zuerst die Dateianalyse abschließen.</div>`;
+      }
+      return `
+      ${planSuggestBlock(st, 'script')}
+      <div class="flex items-center justify-between mb-2 mt-3">
+        <h3 class="text-sm font-semibold text-gray-700">Skript-Kapitel <span class="text-gray-400 font-normal">(je Eintrag ein Skript-Kapitel)</span></h3>
+        <button data-act="chapter-add" class="text-xs text-blue-600 hover:underline">+ Kapitel</button>
+      </div>
+      <div id="chapter-list" class="space-y-1.5 max-h-80 overflow-y-auto pr-1"></div>
+      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Kapitel anhaken = zum Neu-Generieren oder Nachbessern auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Kapitel ohne Quellen („auto“): Quellen werden beim Generieren automatisch aus den Materialien ermittelt · Bestehende Kurs-Kapitel (gestrichelte Zeilen unten): anhaken = aus den Import-Materialien (neu)generieren, bestehender Inhalt als Basis.</p>
+      <div id="script-actions" class="mt-3 border-t border-gray-100 pt-3">${scriptActionsHTML(st.chapter_plan || [])}</div>`;
+    }
+
+    // Count + Button der Skript-Sektion. Wird bei jeder Plan-Änderung direkt
+    // aktualisiert (markDirty/syncPlanList), statt auf den nächsten Poll zu warten.
+    function scriptActionsHTML(plan) {
+      let html = '';
+      const p = state.script_status;
+      const doneN = plan.filter((c) => c.script_status === 'done').length;
+      const todo = plan.filter((c) => c.enabled && c.script_status !== 'done').length;
+      const refineN = plan.filter((c) => c.section_id && c.enabled).length;
+      const r = state.refine_status || 'pending';
+      const refineHere = (r === 'running' || r === 'paused' || r === 'interrupted') && refineScope() === 'script';
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        html += `<p class="text-xs text-gray-500">${esc((state.progress && state.progress.current) || '…')}</p>`;
+      } else if (refineHere) {
+        html += `<p class="text-xs text-blue-600">🔧 Nachbesserung der Skript-Kapitel ${r === 'running' ? 'läuft' : 'angehalten'}: ${esc((state.progress && state.progress.current) || '…')}</p>`;
+      } else {
+        if (p === 'skipped') html += `<p class="text-sm text-gray-500">Skript-Generierung übersprungen.</p>`;
+        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Kapitel im Plan — per „+ Kapitel“ anlegen, bestehende Kurs-Kapitel (gestrichelte Zeilen) anhaken oder Vorschläge generieren.</p>`;
+        if (todo > 0) {
+          html += `<div class="flex gap-2 mt-2">
+            <button data-act="script-start" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">Skript generieren (${todo})</button>
+          </div>`;
+        }
+        if (doneN > 0) {
+          html += `<p class="mt-2 text-sm ${todo === 0 ? 'text-green-700' : 'text-gray-500'}">${todo === 0 ? '✓ ' : ''}${doneN}/${plan.length} Kapitel generiert${todo === 0 ? '.' : ' — Rest per „Skript generieren“.'}</p>`;
+        }
+        if (refineN > 0) {
+          html += `<div class="flex gap-2 mt-2">
+            <button data-act="refine-start" data-scope="script" title="Nur die per Checkbox angeklickten Kapitel werden gegen die Import-Materialien geprüft und lokal nachbessert (LLM); danach werden ihre Checkboxen automatisch deaktiviert" class="border border-blue-300 text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg text-sm hover:bg-blue-100">🔧 Nachbessern (${refineN} Kapitel)</button>
+          </div>`;
+        }
+      }
+      return html;
+    }
+
+    function slidesPanel(st) {
+      if (st.filemap_status !== 'done') {
+        return `<div class="text-xs text-gray-500">Bitte zuerst die Dateianalyse abschließen.</div>`;
+      }
+      return `
+      ${planSuggestBlock(st, 'slides')}
+      <div class="flex items-center justify-between mb-2 mt-3">
+        <h3 class="text-sm font-semibold text-gray-700">Folien-Plan <span class="text-gray-400 font-normal">(je Eintrag ein Slide-Deck — kurze Kapitel zusammenfügbar, lange aufteilbar)</span></h3>
+        <button data-act="deck-add" class="text-xs text-blue-600 hover:underline">+ Deck</button>
+      </div>
+      <div id="deck-list" class="space-y-1.5 max-h-80 overflow-y-auto pr-1"></div>
+      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Deck anhaken = zum Neu-Generieren oder Nachbessern auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Deck ohne Quellen: Quellen werden beim Generieren automatisch aus den Materialien ermittelt · Bestehende Slide-Decks (gestrichelte Zeilen unten): anhaken = aus den Import-Materialien (neu)generieren, bestehendes Deck als Basis.</p>
+      <div id="slides-actions" class="mt-3 border-t border-gray-100 pt-3">${slidesActionsHTML(st.slides_plan || [])}</div>`;
+    }
+
+    // Count + Button der Folien-Sektion (mit Deck-Modus-Block). Wird wie
+    // scriptActionsHTML bei jeder Plan-Änderung direkt aktualisiert.
+    function slidesActionsHTML(plan) {
+      let html = '';
+      const p = state.slides_status;
+      const doneN = plan.filter((d) => d.slides_status === 'done').length;
+      const todo = plan.filter((d) => d.enabled && d.slides_status !== 'done').length;
+      const refineN = plan.filter((d) => d.material_id && d.enabled).length;
+      const r = state.refine_status || 'pending';
+      const refineHere = (r === 'running' || r === 'paused' || r === 'interrupted') && refineScope() === 'slides';
+      if (p === 'running' || p === 'paused' || p === 'interrupted') {
+        html += `<p class="text-xs text-gray-500">${esc((state.progress && state.progress.current) || '…')}</p>`;
+      } else if (refineHere) {
+        html += `<p class="text-xs text-blue-600">🔧 Nachbesserung der Slide-Decks ${r === 'running' ? 'läuft' : 'angehalten'}: ${esc((state.progress && state.progress.current) || '…')}</p>`;
+      } else {
+        if (p === 'skipped') html += `<p class="text-sm text-gray-500">Folien-Generierung übersprungen.</p>`;
+        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Decks im Plan — per „+ Deck“ anlegen, bestehende Slide-Decks (gestrichelte Zeilen) anhaken oder Vorschläge generieren.</p>`;
+        if (todo > 0) {
+          const curDecks = state.decks || [];
+          let mode;
+          if (curDecks.length === 0) {
+            mode = '<p class="text-xs text-gray-500 mt-2 mb-2">Es existieren noch keine Slide-Decks – es wird <b>ein neues Deck je aktivem Folien-Plan-Eintrag</b> angelegt.</p>';
+          } else if (curDecks.length === 1) {
+            const d = curDecks[0];
+            mode = `<p class="text-xs text-gray-500 mt-2 mb-2">Bestehendes Deck: <b>${esc(d.title)}</b> (${d.slide_count} Folien) – es wird durch die Decks aus dem Folien-Plan ersetzt (siehe Checkbox).</p>
+              <label class="flex items-center gap-2 text-xs text-gray-600 mb-2 cursor-pointer">
+                <input type="checkbox" id="slides-del-cb" ${deleteOriginal !== false ? 'checked' : ''} class="accent-blue-600">
+                Original-Deck nach erfolgreichem Import löschen
+              </label>`;
+          } else {
+            mode = `<p class="text-xs text-gray-500 mt-2 mb-2">${curDecks.length} bestehende Decks – sie bleiben unverändert, neue Decks werden angehängt.</p>`;
+          }
+          html += mode + `
+            <div class="flex gap-2">
+              <button data-act="slides-start" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">
+                Folien generieren (${todo})
+              </button>
+            </div>`;
+        }
+        if (doneN > 0) {
+          html += `<p class="mt-2 text-sm ${todo === 0 ? 'text-green-700' : 'text-gray-500'}">${todo === 0 ? '✓ ' : ''}${doneN}/${plan.length} Slide-Decks generiert${todo === 0 ? '.' : ' — Rest per „Folien generieren“.'}</p>`;
+        }
+        if (refineN > 0) {
+          html += `<div class="flex gap-2 mt-2">
+            <button data-act="refine-start" data-scope="slides" title="Nur die per Checkbox angeklickten Decks werden gegen die Import-Materialien geprüft und lokal nachbessert (LLM); danach werden ihre Checkboxen automatisch deaktiviert" class="border border-blue-300 text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg text-sm hover:bg-blue-100">🔧 Nachbessern (${refineN} Decks)</button>
+          </div>`;
+        }
+      }
+      return html;
+    }
+
+    // ─── Plan-Editoren (Skript-Kapitel + Folien-Plan) ─────────────────
+
+    function statusBadge(s, err) {
+      const map = {
+        pending: ['–', 'bg-gray-100 text-gray-400'],
+        done:    ['✓', 'bg-green-100 text-green-700'],
+        error:   ['✕', 'bg-red-100 text-red-700'],
+        skipped: ['–', 'bg-gray-100 text-gray-400'],
+      };
+      const [l, cls] = map[s] || ['–', 'bg-gray-100 text-gray-400'];
+      return `<span class="text-xs px-1.5 py-0.5 rounded ${cls}" title="${esc(err || '')}">${l}</span>`;
+    }
+
+    function chapterRow(c, i) {
+      const isDone = c.script_status === 'done';
+      const nSrc = c.sources ? c.sources.length : 0;
+      const srcInfo = nSrc ? nSrc + ' Quelle(n)' : 'auto';
+      const descOpen = chaptersDescOpen.has(i);
+      return `<div class="plan-row border border-gray-200 rounded-lg px-2 py-1.5 bg-white" data-list="chapters" data-idx="${i}"${c.regen ? ' data-regen="1"' : ''}>
+        <div class="flex items-center gap-2">
+          <span class="plan-drag cursor-grab text-gray-300 select-none" title="Ziehen zum Sortieren">⠿</span>
+          <input type="checkbox" data-ch="enabled" ${c.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Kapitel auswählen (neu generieren / nachbessern)' : 'Kapitel aktivieren'}">
+          <input type="text" data-ch="title" value="${esc(c.title)}" maxlength="300"
+                 class="flex-1 min-w-0 text-sm border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1.5 py-0.5 focus:outline-none"
+                 placeholder="Kapitel-Titel">
+          ${c.section_id ? '' : `<span class="text-[10px] text-gray-400 whitespace-nowrap hidden sm:inline"${nSrc ? '' : ' title="Keine Quellen gewählt — beim Generieren automatisch aus den Materialien ermittelt"'}>${srcInfo}</span>`}
+          <span title="Skript-Status">${statusBadge(c.script_status, c.script_error)}</span>
+          ${c.section_id ? '' : `<button data-act="chapter-del" data-idx="${i}" class="text-gray-400 hover:text-red-600" title="Kapitel entfernen">✕</button>`}
+        </div>
+        <details class="plan-desc mt-1.5"${descOpen ? ' open' : ''}>
+          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
+          <div class="pt-1.5">
+            <textarea data-ch="description" data-idx="${i}" rows="3"
+              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
+              placeholder="Beschreibung für das LLM (Umfang, Stil, zu verwendende Quellen/Medien …)">${esc(c.description || '')}</textarea>
+          </div>
+        </details>
+      </div>`;
+    }
+
+    function deckRow(d, i) {
+      const isDone = d.slides_status === 'done';
+      const srcParts = [];
+      if (d.slides) srcParts.push('pptx: ' + esc(String(d.slides.deck).split('/').pop()) + ` (${d.slides.start}–${d.slides.end})`);
+      const descOpen = decksDescOpen.has(i);
+      return `<div class="plan-row border border-blue-100 rounded-lg px-2 py-1.5 bg-white" data-list="decks" data-idx="${i}"${d.regen ? ' data-regen="1"' : ''}>
+        <div class="flex items-center gap-2">
+          <span class="plan-drag cursor-grab text-gray-300 select-none" title="Ziehen zum Sortieren">⠿</span>
+          <input type="checkbox" data-deck="enabled" ${d.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Deck auswählen (neu generieren / nachbessern)' : 'Deck aktivieren'}">
+          <input type="text" data-deck="title" value="${esc(d.title)}" maxlength="300"
+                 class="flex-1 min-w-0 text-sm border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1.5 py-0.5 focus:outline-none"
+                 placeholder="Deck-Titel">
+          ${srcParts.length ? `<span class="text-[10px] text-gray-400 whitespace-nowrap hidden md:inline">${srcParts.join(' · ')}</span>` : ''}
+          <span title="Folien-Status">${statusBadge(d.slides_status, d.slides_error)}</span>
+          ${d.material_id ? '' : `<button data-act="deck-del" data-idx="${i}" class="text-gray-400 hover:text-red-600" title="Deck entfernen">✕</button>`}
+        </div>
+        <details class="plan-desc mt-1.5"${descOpen ? ' open' : ''}>
+          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
+          <div class="pt-1.5">
+            <textarea data-deck="description" data-idx="${i}" rows="3"
+              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
+              placeholder="Beschreibung für das LLM (Umfang, Fokus, Stil …)">${esc(d.description || '')}</textarea>
+          </div>
+        </details>
+      </div>`;
+    }
+
+    // ─── Ghost-Zeilen: bestehende Kurs-Kapitel/-Decks in derselben Liste ────
+    // Gestrichelte Zeilen unter den Plan-Einträgen (bewusst NICHT .plan-row:
+    // Drag&Drop und der Keep-Merge von syncPlanList bleiben davon unberührt).
+    // Anhaken → wird zu einer normalen Plan-Zeile (mit LLM-Beschreibung).
+
+    function ghostSectionRowsHTML() {
+      const inPlan = new Set(chapters.filter((c) => c.section_id).map((c) => c.section_id));
+      const secs = state ? (state.existing_sections || []).filter((sc) => !inPlan.has(sc.id)) : [];
+      return secs.map(ghostSectionRow).join('');
+    }
+
+    function ghostSectionRow(sc) {
+      const descOpen = ghostSectionDescOpen.has(sc.id);
+      const desc = ghostSectionEdits[sc.id] != null ? ghostSectionEdits[sc.id] : (sc.description || '');
+      return `<div class="ghost-row border border-dashed border-gray-300 rounded-lg px-2 py-1.5 bg-gray-50" data-ghost-section="${sc.id}">
+        <div class="flex items-center gap-2">
+          <span class="w-[14px] shrink-0"></span>
+          <input type="checkbox" data-existing-section="${sc.id}" class="accent-blue-600"
+            title="Anhaken: aus den Import-Materialien (neu)generieren (bestehender Inhalt als Basis)">
+          <span class="flex-1 min-w-0 text-sm text-gray-600 truncate" title="${esc(sc.title)}">${esc(sc.title)}</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 whitespace-nowrap">Kurs-Kapitel</span>
+          <button data-act="ghost-section-desc" data-idx="${sc.id}" class="text-gray-400 hover:text-blue-600" title="LLM-Beschreibung einsehen/bearbeiten">📝</button>
+          <span class="w-[26px] shrink-0"></span>
+          <span class="w-[18px] shrink-0"></span>
+        </div>
+        <details class="ghost-desc mt-1.5"${descOpen ? ' open' : ''}>
+          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
+          <div class="pt-1.5">
+            <textarea data-ghost-section-desc="${sc.id}" rows="3"
+              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
+              placeholder="Beschreibung für das LLM (so würde das Kapitel aus den Import-Materialien (neu)generiert/editiert)">${esc(desc)}</textarea>
+          </div>
+        </details>
+      </div>`;
+    }
+
+    function ghostDeckRowsHTML() {
+      const inPlan = new Set(decks.filter((d) => d.material_id).map((d) => d.material_id));
+      const ds = state ? (state.decks || []).filter((d0) => !inPlan.has(d0.id)) : [];
+      return ds.map(ghostDeckRow).join('');
+    }
+
+    function ghostDeckRow(d0) {
+      const descOpen = ghostDeckDescOpen.has(d0.id);
+      const desc = ghostDeckEdits[d0.id] != null ? ghostDeckEdits[d0.id] : (d0.description || '');
+      return `<div class="ghost-row border border-dashed border-blue-200 rounded-lg px-2 py-1.5 bg-gray-50" data-ghost-deck="${d0.id}">
+        <div class="flex items-center gap-2">
+          <span class="w-[14px] shrink-0"></span>
+          <input type="checkbox" data-existing-deck="${d0.id}" class="accent-blue-600"
+            title="Anhaken: aus den Import-Materialien (neu)generieren (bestehendes Deck als Basis)">
+          <span class="flex-1 min-w-0 text-sm text-gray-600 truncate" title="${esc(d0.title)}">${esc(d0.title)} <span class="text-gray-400">(${d0.slide_count} Folien)</span></span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 whitespace-nowrap">Kurs-Deck</span>
+          <button data-act="ghost-deck-desc" data-idx="${d0.id}" class="text-gray-400 hover:text-blue-600" title="LLM-Beschreibung einsehen/bearbeiten">📝</button>
+          <span class="w-[26px] shrink-0"></span>
+          <span class="w-[18px] shrink-0"></span>
+        </div>
+        <details class="ghost-desc mt-1.5"${descOpen ? ' open' : ''}>
+          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
+          <div class="pt-1.5">
+            <textarea data-ghost-deck-desc="${d0.id}" rows="3"
+              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
+              placeholder="Beschreibung für das LLM (so würde das Deck aus den Import-Materialien (neu)generiert/editiert)">${esc(desc)}</textarea>
+          </div>
+        </details>
+      </div>`;
+    }
+
+    // Kompletter Listeninhalt: Plan-Zeilen + Ghost-Zeilen (bestehende Kapitel/
+    // Decks, die noch nicht im Plan stehen). Wird von syncPlanList UND
+    // rerenderList gemeinsam verwendet (beide Listen bleiben so identisch).
+    function listRowsHTML(kind) {
+      const isChap = kind === 'chapters';
+      const arr = isChap ? chapters : decks;
+      const rowFn = isChap ? chapterRow : deckRow;
+      let html = arr.map(rowFn).join('');
+      html += isChap ? ghostSectionRowsHTML() : ghostDeckRowsHTML();
+      if (!html) html = `<p class="text-xs text-gray-400 py-2">Keine Einträge — „+ ${isChap ? 'Kapitel' : 'Deck'}“.</p>`;
+      return html;
+    }
+
+    // Offen-Zustand der Ghost-Beschreibungen aus dem Live-DOM übernehmen
+    // (selbstheilend wie bei den Plan-Zeilen — auch per Summary-Klick geöffnete
+    // Details überleben so den nächsten Re-Render).
+    function snapshotGhostDesc(kind, el) {
+      const attr = kind === 'chapters' ? 'data-ghost-section' : 'data-ghost-deck';
+      const set = kind === 'chapters' ? ghostSectionDescOpen : ghostDeckDescOpen;
+      set.clear();
+      el.querySelectorAll('.ghost-row[' + attr + ']').forEach((r) => {
+        const dEl = r.querySelector('details.ghost-desc');
+        if (dEl && dEl.open) set.add(parseInt(r.getAttribute(attr), 10));
+      });
+    }
+
+    // Baue/erfrische eine Plan-Liste. Unge­speicherte Titel-/Beschreibungs-Edits
+    // und Checks werden aus dem DOM übernommen (Server ändert den Plan während
+    // laufender Jobs nur um Status-Felder). Offene Beschreibung-Details werden
+    // vor dem Re-Render aus dem DOM gesnapshotet und anschließend wiederhergestellt.
+    function syncPlanList(kind) {
+      const isChap = kind === 'chapters';
+      const el = document.getElementById(isChap ? 'chapter-list' : 'deck-list');
+      if (!el) return;
+      let server = isChap ? (state.chapter_plan || []) : (state.slides_plan || []);
+      // Defensive Aufräumen: Plan-Einträge, die auf gelöschte Kurs-Kapitel/Decks zeigen
+      // (section_id/material_id), dürfen nicht mehr stehen. Der Server pruned sie ebenfalls;
+      // hier fängt es auch einen veralteten Server-Zustand ab. markDirty persistiert das
+      // Aufräumen per Auto-Save (PUT /plan ersetzt den Plan durch die lokale Liste).
+      const idField = isChap ? 'section_id' : 'material_id';
+      let pruned = false;
+      if (state) {
+        const alive = new Set(
+          (isChap ? (state.existing_sections || []) : (state.decks || [])).map((x) => x.id)
+        );
+        const filtered = server.filter((c) => !c[idField] || alive.has(c[idField]));
+        if (filtered.length !== server.length) { server = filtered; pruned = true; }
+      }
+      const key = JSON.stringify(server);
+      const builtFor = isChap ? chaptersBuiltFor : decksBuiltFor;
+      const dirty = isChap ? chaptersDirty : decksDirty;
+      if (key === builtFor && dirty) return; // User tippt, Server unverändert
+
+      const descOpenSet = isChap ? chaptersDescOpen : decksDescOpen;
+      snapshotGhostDesc(kind, el);
+      const snap = new Set();
+      const keep = [];
+      if (!pruned) {
+        // Bei Prune wird die Liste bewusst OHNE DOM-Merge neu gebaut (seltenes
+        // Aufräum-Ereignis — unbeabsichtigtes Verschieben von Edits wäre schlimmer).
+        el.querySelectorAll(isChap ? '.plan-row[data-list="chapters"]' : '.plan-row[data-list="decks"]').forEach((r) => {
+          const i = parseInt(r.dataset.idx, 10);
+          const descEl = r.querySelector('details.plan-desc');
+          const ta = descEl ? descEl.querySelector('textarea') : null;
+          const desc = ta ? ta.value : null;
+          if (descEl && descEl.classList.contains('plan-desc') && descEl.open) snap.add(i);
+          const ti = r.querySelector(isChap ? 'input[data-ch="title"]' : 'input[data-deck="title"]').value;
+          const en = r.querySelector(isChap ? 'input[data-ch="enabled"]' : 'input[data-deck="enabled"]').checked;
+          keep.push({ title: ti, enabled: en, desc, regen: !!r.getAttribute('data-regen') });
+        });
+      }
+      descOpenSet.clear();
+      snap.forEach((i) => descOpenSet.add(i));
+
+      const arr = isChap ? chapters : decks;
+      const statusKey = isChap ? 'script_status' : 'slides_status';
+      arr.length = 0;
+      server.forEach((c, i) => {
+        const n = Object.assign({}, c);
+        if (keep[i] && keep[i].title != null) {
+          n.title = keep[i].title;
+          if (keep[i].desc != null) n.description = keep[i].desc;
+          if (keep[i].regen && n[statusKey] === 'done') {
+            // Fertiges Kapitel/Deck wurde wieder angehakt → Regenerierung anstehen
+            n.enabled = true;
+            n[statusKey] = 'pending';
+            n.regen = true;
+          } else {
+            n.enabled = keep[i].enabled;
+            n.regen = false;
+          }
+        }
+        if (n[statusKey] === 'done') n.enabled = false; // generiert → immer deaktiviert
+        arr.push(n);
+      });
+      if (isChap) chaptersBuiltFor = key; else decksBuiltFor = key;
+      const isNowDirty = keep.some((k, i) => k && (
+        (k.title != null && k.title !== (server[i] || {}).title) ||
+        (k.enabled !== !!((server[i] || {}).enabled)) ||
+        (k.desc != null && k.desc !== ((server[i] || {}).description || '')) ||
+        (k.regen && (server[i] || {})[statusKey] === 'done')
+      ));
+      if (isChap) chaptersDirty = isNowDirty; else decksDirty = isNowDirty;
+      if (pruned) markDirty(kind); // Aufräumen persistieren (Re-Build resetet das Flag)
+
+      el.innerHTML = listRowsHTML(kind);
+      // Plan-Änderungen aus dem Poll-Merge (z. B. Regen-Checkbox) sofort in
+      // Count/Button spiegeln (Ghost-Zeilen entstehen im Re-Render automatisch)
+      if (isChap) updateScriptActions();
+      else updateSlidesActions();
+    }
+
+    function syncChapters() { syncPlanList('chapters'); }
+    function syncDecks() { syncPlanList('decks'); }
+
+    const saveTimers = { chapters: null, decks: null };
+
+    // Auto-Save: persistiert den Plan per PUT /plan. Bewusst ohne refresh():
+    // ein Re-Render würde den Fokus im Titel-Input beim Tippen verlieren. Der nächste
+    // Poll übernimmt den aktuellen Server-State (DOM-Edits werden gemerged).
+    async function savePlan(kind) {
+      const isChap = kind === 'chapters';
+      if (!state) return;
+      if (isChap ? !chaptersDirty : !decksDirty) return;
+      if (isChap) chaptersDirty = false; else decksDirty = false;
+      if (saveTimers[kind]) { clearTimeout(saveTimers[kind]); saveTimers[kind] = null; }
+      try {
+        await api('/plan', { method: 'PUT', body: JSON.stringify(isChap ? { chapters } : { decks }) });
+      } catch (err) {
+        if (isChap) chaptersDirty = true; else decksDirty = true;
+        showToast('Plan konnte nicht gespeichert werden: ' + err.message, 'error');
+      }
+    }
+
+    function markDirty(kind) {
+      if (kind === 'chapters') chaptersDirty = true; else decksDirty = true;
+      if (saveTimers[kind]) clearTimeout(saveTimers[kind]);
+      saveTimers[kind] = setTimeout(() => savePlan(kind), 800);
+      // Count/Button sofort aktualisieren (ohne volles Re-Render → Fokus bleibt erhalten)
+      if (kind === 'chapters') updateScriptActions(); else updateSlidesActions();
+    }
+
+    // Aktualisiert nur den Button-/Count-Bereich der jeweiligen Sektion aus dem
+    // in-memory-Plan — ohne die Listen neu zu rendern (Input-Fokus bleibt erhalten).
+    function updateScriptActions() {
+      const el = document.getElementById('script-actions');
+      if (el) el.innerHTML = scriptActionsHTML(chapters);
+    }
+
+    function updateSlidesActions() {
+      const el = document.getElementById('slides-actions');
+      if (el) el.innerHTML = slidesActionsHTML(decks);
+    }
+
+    function rerenderList(kind) {
+      const el = document.getElementById(kind === 'chapters' ? 'chapter-list' : 'deck-list');
+      if (!el) return;
+      const top = el.scrollTop;
+      snapshotGhostDesc(kind, el);
+      // Offene Beschreibung-Details vor dem Re-Render aus dem DOM snapshoten
+      const descOpenSet = kind === 'chapters' ? chaptersDescOpen : decksDescOpen;
+      const snap = new Set();
+      el.querySelectorAll(kind === 'chapters' ? '.plan-row[data-list="chapters"]' : '.plan-row[data-list="decks"]').forEach((r) => {
+        const i = parseInt(r.dataset.idx, 10);
+        const dEl = r.querySelector('details.plan-desc');
+        if (dEl && dEl.open) snap.add(i);
+      });
+      descOpenSet.clear();
+      snap.forEach((i) => descOpenSet.add(i));
+      el.innerHTML = listRowsHTML(kind);
+      el.scrollTop = top;
+    }
+
+    function toggleAllMedia(val) {
+      mediaSel = new Set();
+      root.querySelectorAll('input[data-media]').forEach((cb) => {
+        if (cb.disabled) return;
+        cb.checked = val;
+        if (val) mediaSel.add(cb.dataset.media);
+        const label = cb.closest('label');
+        if (label) {
+          label.classList.toggle('ring-2', val);
+          label.classList.toggle('ring-blue-500', val);
+        }
+      });
+      const c = document.getElementById('media-actions');
+      if (c && state) c.innerHTML = mediaActionsHTML(state);
+    }
+
+    // ─── Events (delegiert) ─────────────────────────────────────────
+
+    root.addEventListener('click', async (e) => {
+      // Dropzone für weitere Zips: Klick → File-Picker öffnen
+      if (e.target.closest('#add-dropzone')) {
+        const fi = document.getElementById('add-file');
+        if (fi) fi.click();
+        return;
+      }
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      try {
+        switch (act) {
+          case 'delete-import':
+            if (!confirm('Import wirklich löschen? (Zip-Dateien und Import-Plan; bereits generierte Skript-/Folien-Inhalte bleiben erhalten)')) return;
+            await api('', { method: 'DELETE' });
+            state = null;
+            showToast('Import gelöscht.', 'success');
+            render();
+            break;
+          case 'pause':
+            await api('/pause', { method: 'POST', body: JSON.stringify({ stage: btn.dataset.stage }) });
+            showToast('Stufe pausiert.', 'success');
+            await refresh();
+            break;
+          case 'resume':
+            await api('/resume', { method: 'POST', body: JSON.stringify({ stage: btn.dataset.stage }) });
+            await refresh();
+            break;
+          case 'cancel':
+            if (!confirm('Stufe wirklich abbrechen? Fertige Teilergebnisse bleiben erhalten.')) return;
+            await api('/cancel', { method: 'POST', body: JSON.stringify({ stage: btn.dataset.stage }) });
+            await refresh();
+            break;
+          case 'file-del': {
+            const path = btn.dataset.path;
+            if (!confirm(`Datei „${path}“ aus der Stage entfernen?\n(Bereits importierte Inhalte bleiben erhalten.)`)) return;
+            const data = await api('/files', { method: 'DELETE', body: JSON.stringify({ paths: [path] }) });
+            showToast(data.message || 'Datei entfernt.', 'success');
+            await refresh();
+            break;
+          }
+          case 'ref-extract':
+            await api('/ref_extract', { method: 'POST', body: JSON.stringify({}) });
+            showToast('Quellen-Extraktion gestartet.', 'success');
+            await refresh();
+            break;
+          case 'slides-plan-generate':
+            await savePlan('chapters'); await savePlan('decks');
+            await api('/slides_plan', { method: 'POST', body: JSON.stringify({}) });
+            showToast('Folien-Planner gestartet.', 'success');
+            await refresh();
+            break;
+          case 'ghost-section-desc': {
+            const id = parseInt(btn.dataset.idx, 10);
+            const row = btn.closest('.ghost-row');
+            const dEl = row ? row.querySelector('details.ghost-desc') : null;
+            if (dEl) {
+              dEl.open = !dEl.open;
+              if (dEl.open) ghostSectionDescOpen.add(id); else ghostSectionDescOpen.delete(id);
+            }
+            break;
+          }
+          case 'ghost-deck-desc': {
+            const id = parseInt(btn.dataset.idx, 10);
+            const row = btn.closest('.ghost-row');
+            const dEl = row ? row.querySelector('details.ghost-desc') : null;
+            if (dEl) {
+              dEl.open = !dEl.open;
+              if (dEl.open) ghostDeckDescOpen.add(id); else ghostDeckDescOpen.delete(id);
+            }
+            break;
+          }
+          case 'media-all':
+            toggleAllMedia(true);
+            break;
+          case 'media-none':
+            toggleAllMedia(false);
+            break;
+          case 'media-start': {
+            const mm = state.media_map || {};
+            const paths = Array.from(mediaSel || []).filter((p) => !(mm[p] || {}).url);
+            if (!paths.length) { showToast('Keine (noch nicht importierten) Medien ausgewählt.', 'error'); return; }
+            await api('/media', { method: 'POST', body: JSON.stringify({ paths }) });
+            showToast('Medien-Import gestartet.', 'success');
+            await refresh();
+            break;
+          }
+          case 'media-skip':
+            if (!confirm('Medien-Import wirklich überspringen?')) return;
+            await api('/media', { method: 'POST', body: JSON.stringify({ skip: true }) });
+            await refresh();
+            break;
+          case 'references-all':
+            toggleAllRefs(true);
+            break;
+          case 'references-none':
+            toggleAllRefs(false);
+            break;
+          case 'references-start': {
+            const refmap = state.reference_map || {};
+            // Auch bereits importierte Keys senden = Re-Import (überschreibt die bestehende Quelle)
+            const keys = Array.from(refSel || []).filter((k) => refmap[k] != null);
+            if (!keys.length) { showToast('Keine Quellen ausgewählt.', 'error'); return; }
+            await api('/references', { method: 'POST', body: JSON.stringify({ keys }) });
+            showToast('Quellen-Import gestartet.', 'success');
+            await refresh();
+            break;
+          }
+          case 'references-skip':
+            if (!confirm('Quellen-Import wirklich überspringen?')) return;
+            await api('/references', { method: 'POST', body: JSON.stringify({ skip: true }) });
+            await refresh();
+            break;
+          case 'plan-generate':
+            await savePlan('chapters'); await savePlan('decks');
+            await api('/plan', { method: 'POST' });
+            showToast('Skript-Planner gestartet.', 'success');
+            await refresh();
+            break;
+          case 'chapter-add':
+            chapters.push({
+              title: 'Neues Kapitel', enabled: true, sources: [],
+              section_id: null, script_status: 'pending', script_error: null,
+            });
+            markDirty('chapters');
+            rerenderList('chapters');
+            break;
+          case 'deck-add':
+            decks.push({
+              title: 'Neues Deck', enabled: true, script_chapters: [], sources: [], slides: null,
+              material_id: null, slides_status: 'pending', slides_error: null,
+            });
+            markDirty('decks');
+            rerenderList('decks');
+            break;
+          case 'chapter-del': {
+            const i = parseInt(btn.dataset.idx, 10);
+            if (chapters[i] && chapters[i].section_id) { showToast('Bestehende Kurs-Kapitel können nicht aus der Liste entfernt werden (nur deaktivieren).', 'error'); return; }
+            if (chapters[i] && !confirm(`Kapitel „${chapters[i].title}“ entfernen?`)) return;
+            chapters.splice(i, 1);
+            markDirty('chapters');
+            rerenderList('chapters');
+            break;
+          }
+          case 'deck-del': {
+            const i = parseInt(btn.dataset.idx, 10);
+            if (decks[i] && decks[i].material_id) { showToast('Bestehende Kurs-Decks können nicht aus der Liste entfernt werden (nur deaktivieren).', 'error'); return; }
+            if (decks[i] && !confirm(`Deck „${decks[i].title}“ entfernen?`)) return;
+            decks.splice(i, 1);
+            markDirty('decks');
+            rerenderList('decks');
+            break;
+          }
+          case 'script-start':
+            await savePlan('chapters');
+            await api('/script', { method: 'POST', body: JSON.stringify({}) });
+            await refresh();
+            break;
+          case 'slides-start': {
+            await savePlan('decks');
+            const cb = document.getElementById('slides-del-cb');
+            await api('/slides', { method: 'POST', body: JSON.stringify({ delete_original: cb ? cb.checked : false }) });
+            await refresh();
+            break;
+          }
+          case 'refine-start': {
+            const scope = btn.dataset.scope === 'slides' ? 'slides' : 'script';
+            await api('/refine', { method: 'POST', body: JSON.stringify({ scope }) });
+            showToast(scope === 'script'
+              ? 'Nachbesserung der Skript-Kapitel gestartet.'
+              : 'Nachbesserung der Slide-Decks gestartet.', 'success');
+            await refresh();
+            break;
+          }
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    });
+
+    root.addEventListener('change', (e) => {
+      const t = e.target;
+      if (t.matches('input[data-media]')) {
+        if (t.checked) mediaSel.add(t.dataset.media);
+        else mediaSel.delete(t.dataset.media);
+        const label = t.closest('label');
+        if (label) {
+          label.classList.toggle('ring-2', t.checked);
+          label.classList.toggle('ring-blue-500', t.checked);
+        }
+        const c = document.getElementById('media-actions');
+        if (c && state) c.innerHTML = mediaActionsHTML(state);
+      } else if (t.matches('input[data-ref]')) {
+        if (t.checked) refSel.add(t.dataset.ref);
+        else refSel.delete(t.dataset.ref);
+        const label = t.closest('label');
+        if (label) {
+          label.classList.toggle('ring-1', t.checked);
+          label.classList.toggle('ring-blue-400', t.checked);
+          label.classList.toggle('bg-blue-50/40', t.checked);
+        }
+        const c = document.getElementById('ref-actions');
+        if (c && state) c.innerHTML = refActionsHTML(state);
+      } else if (t.matches('input[data-ch="enabled"]')) {
+        const row = t.closest('.plan-row');
+        const i = parseInt(row.dataset.idx, 10);
+        if (chapters[i]) {
+          chapters[i].enabled = t.checked;
+          if (t.checked && chapters[i].script_status === 'done') {
+            // Fertiges Kapitel wieder angehakt → Neu-Generierung anstehen
+            chapters[i].script_status = 'pending';
+            chapters[i].regen = true;
+            row.setAttribute('data-regen', '1');
+          } else if (chapters[i].regen) {
+            chapters[i].regen = false;
+            row.removeAttribute('data-regen');
+          }
+          markDirty('chapters');
+        }
+      } else if (t.matches('input[data-deck="enabled"]')) {
+        const row = t.closest('.plan-row');
+        const i = parseInt(row.dataset.idx, 10);
+        if (decks[i]) {
+          decks[i].enabled = t.checked;
+          if (t.checked && decks[i].slides_status === 'done') {
+            // Fertiges Deck wieder angehakt → Neu-Generierung anstehen
+            decks[i].slides_status = 'pending';
+            decks[i].regen = true;
+            row.setAttribute('data-regen', '1');
+          } else if (decks[i].regen) {
+            decks[i].regen = false;
+            row.removeAttribute('data-regen');
+          }
+          markDirty('decks');
+        }
+      } else if (t.dataset.existingSection != null) {
+        const id = parseInt(t.dataset.existingSection, 10);
+        const sc = (state.existing_sections || []).find((x) => x.id === id);
+        if (!sc) return;
+        const idx = chapters.findIndex((c) => c.section_id === id);
+        if (t.checked) {
+          if (idx === -1) {
+            // Ghost-Zeile → Plan-Zeile (mit LLM-Beschreibung aus der Ghost-Zeile)
+            chapters.push({
+              title: sc.title, enabled: true,
+              description: ghostSectionEdits[id] != null ? ghostSectionEdits[id] : (sc.description || ''),
+              sources: [], sections: [sc.id], section_id: sc.id,
+              script_status: 'pending', script_error: null,
+            });
+          } else {
+            chapters[idx].enabled = true;
+          }
+        } else if (idx !== -1) {
+          chapters[idx].enabled = false;
+        }
+        markDirty('chapters');
+        rerenderList('chapters');
+      } else if (t.dataset.existingDeck != null) {
+        const id = parseInt(t.dataset.existingDeck, 10);
+        const d0 = (state.decks || []).find((x) => x.id === id);
+        if (!d0) return;
+        const idx = decks.findIndex((d) => d.material_id === id);
+        if (t.checked) {
+          if (idx === -1) {
+            // Ghost-Zeile → Plan-Zeile (mit LLM-Beschreibung aus der Ghost-Zeile)
+            decks.push({
+              title: d0.title, enabled: true,
+              description: ghostDeckEdits[id] != null ? ghostDeckEdits[id] : (d0.description || ''),
+              sources: [], sections: [], slides: null, material_id: d0.id,
+              slides_status: 'pending', slides_error: null,
+            });
+          } else {
+            decks[idx].enabled = true;
+          }
+        } else if (idx !== -1) {
+          decks[idx].enabled = false;
+        }
+        markDirty('decks');
+        rerenderList('decks');
+      } else if (t.id === 'add-file') {
+        if (t.files[0]) upload(t.files[0], 'add');
+      } else if (t.id === 'slides-del-cb') {
+        deleteOriginal = t.checked;
+      }
+    });
+
+    root.addEventListener('input', (e) => {
+      if (e.target.matches('input[data-ch="title"]')) {
+        const row = e.target.closest('.plan-row');
+        const i = parseInt(row.dataset.idx, 10);
+        if (chapters[i]) { chapters[i].title = e.target.value; markDirty('chapters'); }
+      } else if (e.target.matches('input[data-deck="title"]')) {
+        const row = e.target.closest('.plan-row');
+        const i = parseInt(row.dataset.idx, 10);
+        if (decks[i]) { decks[i].title = e.target.value; markDirty('decks'); }
+      } else if (e.target.matches('textarea[data-ch="description"]')) {
+        const i = parseInt(e.target.dataset.idx, 10);
+        if (chapters[i]) { chapters[i].description = e.target.value; markDirty('chapters'); }
+      } else if (e.target.matches('textarea[data-deck="description"]')) {
+        const i = parseInt(e.target.dataset.idx, 10);
+        if (decks[i]) { decks[i].description = e.target.value; markDirty('decks'); }
+      } else if (e.target.matches('textarea[data-ghost-section-desc]')) {
+        // Ghost-Beschreibung: wird erst beim Anhaken Teil des Plans (kein markDirty)
+        const id = parseInt(e.target.dataset.ghostSectionDesc, 10);
+        ghostSectionEdits[id] = e.target.value;
+      } else if (e.target.matches('textarea[data-ghost-deck-desc]')) {
+        const id = parseInt(e.target.dataset.ghostDeckDesc, 10);
+        ghostDeckEdits[id] = e.target.value;
+      }
+    });
+
+    // Drag & Drop: nur per Griff (⠿) startbar, damit Textauswahl in den
+    // Titel-Inputs nicht blockiert wird. Jede Liste (Kapitel/Decks) wird
+    // separat sortiert.
+    root.addEventListener('mousedown', (e) => {
+      const handle = e.target.closest('.plan-drag');
+      if (handle) handle.closest('.plan-row').draggable = true;
+    });
+    document.addEventListener('mouseup', () => {
+      document.querySelectorAll('.plan-row[draggable="true"]').forEach((r) => { r.draggable = false; });
+    });
+    root.addEventListener('dragstart', (e) => {
+      const row = e.target.closest('.plan-row');
+      if (!row) return;
+      dragIdx = parseInt(row.dataset.idx, 10);
+      dragList = row.dataset.list;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(dragIdx));
+      row.classList.add('opacity-50');
+    });
+    root.addEventListener('dragover', (e) => {
+      // Zusätzliche Zip-Datei auf die Dropzone ziehen
+      const dz = e.target.closest('#add-dropzone');
+      if (dz) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        dz.classList.add('border-blue-400');
+        return;
+      }
+      if (dragIdx === null) return;
+      const row = e.target.closest('.plan-row');
+      if (!row || row.dataset.list !== dragList) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+    root.addEventListener('dragleave', (e) => {
+      const dz = e.target.closest('#add-dropzone');
+      if (dz) dz.classList.remove('border-blue-400');
+    });
+    root.addEventListener('drop', (e) => {
+      // Zusätzliche Zip-Datei auf die Dropzone
+      const dz = e.target.closest('#add-dropzone');
+      if (dz) {
+        e.preventDefault();
+        dz.classList.remove('border-blue-400');
+        const f = e.dataTransfer.files[0];
+        if (f) upload(f, 'add');
+        return;
+      }
+      const row = e.target.closest('.plan-row');
+      if (!row || dragIdx === null || row.dataset.list !== dragList) return;
+      e.preventDefault();
+      const arr = dragList === 'chapters' ? chapters : decks;
+      const to = parseInt(row.dataset.idx, 10);
+      if (to !== dragIdx) {
+        const [m] = arr.splice(dragIdx, 1);
+        arr.splice(to, 0, m);
+        markDirty(dragList);
+        rerenderList(dragList);
+      }
+      dragIdx = null;
+      dragList = null;
+    });
+    root.addEventListener('dragend', (e) => {
+      const row = e.target.closest('.plan-row');
+      if (row) row.classList.remove('opacity-50');
+      dragIdx = null;
+      dragList = null;
+    });
+
+    // Start
+    refresh();
+  })();
+  </script>
+
+    </div><!-- /content area -->
+  </div><!-- /grid -->
+{% endblock %}

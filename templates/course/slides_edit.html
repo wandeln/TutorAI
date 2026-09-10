@@ -173,6 +173,14 @@
         <label class="block text-sm font-medium text-gray-700 mb-1" for="material-title-input">Titel</label>
         <input id="material-title-input" type="text" maxlength="300"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none mb-3">
+        <details class="mb-3">
+          <summary class="cursor-pointer select-none text-sm font-medium text-gray-700 hover:text-gray-900">
+            📝 Interne Zusammenfassung (nur für LLM-Querverweise — für Studenten nicht sichtbar)
+          </summary>
+          <textarea id="material-summary-input" rows="4" maxlength="2000"
+                    placeholder="3–6 Sätze: wovon handelt das Deck, welche Themen/Kapitel werden abgedeckt — inkl. aller Referenz-Handles (z. B. {% raw %}{#sec:recursion{% endraw %}, {% raw %}{#fig:tree{% endraw %}), damit andere Kapitel/Decks korrekt referenzieren können."
+                    class="mt-2 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none resize-y"></textarea>
+        </details>
         <label class="block text-sm font-medium text-gray-700 mb-1" for="material-textarea">Folien (Markdown)</label>
         <textarea id="material-textarea" rows="24"
                   placeholder="Folien mit einer eigenen Zeile '---' trennen…"
@@ -237,7 +245,7 @@
             <section>
               <h5 class="text-xs font-semibold text-gray-800 mb-1">Hervorheben</h5>
               <ul class="list-disc pl-4 space-y-1">
-                <li><code>@box:highlight … @endbox</code> → transparenter, geblurter Bereich in der Primärfarbe (z. B. für Titel auf Deckslides)</li>
+                <li><code>@startbox:highlight … @endbox</code> → transparenter, geblurter Bereich in der Primärfarbe (z. B. für Titel auf Deckslides)</li>
                 <li><code>@boxcolor:&lt;farbe&gt;</code> als erste Zeile → Boxfarbe übersteuern (Hex, <code>rgb()</code>/<code>rgba()</code>, CSS-Farbname)</li>
               </ul>
             </section>
@@ -259,7 +267,7 @@
                 <li>{% raw %}<code>{.zoom=1.5}</code>{% endraw %} → größere Schrift</li>
                 <li>{% raw %}<code>{.height=300}</code>{% endraw %} → Max-Höhe in px + internes Scrollen (ohne <code>{.height}</code> gilt dieselbe Default-Höhe wie bei Applets)</li>
                 <li>{% raw %}<code>{#code:label}</code>[caption]{% endraw %} → nummerierter Code-Block („Code N: caption“, Nummer klickbar, falls das Label auch im Skript vorkommt) + Eintrag in der „Codes“-Tabelle des Skript-IV</li>
-                <li><code>@box:code … @endbox</code> → dunkle Code-Box mit „Code“-Kopf</li>
+                <li><code>@startbox:code … @endbox</code> → dunkle Code-Box mit „Code“-Kopf</li>
               </ul>
             </section>
 
@@ -283,12 +291,14 @@
   // Geladene (gespeicherte) Werte — Basis für den "Abbrechen"-Dirty-Check
   let loadedContent = "";
   let loadedTitle = "";
+  let loadedSummary = "";
 
   // Abbrechen: zurück zur Folien-Übersicht; bei ungespeicherten Änderungen fragen
   window.cancelEdit = function () {
     const ta = document.getElementById("material-textarea");
     const ti = document.getElementById("material-title-input");
-    if (ta && (ta.value !== loadedContent || ti.value.trim() !== loadedTitle)) {
+    const si = document.getElementById("material-summary-input");
+    if (ta && (ta.value !== loadedContent || ti.value.trim() !== loadedTitle || (si && si.value !== loadedSummary))) {
       if (!confirm("Ungespeicherte Änderungen verwerfen und zur Folien-Übersicht zurückkehren?")) return;
     }
     window.location.href = `/courses/${courseId}/slides`;
@@ -300,6 +310,7 @@
 
   const titleInput = document.getElementById("material-title-input");
   const textarea = document.getElementById("material-textarea");
+  const summaryInput = document.getElementById("material-summary-input");
   const revealRootEl = document.getElementById("slide-preview-reveal");
   const previewSlidesEl = document.getElementById("slide-preview-slides");
   const previewEmptyEl = document.getElementById("slide-preview-empty");
@@ -318,8 +329,10 @@
       const data = await res.json();
       titleInput.value = data.title || material.title;
       textarea.value = data.content || "";
+      summaryInput.value = data.summary || "";
       loadedTitle = titleInput.value;
       loadedContent = textarea.value;
+      loadedSummary = summaryInput.value;
       renderPreview(textarea.value);
     } catch (e) {
       previewEmptyEl.textContent = "Fehler beim Laden des Inhalts.";
@@ -371,7 +384,10 @@
     for (let i = 0; i < slides.length; i++) {
       if (seq !== previewSeq) return; // neuerer Render hat übernommen
       const footer = FOOTER_ENABLED && FOOTER_TEXT ? FOOTER_TEXT : null;
-      previewSlidesEl.appendChild(await buildSlideSection(slides[i], footer));
+      // Folien-Position (S-Nummern unlabeled Subfigure-Komplexe):
+      previewSlidesEl.appendChild(
+        await buildSlideSection(slides[i], footer, { deckId: material.id, h: i })
+      );
     }
     if (seq !== previewSeq) return;
     // Gleiche Logik-Größe wie die Präsentation: Reveal skaliert das Deck
@@ -398,6 +414,8 @@
       highlight: { escapeHTML: false },
       plugins: [RevealHighlight],
     });
+    // Code-LaTeX nach Reveal's Highlight-Pass
+    tutoraiWireCodeMath(inst);
     previewReveal = inst;
     await inst.initialize();
     if (seq !== previewSeq) {
@@ -410,6 +428,8 @@
     }
     // Visuelle Fragment-Reihenfolge (KaTeX-Underbraces): s. slides_present.html
     wireKatexFragmentResort(inst, previewSlidesEl);
+    // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
+    wireBgZoom(inst);
     // Zur vorherigen Folie zurückkehren (Reveal clampet bei kürzerem Deck;
     // f = -1 → Fragments im Ausgangszustand, transition:none → ohne Flash)
     if (prevIndex && (prevIndex.h > 0 || prevIndex.v > 0 || (prevIndex.f || 0) > 0)) {
@@ -507,7 +527,7 @@
         method: "PUT",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, content, is_visible: currentVisible }),
+        body: JSON.stringify({ title, content, is_visible: currentVisible, summary: summaryInput.value }),
       });
       const data = await res.json();
       if (!res.ok) {

@@ -1,0 +1,571 @@
+{% extends "course/base.html" %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+{% endblock %}
+
+{# ─────────────────────────────────────────────────────────────────────
+   Kurs-Tab "Quellen": Quellenbibliothek (PROF/TUTOR/Admin).
+
+   Zitation im Markdown: @cite:{key} / @citet:{key} / @citep:{key}
+   (Auflösung + Nummerierung: static/js/markdown-renderer.js,
+   Datenquelle: script-refmap → references).
+
+   API: GET/POST /api/courses/{id}/references,
+        PUT/DELETE /api/courses/{id}/references/{ref_id},
+        POST /api/courses/{id}/references/import-bibtex,
+        PATCH /api/courses/{id}/references/reorder
+   ───────────────────────────────────────────────────────────────────── #}
+
+{% block course_content %}
+
+<div class="grid gap-6 lg:grid-cols-3">
+
+  <!-- Neue Quelle -->
+  <div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+      <h2 class="font-bold text-gray-800 mb-3">📚 Neue Quelle</h2>
+      <form id="ref-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-key">Citation-Key</label>
+          <input type="text" id="ref-key" name="key" required maxlength="100"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="z.B. forster2006">
+          <p class="text-xs text-gray-400 mt-1">Zitiert werden kann dann mit <code class="text-[11px]">@cite:forster2006</code>.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-type">Typ</label>
+            <input type="text" id="ref-type" name="entry_type" maxlength="50" list="ref-types"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   placeholder="book">
+            <datalist id="ref-types">
+              <option value="article"></option>
+              <option value="book"></option>
+              <option value="inproceedings"></option>
+              <option value="incollection"></option>
+              <option value="phdthesis"></option>
+              <option value="techreport"></option>
+              <option value="misc"></option>
+              <option value="online"></option>
+            </datalist>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-year">Jahr</label>
+            <input type="text" id="ref-year" name="year" maxlength="10"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   placeholder="2020">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-authors">Autoren</label>
+          <input type="text" id="ref-authors" name="authors" maxlength="500"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="Forster, Otto and Knill, Eva">
+          <p class="text-xs text-gray-400 mt-1">Mehrere Autoren mit „ and " trennen.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-title">Titel</label>
+          <input type="text" id="ref-title" name="title" maxlength="500"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="Analysis 1">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-venue">Journal / Konferenz / Verlag</label>
+          <input type="text" id="ref-venue" name="venue" maxlength="300"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="Vieweg, Wiesbaden">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-detail">Details (Band, Seiten, Edition)</label>
+          <input type="text" id="ref-detail" name="detail" maxlength="200"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                 placeholder="5(2), 10–20">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-doi">DOI</label>
+            <input type="text" id="ref-doi" name="doi" maxlength="200"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   placeholder="10.1007/…">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-url">Link</label>
+            <input type="text" id="ref-url" name="url" maxlength="500"
+                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                   placeholder="https://…">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-note">Anmerkung</label>
+          <input type="text" id="ref-note" name="note" maxlength="500"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="ref-description">Inhalt / Kernpunkte <span class="text-gray-400 font-normal">(wird dem LLM als Zitier-Hinweis vorgelegt)</span></label>
+          <textarea id="ref-description" name="description" rows="4"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    placeholder="Worum geht es? Wann sollte diese Quelle zitiert werden?"></textarea>
+        </div>
+        <button type="submit"
+                class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+          Quelle hinzufügen
+        </button>
+      </form>
+
+      <hr class="my-4 border-gray-100">
+
+      <h3 class="text-sm font-semibold text-gray-700 mb-2">Aus BibTeX importieren</h3>
+      <textarea id="bibtex-input" rows="6"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="@book{forster2006,&#10;  author = {Forster, Otto},&&#10;  title = {Analysis 1},&#10;  publisher = {Vieweg},&#10;  year = {2006}&#10;}"></textarea>
+      <button type="button" id="bibtex-import-btn"
+              class="mt-2 w-full border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-lg px-4 py-2 text-sm transition font-semibold">
+        📥 BibTeX-Entries importieren
+      </button>
+      <p class="text-xs text-gray-400 mt-1">Vorhandene Citation-Keys werden übersprungen.</p>
+    </div>
+
+    <!-- Hinweis: Zitieren -->
+    <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mt-4 text-xs text-blue-900 leading-relaxed">
+      <strong>Zitieren:</strong> Kopiere einen der Citation-Snippets einer Quelle und baue ihn in
+      Skript, Aufgaben oder Slides ein:
+      <code class="text-[11px]">@cite:key</code> = <code class="text-[11px]">[1]</code> (Superscript),
+      <code class="text-[11px]">@citet:key</code> = „Autor (Jahr)",
+      <code class="text-[11px]">@citep:key</code> = „(Autor, Jahr)".
+      Die Nummer ist kursweit stabil; am Ende von Skript-Kapiteln und
+      Aufgaben wird automatisch ein Quellenverzeichnis der zitierten Einträge angehängt.
+    </div>
+  </div>
+
+  <!-- Quellen-Liste -->
+  <div class="lg:col-span-2">
+    <div class="flex items-center gap-3 mb-3">
+      <input type="search" id="ref-search" placeholder="Suche (Key/Titel/Autoren)…"
+             class="flex-1 min-w-40 text-sm border border-gray-300 rounded-lg px-3 py-1.5 bg-white
+                    focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      <span id="ref-count" class="text-xs text-gray-400 whitespace-nowrap"></span>
+    </div>
+    <div id="ref-list" class="space-y-3">
+      <p class="text-gray-400 text-sm">Wird geladen…</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- Edit-Modal -->
+<div id="ref-edit-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 mx-4 max-h-[90vh] overflow-y-auto">
+    <h2 class="text-xl font-bold text-gray-800 mb-4">Quelle bearbeiten</h2>
+    <form id="ref-edit-form" class="space-y-3">
+      <input type="hidden" id="edit-ref-id">
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-key">Citation-Key</label>
+          <input type="text" id="edit-key" required maxlength="100"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-type">Typ</label>
+          <input type="text" id="edit-type" maxlength="50" list="ref-types"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-authors">Autoren</label>
+        <input type="text" id="edit-authors" maxlength="500"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-title">Titel</label>
+        <input type="text" id="edit-title" maxlength="500"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-year">Jahr</label>
+          <input type="text" id="edit-year" maxlength="10"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-venue">Journal / Konferenz / Verlag</label>
+          <input type="text" id="edit-venue" maxlength="300"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-detail">Details (Band, Seiten, Edition)</label>
+        <input type="text" id="edit-detail" maxlength="200"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-doi">DOI</label>
+          <input type="text" id="edit-doi" maxlength="200"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-url">Link</label>
+          <input type="text" id="edit-url" maxlength="500"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-note">Anmerkung</label>
+        <input type="text" id="edit-note" maxlength="500"
+               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1" for="edit-description">Inhalt / Kernpunkte</label>
+        <textarea id="edit-description" rows="4"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+      </div>
+      <div class="flex items-center justify-end gap-3 mt-2">
+        <button type="button" id="ref-edit-cancel"
+                class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition">
+          Abbrechen
+        </button>
+        <button type="submit"
+                class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition font-semibold">
+          Speichern
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function() {
+  'use strict';
+
+  let refList = [];
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ─── Laden ────────────────────────────────────────────────────
+
+  async function loadRefs() {
+    const list = document.getElementById('ref-list');
+    try {
+      const res = await fetch(`/api/courses/${courseId}/references`, { credentials: 'same-origin' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        list.innerHTML = `<p class="text-red-500 text-sm">${escapeHtml(data.detail || 'Fehler beim Laden.')}</p>`;
+        return;
+      }
+      refList = data;
+      renderList();
+      scrollToHash();
+      // Renderer-Cache bürsten: Zitations-Nummern/Keys haben sich geändert,
+      // damit Skript/Aufgaben-Previews sofort die neue Nummerierung zeigen.
+      if (typeof refreshCourseRefMap === 'function') refreshCourseRefMap();
+    } catch (err) {
+      list.innerHTML = '<p class="text-red-500 text-sm">Fehler beim Laden.</p>';
+    }
+  }
+
+  function getVisibleRefs() {
+    const q = (document.getElementById('ref-search').value || '').trim().toLowerCase();
+    if (!q) return refList;
+    return refList.filter((r) =>
+      (r.key + ' ' + r.title + ' ' + r.authors_display + ' ' + r.venue).toLowerCase().includes(q)
+    );
+  }
+
+  function renderList() {
+    const list = document.getElementById('ref-list');
+    const count = document.getElementById('ref-count');
+    const visible = getVisibleRefs();
+    // Nummer = Position in der Gesamtreihenfolge (= Zitations-Nummer)
+    const numOf = {};
+    refList.forEach((r, i) => { numOf[r.id] = i + 1; });
+    count.textContent = refList.length
+      ? (visible.length === refList.length ? refList.length + ' Quellen' : visible.length + ' / ' + refList.length + ' Quellen')
+      : '';
+    if (!refList.length) {
+      list.innerHTML = '<p class="text-gray-400 text-sm">Noch keine Quellen. Lege links eine an oder importiere BibTeX-Entries.</p>';
+      return;
+    }
+    if (!visible.length) {
+      list.innerHTML = '<p class="text-gray-400 text-sm">Keine Quellen für die aktuelle Suche.</p>';
+      return;
+    }
+    list.innerHTML = visible.map((r) => refCard(r, numOf[r.id])).join('');
+  }
+
+  function refCard(r, num) {
+    const authorsYear = r.authors_display
+      ? (r.authors_display + (r.year ? ' (' + escapeHtml(r.year) + ')' : ''))
+      : '<span class="text-gray-400 italic">Keine Autoren</span>';
+    const urlHtml = r.url
+      ? `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline" title="Quelle nachschlagen">🔗 ${escapeHtml(r.url)}</a>`
+      : '';
+    const desc = r.description
+      ? `<p class="text-xs text-gray-500 mt-1.5">${escapeHtml(r.description)}</p>`
+      : '';
+    const note = r.note
+      ? `<p class="text-[11px] text-gray-400 mt-1" title="BibTeX-Anmerkung">📝 ${escapeHtml(r.note)}</p>`
+      : '';
+    return `<div id="ref-card-${r.id}" data-ref-id="${r.id}" class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+      <div class="flex items-center gap-1">
+        <div class="ref-drag cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition select-none p-1" title="Ziehen zur Reihenfolge ändern">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/>
+            <circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/>
+            <circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/>
+          </svg>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-xs text-gray-400 font-mono mt-0.5">[${num}]</span>
+            <code class="text-xs font-mono bg-gray-100 border border-gray-200 rounded px-1.5 py-0.5 text-gray-700">${escapeHtml(r.key)}</code>
+            <span class="text-[10px] uppercase tracking-wide text-gray-400">${escapeHtml(r.entry_type || 'misc')}</span>
+            ${urlHtml}
+          </div>
+          ${r.title ? `<h3 class="font-semibold text-gray-800 text-sm mt-1.5">${escapeHtml(r.title)}</h3>` : ''}
+          <p class="text-xs text-gray-600 mt-0.5">${authorsYear}${r.venue ? ' · ' + escapeHtml(r.venue) : ''}${r.detail ? ', ' + escapeHtml(r.detail) : ''}</p>
+          ${desc}${note}
+          <div class="flex flex-wrap items-center gap-1.5 mt-3">
+            <button type="button" class="text-xs border border-gray-300 rounded-lg px-2 py-1 text-gray-600 hover:bg-gray-50 transition font-mono"
+                    data-copy="${escapeHtml('@cite:' + r.key)}" title="Superscript-Zitation [N] kopieren">@cite:</button>
+            <button type="button" class="text-xs border border-gray-300 rounded-lg px-2 py-1 text-gray-600 hover:bg-gray-50 transition font-mono"
+                    data-copy="${escapeHtml('@citet:' + r.key)}" title="„Autor (Jahr)“ kopieren">@citet:</button>
+            <button type="button" class="text-xs border border-gray-300 rounded-lg px-2 py-1 text-gray-600 hover:bg-gray-50 transition font-mono"
+                    data-copy="${escapeHtml('@citep:' + r.key)}" title="„(Autor, Jahr)“ kopieren">@citep:</button>
+            <span class="flex-1"></span>
+            <button type="button" class="text-xs border border-gray-300 rounded-lg px-2 py-1.5 text-gray-600 hover:bg-gray-50 transition"
+                    data-edit="${r.id}">✏️ Bearbeiten</button>
+            <button type="button" class="text-xs border border-red-200 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 transition"
+                    data-del="${r.id}">🗑️</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // Deep Link #ref-{key} (aus Zitations-Links in Skript/Aufgaben)
+  function scrollToHash() {
+    const h = (location.hash || '').replace(/^#ref-/, '');
+    if (!h) return;
+    const r = refList.find((x) => x.key === h);
+    if (!r) return;
+    const el = document.getElementById('ref-card-' + r.id);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('ring-2', 'ring-blue-400');
+      setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400'), 2500);
+    }
+  }
+
+  // ─── Aktionen (Event-Delegation) ──────────────────────────────
+
+  document.getElementById('ref-list').addEventListener('click', (e) => {
+    const target = e.target.closest('button[data-copy], button[data-edit], button[data-del]');
+    if (!target) return;
+
+    if (target.dataset.copy) {
+      navigator.clipboard.writeText(target.dataset.copy)
+        .then(() => showToast('Citation-Snippet kopiert.', 'success'))
+        .catch(() => showToast('Kopieren fehlgeschlagen.', 'error'));
+      return;
+    }
+    if (target.dataset.edit) {
+      openEditModal(parseInt(target.dataset.edit, 10));
+      return;
+    }
+    if (target.dataset.del) {
+      deleteRef(parseInt(target.dataset.del, 10));
+    }
+  });
+
+  async function deleteRef(id) {
+    const r = refList.find((x) => x.id === id);
+    if (!r) return;
+    if (!confirm(`Quelle „${r.key}“ wirklich löschen?\n\nBestehende @cite:${r.key}-Referenzen im Inhalt zeigen danach ❓ an.`)) return;
+    try {
+      const res = await fetch(`/api/courses/${courseId}/references/${id}`, {
+        method: 'DELETE', credentials: 'same-origin',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'Löschen fehlgeschlagen.', 'error'); return; }
+      showToast(data.message || 'Quelle gelöscht.', 'success');
+      loadRefs();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  }
+
+  // ─── Erstellen ────────────────────────────────────────────────
+
+  function readForm(prefix) {
+    const v = (name) => (document.getElementById(prefix + name).value || '').trim();
+    return {
+      key: v('-key'), entry_type: v('-type'), authors: v('-authors'),
+      title: v('-title'), year: v('-year'), venue: v('-venue'),
+      detail: v('-detail'), doi: v('-doi'), url: v('-url'),
+      note: v('-note'), description: v('-description'),
+    };
+  }
+
+  document.getElementById('ref-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`/api/courses/${courseId}/references`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(readForm('ref')),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'Quelle konnte nicht angelegt werden.', 'error'); return; }
+      showToast(`Quelle „${data.key}“ angelegt.`, 'success');
+      e.target.reset();
+      loadRefs();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  });
+
+  // ─── BibTeX-Import ────────────────────────────────────────────
+
+  document.getElementById('bibtex-import-btn').addEventListener('click', async () => {
+    const bibtex = document.getElementById('bibtex-input').value.trim();
+    if (!bibtex) { showToast('Bitte BibTeX-Entries einfügen.', 'error'); return; }
+    try {
+      const res = await fetch(`/api/courses/${courseId}/references/import-bibtex`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bibtex }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'Import fehlgeschlagen.', 'error'); return; }
+      showToast(data.message || 'Fertig.', 'success');
+      if (data.errors && data.errors.length) {
+        setTimeout(() => showToast(data.errors.slice(0, 3).join(' '), 'error'), 400);
+      }
+      document.getElementById('bibtex-input').value = '';
+      loadRefs();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  });
+
+  // ─── Edit-Modal ───────────────────────────────────────────────
+
+  const EDIT_FIELDS = ['key', 'type', 'authors', 'title', 'year', 'venue', 'detail', 'doi', 'url', 'note', 'description'];
+
+  function openEditModal(id) {
+    const r = refList.find((x) => x.id === id);
+    if (!r) return;
+    document.getElementById('edit-ref-id').value = r.id;
+    // Typ: wie im Erstellen-Formular ein editierbares Feld mit Vorschlägen
+    // (Datalist); ein Custom-Typ wird in die Vorschlagsliste aufgenommen,
+    // damit er als Vorschlag bleibt.
+    const curType = (r.entry_type || '').trim();
+    if (curType) {
+      const dl = document.getElementById('ref-types');
+      if (![...dl.options].some((o) => o.value === curType)) {
+        const o = document.createElement('option');
+        o.value = curType;
+        dl.appendChild(o);
+      }
+    }
+    const map = { key: r.key, type: curType, authors: (r.authors || []).join(' and '), title: r.title,
+                  year: r.year, venue: r.venue, detail: r.detail, doi: r.doi, url: r.url,
+                  note: r.note, description: r.description };
+    EDIT_FIELDS.forEach((f) => { document.getElementById('edit-' + f).value = map[f] || ''; });
+    document.getElementById('ref-edit-modal').classList.remove('hidden');
+    document.getElementById('edit-key').focus();
+  }
+
+  function closeEditModal() {
+    document.getElementById('ref-edit-modal').classList.add('hidden');
+  }
+
+  document.getElementById('ref-edit-cancel').addEventListener('click', closeEditModal);
+  document.getElementById('ref-edit-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'ref-edit-modal') closeEditModal();
+  });
+
+  document.getElementById('ref-edit-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = parseInt(document.getElementById('edit-ref-id').value, 10);
+    const body = readForm('edit');
+    try {
+      const res = await fetch(`/api/courses/${courseId}/references/${id}`, {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(data.detail || 'Speichern fehlgeschlagen.', 'error'); return; }
+      showToast('Quelle gespeichert.', 'success');
+      closeEditModal();
+      loadRefs();
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+    }
+  });
+
+  document.getElementById('ref-search').addEventListener('input', (e) => {
+    renderList();
+    // Drag nur bei vollständiger Liste zulassen — in der gefilterten Ansicht
+    // würde die DOM-Reihenfolge eine korrupte Reihenfolge produzieren.
+    if (refSortable) refSortable.option('handle', e.target.value.trim() ? null : '.ref-drag');
+  });
+
+  // ─── Drag & Drop (Reihenfolge = Zitations-Nummer) ───────────────
+
+  let refSortable = null;
+  function initRefSortable() {
+    const list = document.getElementById('ref-list');
+    if (!list || refSortable || typeof Sortable === 'undefined') return;
+    refSortable = Sortable.create(list, {
+      handle: '.ref-drag',
+      animation: 150,
+      ghostClass: 'bg-blue-50',
+      chosenClass: 'shadow-lg',
+      dragClass: 'shadow-xl',
+      onEnd: async () => {
+        if (getVisibleRefs().length !== refList.length) {
+          showToast('Suche zuerst aufheben, um die Reihenfolge zu ändern.', 'error');
+          renderList();
+          return;
+        }
+        const ids = [];
+        list.querySelectorAll('[data-ref-id]').forEach((row) => {
+          ids.push(parseInt(row.getAttribute('data-ref-id'), 10));
+        });
+        try {
+          const res = await fetch(`/api/courses/${courseId}/references/reorder`, {
+            method: 'PATCH', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reference_ids: ids }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(data.detail || 'Fehler beim Verschieben.', 'error');
+            loadRefs();
+            return;
+          }
+          showToast('Reihenfolge aktualisiert (Zitations-Nummern angepasst).', 'success');
+          loadRefs(); // neue Nummern + refmap-Refresh für Skript/Aufgaben
+        } catch (err) {
+          showToast('Fehler: ' + err.message, 'error');
+          loadRefs();
+        }
+      },
+    });
+  }
+
+  loadRefs();
+  initRefSortable();
+})();
+</script>
+{% endblock %}

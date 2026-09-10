@@ -25,6 +25,22 @@ class GlobalUserRole(str, Enum):
     USER = "USER"
 
 
+# ─── Import-Stage-Status (Kurs-Material-Import) ──────────────────
+# pending      noch nicht gestartet
+# running      Job läuft
+# paused       vom User pausiert
+# done         erfolgreich abgeschlossen
+# skipped      bewusst übersprungen (User)
+# error        Fehler (Details pro Einheit in chapter_plan/file_map/report)
+# cancelled    vom User abgebrochen
+# interrupted  App-Neustart während des Jobs (Runner startet stateless neu)
+IMPORT_STAGE_STATUSES = (
+    "pending", "running", "paused", "done", "skipped", "error", "cancelled", "interrupted",
+)
+IMPORT_STAGE_ACTIVE = ("running", "paused")
+IMPORT_STAGE_ACTIVE_OR_INTERRUPTED = ("running", "paused", "interrupted")
+
+
 class CourseRole(str, Enum):
     PROF = "PROF"
     TUTOR = "TUTOR"
@@ -112,6 +128,7 @@ class Course(CourseBase, table=True):
     materials: List["CourseMaterial"] = Relationship(back_populates="course")
     script_sections: List["ScriptSection"] = Relationship(back_populates="course")
     media: List["CourseMedia"] = Relationship(back_populates="course")
+    references: List["CourseReference"] = Relationship(back_populates="course")
     settings: Optional["CourseSettings"] = Relationship(back_populates="course")
     channels: List["ForumChannel"] = Relationship(back_populates="course")
 
@@ -248,6 +265,7 @@ class CourseMaterialBase(SQLModel):
     content: str = Field(default="")              # Markdown (Slides: Folien mit `---` getrennt)
     is_visible: bool = Field(default=True)        # Für Studenten sichtbar
     display_order: int = Field(default=0)         # Reihenfolge (wichtig für mehrere Slide-Decks)
+    summary: str = Field(default="")              # Interne LLM-Zusammenfassung (NICHT für Studenten; Konsistenz zwischen Decks)
 
 
 class CourseMaterial(CourseMaterialBase, table=True):
@@ -321,6 +339,7 @@ class CourseMediaBase(SQLModel):
     media_type: str = Field(default="image", max_length=50)  # image (später: applet, figure)
     mime_type: str = Field(default="image/png", max_length=100)
     file_size: int = Field(default=0)
+    content_hash: Optional[str] = Field(default=None, max_length=64, index=True)  # SHA256 der Quelldatei (Medien-Import-Dedup)
     llm_description: Optional[str] = Field(default=None, max_length=2000)  # Was zeigt das Medium? (für LLM-Pipeline)
 
 
@@ -337,6 +356,44 @@ class CourseMedia(CourseMediaBase, table=True):
 
 
 class CourseMediaRead(CourseMediaBase):
+    id: int
+    created_by: int
+    created_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COURSE REFERENCE (Quellen-Bibliothek, BibTeX-artig, PROF/TUTOR/Admin)
+# ═══════════════════════════════════════════════════════════════════
+
+class CourseReferenceBase(SQLModel):
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    key: str = Field(max_length=100)            # BibTeX-Schlüssel (einzig pro Kurs; @cite:{key})
+    entry_type: str = Field(default="misc", max_length=50)   # article/book/inproceedings/...
+    authors: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    title: str = Field(default="", max_length=500)
+    year: str = Field(default="", max_length=10)
+    venue: str = Field(default="", max_length=300)   # Zeitschrift / Konferenz / Verlag
+    detail: str = Field(default="", max_length=200)   # Band(Heft), Seiten, Edition ...
+    address: str = Field(default="", max_length=200)
+    doi: str = Field(default="", max_length=200)
+    url: str = Field(default="", max_length=500)      # Link zur Quelle (Nachschlagen)
+    note: str = Field(default="", max_length=500)
+    description: str = Field(default="")   # Inhalt/Kernpunkte — wann soll die Quelle zitiert werden?
+    display_order: int = Field(default=0)  # Reihenfolge = globale Zitations-Nummer (stabil pro Kurs)
+
+
+class CourseReference(CourseReferenceBase, table=True):
+    __tablename__ = "course_references"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+
+    # Relationships
+    course: Course = Relationship(back_populates="references")
+
+
+class CourseReferenceRead(CourseReferenceBase):
     id: int
     created_by: int
     created_at: datetime
@@ -774,3 +831,100 @@ class ScriptQuestionResponse(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.now)
 
     question: Optional["ScriptQuestion"] = Relationship(back_populates="responses")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COURSE IMPORT (Kurs-Materialien aus einem Zip importieren, PROF/Admin)
+# ═══════════════════════════════════════════════════════════════════
+
+class CourseImport(SQLModel, table=True):
+    """Eine Zeile pro Zip-Import. Max. ein Import pro Kurs (gelöscht via API).
+
+    Der Status pro Stufe IST das Steuerungs-Flag (kein separates paused-Feld):
+    pending → running → done / error, dazwischen pausierbar (paused),
+    abbrechbar (cancelled), bei App-Neustart interrupted. Der Runner liest
+    den Status stateless aus der DB (frische Session pro Gate/Unit) —
+    Pause/Resume/Cancel/Neustart laufen über denselben Code-Pfad.
+
+    JSON-Spalten:
+    - manifest:     [{path, type, size, read_path?, pages?, line_count?, main_tex?}]
+                    (klassifizierte Zip-Einträge; read_path = Datei, die gelesen
+                    wird = Sidecar (.md) für docx/pptx/pdf, sonst die Originale)
+    - refine-Scope: report["refine_options"] = {"scope": "script"|"slides"}
+                    (Wirkbereich der Nachbesserungs-Stufe, stateless für Resume)
+    - file_map:     {path: {status, chunks: [{start_line, end_line, summary,
+                    headings: [{text, line, level}], error?}], error?}}
+                    (LLM-Struktur-Digests der Text-Dateien; Zeilen 1-basiert, inclusive)
+    - media_map:    {path: {url, urls?, media_id, media_ids?}} (importierte Medien)
+    - reference_map: {key: {entry_type, authors, title, year, venue, detail, address,
+                    doi, url, note, stub?, sources: [Datei], imported_ref_id?}}
+                    (detected Quellen aus .bib-Files + \\cite-Keys; stub = Key ohne Bib-Daten)
+    - chapter_plan: [{title, enabled, description?, sources: [{file, start_line,
+                    end_line}], section_id?, script_status: pending|done|error,
+                    script_error?}] (Skript-Plan; Einträge mit section_id =
+                    Regenerierung eines bestehenden Kapitels; ältere Pläne können
+                    zusätzlich „slides“ enthalten, aus dem der Folien-Plan bei
+                    Bedarf abgeleitet wird)
+    - slides_plan:  [{title, enabled, description?, script_chapters? (legacy),
+                    sources: [...], slides?: {deck, start, end} | null,
+                    sections?: [ScriptSection.id], material_id?,
+                    slides_status: pending|done|error, slides_error?}]
+    - progress:     {current: str, stages: {stage: {total, done, failed}},
+                    units: {unit_key: {done, total}}}
+    - report:       {warnings: [], errors: [], summary?, slides_options?: {...}}
+    """
+    __tablename__ = "course_imports"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    # Staging-Verzeichnisname: data/imports/course_{id}/{job_id}/
+    job_id: str = Field(max_length=32, unique=True)
+    zip_name: str = Field(max_length=300)
+    created_by: int = Field(foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    filemap_status: str = Field(default="pending", max_length=20)
+    media_status: str = Field(default="pending", max_length=20)
+    references_status: str = Field(default="pending", max_length=20)
+    ref_extract_status: str = Field(default="pending", max_length=20)  # LLM-Quellen-Extraktion
+    plan_status: str = Field(default="pending", max_length=20)  # Skript-Kapitel-Planner
+    slides_plan_status: str = Field(default="pending", max_length=20)  # Folien-Planner
+    script_status: str = Field(default="pending", max_length=20)
+    slides_status: str = Field(default="pending", max_length=20)
+    refine_status: str = Field(default="pending", max_length=20)  # Nachbesserung (Refinement) bereits generierter Kapitel/Decks
+
+    manifest: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    file_map: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    media_map: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    reference_map: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    chapter_plan: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    slides_plan: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    progress: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    report: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+
+
+class LLMDebugEntry(SQLModel, table=True):
+    """Persistentes LLM-Debug-Log für die Admin-Konsole (Tab "LLM-Debug-Log").
+
+    Jeder LLM-Call wird mit Prompt-Typ, Modell/URL, public/private, System-Prompt,
+    Prompt, Antwort, Thinking, Latenz und Status protokolliert.
+    Retention: 7 Tage — alte Einträge werden beim Purgen gelöscht
+    (services/llm_service.py). Neue Tabelle wird beim App-Start per create_all angelegt.
+    """
+    __tablename__ = "llm_debug_entries"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ts: datetime = Field(default_factory=datetime.now, index=True)
+    label: str = Field(default="", max_length=100)
+    model: str = Field(default="", max_length=200)
+    url: str = Field(default="", max_length=500)
+    is_public: bool = False
+    system_prompt: str = ""
+    prompt: str = ""
+    response: str = ""
+    thinking: str = ""
+    success: bool = True
+    error: str = ""
+    latency_ms: int = 0
+    attempts: int = 1

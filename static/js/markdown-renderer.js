@@ -13,22 +13,33 @@
  * Escaped dollar: \$                              → literal $ (no LaTeX)
  * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
- * Nummerierte Tabelle: Pipe-Tabelle + Zeile {#tab:label}[Caption] darunter
+ * Nummerierte Tabelle: Pipe-Tabelle + Zeile {#tab:label}[Caption]{zoom=X} darunter
  *                                                            → "Tab. N: Caption" unter der Tabelle
- *                                                              (Anker tab:label)
+ *                                                              (Anker tab:label); {zoom=X} (führender Punkt
+ *                                                            optional) = Schriftgröße ×X (Slides UND Skript)
  * Nummerierte Section: ## Titel {#sec:label}      → "K.N[.M]" vor der Überschrift (h2–h4,
  *                                                            kapitellokal; Kapitelnummer aus dem refmap);
  *                                                            Anker sec:label bzw. sec:{sectionId}-{num}
  * Querverweise:       @fig:label / @eq:label / @tab:label / @sec:label
- *                                                            → klickbares "Abb. N" / "Gl. N" / "Tab. N" / "Abs. N.M"
+ *                                                            → klickbares "Abb. N" / "Abb. N a)" (Subfigure-Inner) /
+ *                                                            "Gl. N" / "Tab. N" / "Abs. N.M"
  *                                                            (In-Page- oder Kapitel-übergreifender Link, ❓ wenn unbekannt)
  *                    @kap:label = Legacy-Alias für @sec:label. Kapitel-Label = {#sec:label}
  *                    als EIGENE ZEILE (erste nicht-leere Zeile) am Kapitelanfang → "Kap. N"
  *                    (verlinkt auf #chapter-{id}); die Label-Zeile wird selbst nicht gerendert
+ * Zitationen:        @cite:{key} / @citet:{key} / @citep:{key}
+ *                                                            → "[N]" (Superscript) / "Autor (Jahr)" / "(Autor, Jahr)"
+ *                                                            N = kursweite stabile Nummer (script-refmap.references);
+ *                                                            bei options.bibliography: „Quellen“-Liste (nur zitierte
+ *                                                            Einträge) ans Dokument-Ende; ❓ wenn der Key unbekannt ist
  * Aufgaben-Box:       @task:{id}                  → Aufgaben-Box (Student: Punkte/Medaille analog
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
- * Hinweis-Boxen:      @box:{typ} … @endbox        → farbig markierte Box (merksatz/hinweis/bemerkung/
- *                                                            warnung/beispiel; unbekannte Typen = neutrale Box)
+ * Hinweis-Boxen:      @startbox:{typ}[Caption] {#box:label} … @endbox
+ *                                                            → farbig markierte Box (merksatz/hinweis/bemerkung/
+ *                                                            warnung/beispiel; unbekannte Typen = neutrale Box);
+ *                                                            [Caption] = Box-Überschrift („Definition N: Caption“,
+ *                                                            $…$-Math erlaubt); Caption/Label in beliebiger
+ *                                                            Reihenfolge (je max. einmal)
  *                                                            highlight: Box OHNE Kopf (transparent + Blur,
  *                                                            Primärfarbe), z.B. für Titel auf Deckslides;
  *                                                            @boxcolor:<farbe> als ERSTE Zeile übersteuert
@@ -50,6 +61,8 @@
  *                                                            Slides UND Skript; führender Punkt optional,
  *                                                            wie bei Applets; Inline-Styles am <pre>)
  *                                                            (unbekanntes Token → 1. Zeile bleibt Code-Text)
+ *                                                            $…$ im Code (z. B. Pseudo-Code) → Inline-Formel
+ *                                                            (nur Paare, die nach Math aussehen; s. applyCodeMath)
  * AutoAnimate-IDs:    {#aaid:label}                → (nur Slides) explizites Auto-Animate-Element-
  *                                                            Matching: Elemente mit demselben Label auf
  *                                                            zwei Folien animieren per ID ineinander
@@ -69,6 +82,18 @@
  *                    ![caption](https://…)          → dito für externe Websites
  *                                                            (http(s)-URL ohne Bild-Endung);
  *                                                            mit {#fig:label} nummeriert wie Bilder
+ * Subfiguren:         ![Gesamt](![…](u1){height=…}{#fig:a} ![…](u2){#fig:b}){#fig:label}
+ *                                                            → EINE Abbildung mit mehreren Medien in einer
+ *                                                            Flex-Zeile (jedes mit eigener Caption; innere
+ *                                                            {height=X} und optionales {#fig:label}, je max. einmal,
+ *                                                            s. 1e0/6a4)
+ *                                                            Sobald mindestens ein Inner ein {#fig:label} trägt,
+ *                                                            wird der KOMPLEXX als "Abb. N" nummeriert (auch
+ *                                                            OHNE eigenes Komplex-{#fig:label}!) und ALLE Inners
+ *                                                            automatisch mit a), b), c), … versehen (Letter =
+ *                                                            Position im Komplex; Prefix in der Caption). Gelabelte
+ *                                                            Inners sind per @fig:label referenzierbar → "Abb. N a)".
+ *                                                            Ohne jegliches Label bleibt die Zeile unnummeriert.
  * Labels dürfen (Unicode-)Buchstaben enthalten, z.B. Umlaute: {#fig:verteilung_überblick}
  *
  * Code blocks (```...``` and `...`) are protected from LaTeX extraction.
@@ -109,9 +134,20 @@ function getCourseRefMap() {
     return Promise.resolve(null); // bewusst ohne Caching → nächster Render versucht es erneut
   }
   if (!_refMapPromise) {
-    _refMapPromise = fetch(`/api/courses/${cid}/script-refmap`, { credentials: 'same-origin' })
+    _refMapPromise = fetch(`/api/courses/${cid}/script-refmap`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
       .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+      .catch(() => null)
+      .then((data) => {
+        // Fehler (5xx, Timeout, Server-Neustart, …): das Fehlschlag-Ergebnis
+        // NICHT dauerhaft cachen — sonst rendern alle folgenden Renders der
+        // Seite mit Fallback-Nummern (Zähler „springt auf 1“), bis zu einem
+        // Reload. Nächstes getCourseRefMap() versucht es erneut.
+        if (data === null) _refMapPromise = null;
+        return data;
+      });
   }
   return _refMapPromise;
 }
@@ -136,9 +172,17 @@ function getCourseSlidesRefMap() {
     return Promise.resolve(null); // bewusst ohne Caching → nächster Render versucht es erneut
   }
   if (!_slidesRefMapPromise) {
-    _slidesRefMapPromise = fetch(`/api/courses/${cid}/slides-refmap`, { credentials: 'same-origin' })
+    _slidesRefMapPromise = fetch(`/api/courses/${cid}/slides-refmap`, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
       .then((r) => (r.ok ? r.json() : null))
-      .catch(() => null);
+      .catch(() => null)
+      .then((data) => {
+        // Wie script-refmap: Fehlschläge nicht dauerhaft cachen (s. dort).
+        if (data === null) _slidesRefMapPromise = null;
+        return data;
+      });
   }
   return _slidesRefMapPromise;
 }
@@ -153,20 +197,23 @@ function _chapterRef(refMap, sectionId) {
   return refMap.chapters[String(sectionId)] || null;
 }
 
-// ─── Hinweis-/Merksatz-/Mathe-Boxen: @box:{typ} … @endbox ──────────────
+// ─── Hinweis-/Merksatz-/Mathe-Boxen: @startbox:{typ} … @endbox ─────────
 // Bekannte Typen mit Icon & Überschrift. Unbekannte Typen werden als neutrale
 // Box mit dem rohen Typen als Titel gerendert (Inhalt geht nicht verloren).
+// [Caption] auf der @startbox:-Zeile (beliebige Reihenfolge mit {#box:label})
+// ergänzt den Kopf: „Definition N: Caption“ (Math: s. renderCaptionMath).
 // Mathe-Typen (definition, satz, …): Referenzen auf beschriftete Boxen
 // ({#box:label}) zeigen den Typ-Titel („Satz N“), s. Xref-Auflösung unten.
 const CALLOUT_TYPES = {
   merksatz: { icon: '📌', title: 'Merksatz' },
   hinweis: { icon: '💡', title: 'Hinweis' },
-  bemerkung: { icon: 'ℹ️', title: 'Nebenbemerkung' },
+  bemerkung: { icon: 'ℹ️', title: 'Bemerkung' },
   warnung: { icon: '⚠️', title: 'Warnung' },
   beispiel: { icon: '📎', title: 'Beispiel' },
   code: { icon: '💻', title: 'Code' },
   definition: { icon: '📖', title: 'Definition' },
   satz: { icon: '📜', title: 'Satz' },
+  theorem: { icon: '⭐', title: 'Theorem' },
   lemma: { icon: '🧩', title: 'Lemma' },
   proposition: { icon: '📃', title: 'Proposition' },
   korollar: { icon: '🌟', title: 'Korollar' },
@@ -175,7 +222,7 @@ const CALLOUT_TYPES = {
 };
 
 // ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
-// @box:highlight ist die headless Variante der Hinweis-Boxen (kein
+// @startbox:highlight ist die headless Variante der Hinweis-Boxen (kein
 // Icon/Überschrift-Kopf, Styling in slides.css). Als ERSTE Zeile des
 // Boxinhalts darf @boxcolor:<farbe> die Boxfarbe übersteuern
 // (#rgb/#rrggbb, rgb()/rgba(), klassische CSS-Farbnamen). Der Renderer
@@ -401,7 +448,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return;
   }
 
-  const { preview = false, sectionId = null, slideMode = false } = options;
+  const { preview = false, sectionId = null, slideMode = false, slidePos = null } = options;
 
   // Globale Label-Map für Querverweise (gecacht; null auf Nicht-Kurs-Seiten).
   // Keys sind kind-prefixed ("eq:test" ≠ "box:test"), s. script-refmap.
@@ -448,18 +495,21 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%IC${inlineCodeSpans.length - 1}%%`;
   });
 
-  // 1d. Convert callout boxes: @box:{typ} … @endbox
+  // 1d. Convert callout boxes: @startbox:{typ} … @endbox
   //     → statischer HTML-Wrapper (marked lässt HTML-Blöcke unverändert
   //     durch, DOMPurify behält die divs). Der INHALT bleibt im Fließtext →
   //     $...$/{#fig:…}/@fig:/@box:/@task:… darin werden wie gewohnt extrahiert.
   //     Code-Blöcke sind zu diesem Zeitpunkt bereits extrahiert →
-  //     in Code bleibt @box:… literal.
-  //     {#box:label} auf der @box:-Zeile (direkt nach dem Typ, ohne weiteren
-  //     Zeilentext): nummerierte Box ("Satz N", "Definition N", …) mit Anker
+  //     in Code bleibt @startbox:… literal.
+  //     Tokens auf der @startbox:-Zeile (beliebige Reihenfolge, je max. einmal,
+  //     nur Leerraum dazwischen, sonst bleibt die Box literal — Tippfehler
+  //     fallen auf):
+  //     {#box:label}: nummerierte Box ("Satz N", "Definition N", …) mit Anker
   //     — Nummer wie bei Abbildungen/Gleichungen/Code (im Skript gespeichertes
   //     Label → Skript-Nummer, in Slides: eigene Labels → S1, S2, …). In
   //     Slides ist die Nummer eines Skript-Labels klickbar (→ Skript).
-  //     Ungültige Label-Schreibweise → die Box bleibt literal (Tippfehler fallen auf).
+  //     [Caption]: Box-Überschrift → Kopf "Typ N: Caption" ($…$ wird
+  //     gerendert, s. renderCaptionMath).
   const boxLabelNumbers = {};
   const boxLabelTypes = {};
   const boxFallbackBase = chapterRef ? (chapterRef.maxBox || 0) : 0;
@@ -467,8 +517,31 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // Slide-Decks: slide-eigene Box-Labels → S1, S2, … (wie eq/fig/code).
   let slideBoxCount = 0;
   processed = processed.replace(
-    /@box:([\p{L}0-9_-]+)(?:[ \t]*\{#box:([\p{L}0-9_-]+)\})?[ \t]*\r?\n([\s\S]*?)\r?\n@endbox/gu,
-    (match, type, label, content) => {
+    /@startbox:([\p{L}0-9_-]+)([^\n]*)\r?\n([\s\S]*?)\r?\n@endbox/gu,
+    (match, type, head, content) => {
+      // @startbox:-Zeile tokenisieren: [Caption] und {#box:label}, je max. einmal,
+      // nur Leerraum zwischen/nach den Tokens (CRLF: trailing \r vorher
+      // entfernen). Abweichung (z. B. weiterer Text) → Box bleibt literal.
+      let caption = null;
+      let label = null;
+      let valid = true;
+      let tokEnd = 0;
+      const headLine = head.replace(/\r$/, '');
+      const boxTokRe = /\[([^\]]*)\]|\{#box:([\p{L}0-9_-]+)\}/gu;
+      let bt;
+      while ((bt = boxTokRe.exec(headLine)) !== null) {
+        if (!/^[ \t]*$/.test(headLine.slice(tokEnd, bt.index))) { valid = false; break; }
+        if (bt[1] !== undefined) {
+          if (caption !== null) { valid = false; break; }
+          caption = bt[1];
+        } else {
+          if (label !== null) { valid = false; break; }
+          label = bt[2];
+        }
+        tokEnd = bt.index + bt[0].length;
+      }
+      if (valid && !/^[ \t]*$/.test(headLine.slice(tokEnd))) valid = false;
+      if (!valid) return match;
       let boxNum = null;
       if (label) {
         if (label in boxLabelNumbers) {
@@ -536,6 +609,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
       } else {
         headTitle = escapeHtml(info.title);
       }
+      if (caption !== null && caption.trim() !== '') {
+        headTitle += ': ' + renderCaptionMath(caption.trim());
+      }
       return (
         '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '"' + idAttr + '>\n' +
         '<div class="tutorai-callbox-head">' +
@@ -568,23 +644,181 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const figures = [];
   const appletFigures = [];
   const plainFigures = [];
+  const subfigures = [];
   const figLabelNumbers = {};
+  // Gelabelte Subfigure-Inners des DOKUMENTS: Label → { num, letter }
+  // (num = Nummer des zugehörigen Komplexes, letter = Position des Inners im
+  // Komplex; "erstes Vorkommen gewinnt").
+  const figInnerLocal = {};
   const figFallbackBase = chapterRef ? (chapterRef.maxFig || 0) : 0;
   let figFallbackCount = 0;
+  // Unlabeled-but-numbered Subfigure-Komplexe (gelabelte Inners, kein
+  // äußeres Label): Nummer NICHT aus maxFig+Count (das wäre die Kapitel-Max
+  // statt der Dokument-Position) → aus der Server-Liste per Positions-Zip in
+  // Vorkommensreihenfolge. Skript: refMap.figures, gefiltert auf dieses
+  // Kapitel + label==null. Slides: slidesRefMap.figures (nur unlabeled
+  // Komplexe), gefiltert auf die exakte Folien-Position (deckId/h/v/p —
+  // p = Teil-Index, s. renderSlideInto; der Renderer kennt nur EINEN Teil).
+  // Fallback (maxFig+Count bzw. maxSFig+Count) nur für neue, noch
+  // ungespeicherte Komplexe.
+  const figUnlabeledNums = [];
+  if (!slideMode && refMap && Array.isArray(refMap.figures) && sectionId != null) {
+    for (const f of refMap.figures) {
+      if (String(f.sectionId) === String(sectionId) && f.label == null) {
+        figUnlabeledNums.push(f.num);
+      }
+    }
+  } else if (slideMode && slidePos && slidesRefMap && Array.isArray(slidesRefMap.figures)) {
+    for (const f of slidesRefMap.figures) {
+      if (
+        String(f.deckId) === String(slidePos.deckId) &&
+        f.h === slidePos.h && f.v === slidePos.v && f.p === slidePos.p
+      ) {
+        figUnlabeledNums.push(f.num);
+      }
+    }
+  }
+  let figUnlabeledIdx = 0;
   // Slide-Decks: eigene Labels (nicht im Skript enthalten) bekommen eigene
   // Nummerierung (S1), (S2), … — abgesetzt von der Skript-Nummerierung
   // (wie bei den Formeln, s. 1g).
   let slideFigCount = 0;
-  // Zwei einfache Regexes statt einem verschachtelten Monster:
-  const IMG_REF = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
   // Ein Attribut-Block: {…} direkt hinter der Referenz, nur Leerraum oder
   // ein Zeilenumbruch (ohne Leerzeile) dazwischen.
   const ATTR_BLOCK = /^[ \t]*(?:\r?\n[ \t]*)?\{([^{}]*)\}/;
+  // Figuren-Nummer eines Labels (einfache Figuren s. 1e UND Subfigure-
+  // Komplexe s. 1e0): gespeichertes Label → exakte globale Nummer;
+  // slide-eigenes Label → S-Nummer; ungespeichert → Fallback nach der
+  // letzten bekannten des Kapitels. Duplikat → erstes Vorkommen gewinnt.
+  const figNumberForLabel = (label) => {
+    if (label in figLabelNumbers) return figLabelNumbers[label];
+    const g = globalLabels['fig:' + label];
+    let num;
+    if (g && g.kind === 'fig') {
+      num = g.num; // gespeichertes Label → exakte globale Nummer
+    } else if (slideMode) {
+      const sl = slidesLabels['fig:' + label]; // typ-qualifiziert (s. slides-refmap)
+      if (sl && sl.kind === 'fig') {
+        num = 'S' + sl.num; // slide-eigenes Label → S-Nummer aus der Slide-Ref-Map
+      } else {
+        slideFigCount += 1;
+        num = 'S' + (slidesMaxSFig + slideFigCount); // ungespeichert → weiterzählen
+      }
+    } else {
+      figFallbackCount += 1;
+      num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
+    }
+    figLabelNumbers[label] = num;
+    return num;
+  };
+  // Zwei einfache Regexes statt einem verschachtelten Monster:
+  const IMG_REF = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
   // Literale Tails (unbekannte/ungültige Tokens, schlichte <img>): werden
   // vor den Folgeschritten (1f–1k) aus dem Text genommen, damit z. B.
   // {#fragment} im Tail nicht als echtes Fragment-Sentinel interpretiert
   // wird, und direkt vor marked.parse (Step 2) wiederhergestellt.
   const imgLiteralTails = [];
+  // 1e0. Subfigure-Komplexe:
+  //       ![Gesamt](![Caption 1](u1){height=300}{#fig:teil1} ![Caption 2](u2){#fig:teil2}){#fig:label}
+  //      → EINE (gelabelt =) nummerierte Abbildung ("Abb. N: Gesamt") mit
+  //      mehreren Medien in einer Flex-Zeile (jedes mit eigener Caption),
+  //      s. Restore-Step 6a4. Sobald mindestens ein Inner ein {#fig:label}
+  //      trägt, wird der KOMPLEXX nummeriert — auch ohne eigenes
+  //      {#fig:label} — und ALLE Inners bekommen a), b), c), … (s. 6a4);
+  //      ohne jegliches Label bleibt er unnummeriert.
+  //      VOR dem IMG_REF-Loop maskieren (Platzhalter), damit die inneren
+  //      ![…](…) nicht als Einzelabbildungen gezählt/gerendert werden.
+  //      Inneren sind NUR {height=X} und/oder ein {#fig:label} erlaubt
+  //      (je max. einmal, beliebige Reihenfolge; keine Fragments). Die
+  //      Server-Regex (api/script.py) ist exakt so streng, damit beide
+  //      Seiten dieselben Komplexe erkennen (Ref-Map ↔ Nummerierung).
+  //      Ungültig (andere Tokens, <2 Innere, …) → bleibt literal
+  //      (Tippfehler fallen auf); die Innere werden dann ggf. als normale
+  //      Bilder geparst (s. Guard im IMG_REF-Loop).
+  {
+    // ACHTUNG: `!` in src ausschließen ([^)\s!]+) — sonst matcht der äußere
+    // Komplex-Kopf ![Gesamt]( auf das erste INNER als src (s. _SF_INNER).
+    const SUBFIG_INNER_SRC =
+      /!\[[^\]]*\]\([^)\s!]+\)(?:[ \t]*(?:\r?\n[ \t]*)?\{[^{}]*\}){0,2}/.source;
+    const SUBFIG_RE = new RegExp(
+      String.raw`!\[([^\]]*)\]\([ \t]*(?:\r?\n[ \t]*)?` +
+        String.raw`(` + SUBFIG_INNER_SRC + String.raw`(?:\s+` + SUBFIG_INNER_SRC + String.raw`)+)` +
+        String.raw`[ \t]*(?:\r?\n[ \t]*)?\)`,
+      'g'
+    );
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = SUBFIG_RE.exec(processed)) !== null) {
+      const inners = _parseSubfigInners(m[2]);
+      if (inners === null) continue; // ungültig → literal (Regex rückt selbst weiter)
+      // Attribut-Tokens des Komplexes hinter dem schließenden ) — wie bei
+      // Einzelabbildungen (s. 1e): {#fig:label}, {#fragment…}, {#aaid:…},
+      // {height=X}; je Token max. einmal, sonst bleibt der Komplex literal.
+      const tokens = [];
+      let pos = m.index + m[0].length;
+      for (;;) {
+        const bm = ATTR_BLOCK.exec(processed.slice(pos));
+        if (!bm) break;
+        tokens.push(bm[1].trim());
+        pos += bm[0].length;
+      }
+      const a = { label: null, frag: null, height: null, aaid: null };
+      let valid = true;
+      for (const inner of tokens) {
+        let t;
+        if ((t = inner.match(/^#fig:([\p{L}0-9_-]+)$/u))) {
+          if (a.label !== null) { valid = false; break; }
+          a.label = t[1];
+        } else if ((t = inner.match(/^#([Ff])ragment(?::([\p{L}0-9_-]+))?$/u))) {
+          if (a.frag) { valid = false; break; }
+          a.frag = { type: _fragType(t[1], t[2]), id: t[2] || null };
+        } else if ((t = inner.match(/^#aaid:([\p{L}0-9_-]+)$/u))) {
+          if (a.aaid !== null) { valid = false; break; }
+          a.aaid = t[1];
+        } else if ((t = inner.match(/^\.?height=([\d.]+)([a-z]*)$/))) {
+          if (t[2] !== '' && t[2] !== 'px') { valid = false; break; }
+          if (a.height !== null) { valid = false; break; }
+          a.height = parseFloat(t[1]); // px
+        } else {
+          valid = false; break;
+        }
+      }
+      if (!valid) continue;
+      // Nummer: eigenes {#fig:label} → wie andere Figuren (s. figNumberForLabel);
+      // sonst: gelabelte Inners → Komplex-Nummer (Fallback-/S-Zählung),
+      // sonst gar keine Nummer.
+      const hasInnerLabel = inners.some((x) => x.label !== null);
+      const num = a.label !== null
+        ? figNumberForLabel(a.label)
+        : hasInnerLabel
+          ? // Gespeicherte unlabeled Komplexe: exakte Server-Nummer per
+            // Positions-Zip (s. figUnlabeledNums); ungespeichert: Fallback
+            // (Skript: nach Kapitel-Max, Slides: nach maxSFig weiterzählen).
+            (slideMode
+              ? 'S' + (figUnlabeledNums[figUnlabeledIdx++] ?? (slidesMaxSFig + ++slideFigCount))
+              : figUnlabeledNums[figUnlabeledIdx++] ?? (figFallbackBase + ++figFallbackCount))
+          : null;
+      subfigures.push({
+        alt: m[1],
+        inners,
+        label: a.label,
+        num,
+        frag: a.frag,
+        height: a.height,
+        aaid: a.aaid,
+      });
+      inners.forEach((inner, i) => {
+        if (inner.label && !(inner.label in figInnerLocal)) {
+          figInnerLocal[inner.label] = { num, letter: String.fromCharCode(97 + i) };
+        }
+      });
+      out += processed.slice(last, m.index) + `%%SUBFIG_${subfigures.length - 1}%%`;
+      last = pos;
+      SUBFIG_RE.lastIndex = pos;
+    }
+    if (subfigures.length) processed = out + processed.slice(last);
+  }
   {
     let out = '';
     let last = 0;
@@ -592,6 +826,18 @@ async function renderMarkdown(text, targetElement, options = {}) {
     while ((m = IMG_REF.exec(processed)) !== null) {
       const alt = m[1];
       const src = m[2];
+      // Subfigure-Komplex, der in 1e0 NICHT maskiert wurde (ungültig →
+      // literal): als "Quelle" wäre nur der Fragment "![a" gültig →
+      // abfangen: der äußere Kopf "![Alt](" bleibt literal, ab hier (dem
+      // inneren "![…](…)"-Snippet) wird normal weitergeparst (die Innere
+      // werden dann ggf. normale Bilder — der Komplex degradiert sichtbar).
+      if (src.startsWith('!')) {
+        const innerStart = m.index + alt.length + 4; // "![<alt>(" = 2 + Alt + 2
+        out += processed.slice(last, innerStart);
+        last = innerStart;
+        IMG_REF.lastIndex = innerStart;
+        continue;
+      }
       // Aufeinanderfolgende Attribut-Blöcke hinter der Referenz konsumieren.
       const tokens = [];
       let pos = m.index + m[0].length;
@@ -638,27 +884,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       let repl = null;
       if (valid) {
         if (a.label !== null) {
-          let num;
-          if (a.label in figLabelNumbers) {
-            num = figLabelNumbers[a.label]; // Duplikat → erstes Vorkommen gewinnt
-          } else {
-            const g = globalLabels['fig:' + a.label];
-            if (g && g.kind === 'fig') {
-              num = g.num; // gespeichertes Label → exakte globale Nummer
-            } else if (slideMode) {
-              const sl = slidesLabels['fig:' + a.label]; // typ-qualifiziert (s. slides-refmap)
-              if (sl && sl.kind === 'fig') {
-                num = 'S' + sl.num; // slide-eigenes Label → S-Nummer aus der Slide-Ref-Map
-              } else {
-                slideFigCount += 1;
-                num = 'S' + (slidesMaxSFig + slideFigCount); // ungespeichert → weiterzählen
-              }
-            } else {
-              figFallbackCount += 1;
-              num = figFallbackBase + figFallbackCount; // neues (ungespeichertes) Label
-            }
-            figLabelNumbers[a.label] = num;
-          }
+          const num = figNumberForLabel(a.label);
           figures.push({ alt, src, label: a.label, num, frag: a.frag, height: a.height, zoom: a.zoom, aaid: a.aaid });
           repl = `%%FIG_${figures.length - 1}%%`;
         } else if (isAppletSrc(src) && !a.frag) {
@@ -736,8 +962,10 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @box:label / @tab:label / @sec:label / @kap:label
+  //     + Zitationen @cite:{key} / @citet:{key} / @citep:{key} (BibTeX-Keys; längere
+  //     Alternativen zuerst, damit @citet:/@citep: nicht zu @cite: verkürzt werden)
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq|sec|kap|code|box|tab):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap|code|box|tab|citep|citet|cite):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -752,10 +980,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 1j2. Extract labeled tables: Pipe-Tabellen-Block + Label-Zeile
-  //      {#tab:label} (optional mit [caption]) direkt darunter →
-  //      nummerierte Tabelle ("Tab. N: caption") mit Anker — Nummer wie
-  //      bei Abbildungen/Gleichungen/Code/Boxen (im Skript gespeichertes
-  //      Label → Skript-Nummer, in Slides: eigene Labels → S1, S2, …).
+  //      {#tab:label} (optional mit [caption], optional mit {zoom=X})
+  //      direkt darunter → nummerierte Tabelle ("Tab. N: caption") mit
+  //      Anker — Nummer wie bei Abbildungen/Gleichungen/Code/Boxen (im
+  //      Skript gespeichertes Label → Skript-Nummer, in Slides: eigene
+  //      Labels → S1, S2, …). {zoom=X} (führender Punkt optional) skaliert
+  //      die Tabellenschrift (×X, Slides UND Skript) per --tab-zoom an der
+  //      Figure (s. 4b + CSS: main.css/slides.css).
   //      Der Tabellen-Markdown-Text wird beim Restore per marked.parse
   //      gerendert; darin enthaltene Platzhalter (%%IC%%/%%LATEX_*%%/
   //      %%XREF%%/%%TASKREF%% — Extraktion erfolgte vor diesem Schritt)
@@ -770,8 +1001,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // Slide-Decks: slide-eigene Tabellen-Labels → S1, S2, … (wie eq/fig/code).
   let slideTabCount = 0;
   processed = processed.replace(
-    /((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\p{L}0-9_-]+)\}(?:[ \t]*\[([^\]]*)\])?[ \t]*(?:\r?\n|$)/gmu,
-    (match, tableMd, label, caption) => {
+    /((?:^[ \t]*\|[^\n]*\r?\n)+)[ \t]*(?:\r?\n[ \t]*)*\{#tab:([\p{L}0-9_-]+)\}(?:[ \t]*\[([^\]]*)\])?(?:[ \t]*\{\.?zoom=([\d.]+)\})?[ \t]*(?:\r?\n|$)/gmu,
+    (match, tableMd, label, caption, zoom) => {
       let num;
       if (label in tabLabelNumbers) {
         num = tabLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
@@ -793,7 +1024,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
         }
         tabLabelNumbers[label] = num;
       }
-      tables.push({ md: tableMd, label, caption: caption || '', num });
+      tables.push({
+        md: tableMd,
+        label,
+        caption: caption || '',
+        num,
+        zoom: zoom !== undefined ? parseFloat(zoom) : null, // Schrift ×X (s. 4b)
+      });
       return `%%TAB_${tables.length - 1}%%`;
     }
   );
@@ -954,7 +1191,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       }
       const capParts = [];
       if (numHtml) capParts.push(numHtml);
-      if (codeCaption) capParts.push(escapeHtml(codeCaption));
+      if (codeCaption) capParts.push(renderCaptionMath(codeCaption));
       const idAttr = codeLabel !== null ? ` id="code:${codeLabel}"` : '';
       blockHtml = `<figure class="tutorai-code-figure"${idAttr}>${blockHtml}` +
         `<figcaption>${capParts.join(': ')}</figcaption></figure>`;
@@ -992,9 +1229,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
         return `<a class="tutorai-tab-num-link" href="/courses/${cid}/script#tab:${t.label}" title="Zur Tabelle im Skript">Tab. ${t.num}</a>`;
       })()
       : `Tab. ${t.num}`;
+    // {zoom=X}: --tab-zoom an der Figure (vererbt die Tabelle) → Schrift ×X
+    // (CSS: calc(… * var(--tab-zoom, 1)) in main.css/slides.css); die
+    // Caption (figcaption) bleibt in Normalgröße, wie beim Code-Zoom.
+    const zoomAttr = t.zoom != null ? ` style="--tab-zoom: ${t.zoom}"` : '';
     const figHtml =
-      `<figure id="tab:${t.label}" class="tutorai-table-figure">${tableHtml}` +
-      `<figcaption>${numHtml}${t.caption ? `: ${escapeHtml(t.caption)}` : ''}</figcaption></figure>`;
+      `<figure id="tab:${t.label}" class="tutorai-table-figure"${zoomAttr}>${tableHtml}` +
+      `<figcaption>${numHtml}${t.caption ? `: ${renderCaptionMath(t.caption)}` : ''}</figcaption></figure>`;
     html = html.replace(`%%TAB_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
@@ -1150,7 +1391,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const figHtml =
       `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}${figAaidAttr}>` +
       innerMedia +
-      `<figcaption>${numHtml}${f.alt ? `: ${safeAlt}` : ''}</figcaption></figure>`;
+      `<figcaption>${numHtml}${f.alt ? `: ${renderCaptionMath(f.alt)}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
@@ -1208,7 +1449,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       : iframeTag;
     // Caption unter dem Medium: Alt-Text (unlabelt → ohne Nummer).
     const figHtml = f.alt.trim()
-      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${escapeHtml(f.alt.trim())}</figcaption></figure>`
+      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${renderCaptionMath(f.alt.trim())}</figcaption></figure>`
       : iframeHtml;
     html = html.replace(`%%APPLETFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
@@ -1221,10 +1462,61 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const imgTag = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
     const imgHtml = (f.height != null || f.alt.trim())
       ? `<figure class="tutorai-figure">${imgTag}` +
-        (f.alt.trim() ? `<figcaption>${escapeHtml(f.alt.trim())}</figcaption>` : '') +
+        (f.alt.trim() ? `<figcaption>${renderCaptionMath(f.alt.trim())}</figcaption>` : '') +
         `</figure>`
       : imgTag;
     html = html.replace(`%%PLAINFIG_${idx}%%`, imgHtml.replace(/\$/g, '$$$$'));
+  });
+
+  // 6a4. Restore Subfigure-Komplexe (s. 1e0): EINE (gelabelt =) nummerierte
+  //      Figure mit Flex-Zeile (wrap, space-between) an Medien — jedes mit
+  //      eigener Caption (Math ok), darunter die Gesamt-Caption. Nummer/Link
+  //      wie bei einfachen Figuren (s. 6a); {height=X} = Max-Höhe der Zeile,
+  //      innere {height=X} = Max-Höhe des einzelnen Mediums. Sobald
+  //      mindestens ein Inner ein {#fig:label} trägt, bekommen ALLE Inners
+  //      den Letter-Prefix („a) “, „b) “, … nach Position im Komplex) in der
+  //      Caption; gelabelte Inners zusätzlich den Anker id="fig:label"
+  //      (Ziel von @fig:-Referenzen → „Abb. N a)").
+  subfigures.forEach((f, idx) => {
+    const hasInnerLabel = f.inners.some((x) => x.label !== null);
+    const items = f.inners.map((inner, i) => {
+      const safeAlt = escapeHtml(inner.alt);
+      const style = inner.height != null ? ` style="max-height: ${inner.height}px !important"` : '';
+      const mediaTag = isAppletSrc(inner.src)
+        ? `<iframe src="${safeAlt}" class="tutorai-applet" sandbox="${appletSandboxAttr(inner.src)}" loading="lazy" title="${safeAlt}"${style}></iframe>`
+        : `<img src="${escapeHtml(inner.src)}" alt="${safeAlt}"${style}>`;
+      const innerId = inner.label ? ` id="fig:${inner.label}"` : '';
+      const letterPrefix = hasInnerLabel ? `${String.fromCharCode(97 + i)}) ` : '';
+      const capText = (letterPrefix + inner.alt.trim()).trim();
+      return `<figure class="tutorai-subfig-item"${innerId}>${mediaTag}` +
+        (capText ? `<figcaption>${renderCaptionMath(capText)}</figcaption>` : '') +
+        `</figure>`;
+    }).join('');
+    const rowStyle = f.height != null ? ` style="max-height: ${f.height}px"` : '';
+    const fragAttrs = f.frag
+      ? ` data-frag="${f.frag.type}"${f.frag.id ? ` data-frag-id="${f.frag.id}"` : ''}`
+      : '';
+    const aaidAttr = f.aaid ? ` data-id="${f.aaid}"` : '';
+    const idAttr = f.label !== null ? ` id="fig:${f.label}"` : '';
+    let numHtml = '';
+    if (f.num !== null) {
+      const g = globalLabels['fig:' + f.label];
+      numHtml = (slideMode && g && g.kind === 'fig')
+        ? (() => {
+          const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+          return `<a class="tutorai-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
+        })()
+        : `Abb. ${f.num}`;
+    }
+    const capParts = [];
+    if (numHtml) capParts.push(numHtml);
+    if (f.alt.trim()) capParts.push(renderCaptionMath(f.alt.trim()));
+    const figHtml =
+      `<figure${idAttr} class="tutorai-figure tutorai-subfig"${fragAttrs}${aaidAttr}>` +
+      `<div class="tutorai-subfig-row"${rowStyle}>${items}</div>` +
+      (capParts.length ? `<figcaption>${capParts.join(': ')}</figcaption>` : '') +
+      `</figure>`;
+    html = html.replace(`%%SUBFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
   // 6a3. Heading-Nummerierung (h2–h4) + {#sec:label}-Anker
@@ -1290,8 +1582,45 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //               4) unbekannt → ❓
   //     @box:-Referenzen zeigen den Box-Typ-Titel an (z. B. „Satz N“ —
   //     CALLOUT_TYPES; Typ-Quelle: Skript-Ref-Map → Slide-Ref-Map → lokal).
+  const citedRefs = []; // für das Quellenverzeichnis (Nur zitierte Einträge)
   xrefs.forEach((x, idx) => {
     const kind = x.kind === 'kap' ? 'sec' : x.kind;
+    if (kind === 'cite' || kind === 'citet' || kind === 'citep') {
+      // Zitationen: @cite → "[N]", @citet → "Autor (Jahr)", @citep → "(Autor, Jahr)".
+      // N = kursweite stabile Nummer (script-refmap.references, display_order) —
+      // dieselbe Quelle trägt über das gesamte Kurs (Skript/Aufgaben/Slides) dieselbe Nummer.
+      const r = ((refMap && refMap.references) || {})[x.label];
+      if (r) citedRefs.push(r);
+      // Vorschau: komplette Bibliographie-Zeile (Autoren, Jahr, Titel, …)
+      const tipPreview = r ? (r.entry || r.title) : null;
+      const tipAttr = tipPreview
+        ? ` data-xref-tip="${JSON.stringify({ k: kind, p: tipPreview })
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/\$/g, '$$$$')}"`
+        : '';
+      let refHtml;
+      if (!r) {
+        refHtml = `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ ${x.kind}:${x.label}</span>`;
+      } else {
+        const a0 = (r.authors && r.authors.length)
+          ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
+          : '';
+        const y = r.year || '';
+        // Mit bibliography: In-Page-Anker auf den Listeneintrag; sonst Link auf den Quellen-Tab.
+        const cid = (refMap && refMap.courseId) || '';
+        const href = options.bibliography ? `#ref-${x.label}` : `/courses/${cid}/references#ref-${x.label}`;
+        if (kind === 'cite') {
+          refHtml = `<sup><a href="${href}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
+        } else if (kind === 'citet') {
+          refHtml = `<a href="${href}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
+        } else {
+          refHtml = `<a href="${href}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
+        }
+      }
+      html = html.replace(`%%XREF_${idx}%%`, refHtml);
+      return;
+    }
     const local =
       kind === 'fig' ? figLabelNumbers[x.label]
       : kind === 'eq' ? eqLabelNumbers[x.label]
@@ -1327,22 +1656,61 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
     let refHtml;
     const useLocalAnchor = kind === 'sec' || !slideMode;
-    if (useLocalAnchor && local) {
+    const figInner = kind === 'fig' && useLocalAnchor ? figInnerLocal[x.label] : null;
+    if (useLocalAnchor && figInner && figInner.num != null) {
+      // Subfigure-Inner: „Abb. N a)“ = Komplex-Nummer + Letter, In-Page-Anker.
+      refHtml = `<a href="#fig:${x.label}" class="tutorai-xref"${tipAttr}>Abb. ${figInner.num} ${figInner.letter})</a>`;
+    } else if (useLocalAnchor && local) {
       refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref"${tipAttr}>${kindText} ${local}</a>`;
     } else if (g && g.kind === kind) {
       const cid = (refMap && refMap.courseId) || '';
       const text = g.chapter ? 'Kap.' : kindText;
       const anchor = g.chapter ? `chapter-${g.sectionId}` : `${kind}:${x.label}`;
-      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref"${tipAttr}>${text} ${g.num}</a>`;
+      const subSuffix = kind === 'fig' && g.sub ? ` ${g.sub})` : '';
+      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref"${tipAttr}>${text} ${g.num}${subSuffix}</a>`;
     } else if (sl && sl.kind === kind) {
       // Slide-eigenes Objekt (kein Skript-Label): Link auf die Folie.
       const cid = (slidesRefMap && slidesRefMap.courseId) || (refMap && refMap.courseId) || '';
-      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref"${tipAttr}>${kindText} S${sl.num}</a>`;
+      const subSuffix = kind === 'fig' && sl.sub ? ` ${sl.sub})` : '';
+      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref"${tipAttr}>${kindText} S${sl.num}${subSuffix}</a>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
     html = html.replace(`%%XREF_${idx}%%`, refHtml);
   });
+
+  // 6b. Quellenverzeichnis: „Quellen“-Liste ans Dokument-Ende (nur bei options.bibliography
+  //     und ohne slideMode — das pro-Folie-Rendern würde Nummerierung/Liste zersplittern;
+  //     in Slides werden Zitationen ohne Liste aufgelöst). Gelistet werden nur die
+  //     tatsächlich zitierten Einträge, mit ihrer kursweiten stabilen Nummer.
+  if (options.bibliography && !slideMode && citedRefs.length) {
+    const seen = new Map();
+    citedRefs.forEach((r) => { if (!seen.has(r.key)) seen.set(r.key, r); });
+    const items = Array.from(seen.values())
+      .sort((a, b) => (a.num || 0) - (b.num || 0))  // nach Quellen-Nummer, nicht Textvorkommnis
+      .map((r) => {
+        let entry = '';
+        const authors = (r.authors || []).join(' & ');
+        if (authors) entry += escapeHtml(authors);
+        if (r.year) entry += ' (' + escapeHtml(r.year) + ')';
+        if (entry) entry += '.';
+        if (r.title) entry += ' <em>' + escapeHtml(r.title) + '</em>.';
+        const tail = [r.venue, r.detail].filter(Boolean).join(', ');
+        if (tail) entry += ' ' + escapeHtml(tail) + '.';
+        // DOI und/oder Link immer klickbar anzeigen, wenn vorhanden
+        const links = [];
+        if (r.doi) links.push(
+          `<a href="https://doi.org/${escapeHtml(r.doi)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">DOI</a>`);
+        if (r.url) links.push(
+          `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">Link</a>`);
+        const url = links.length ? ' ' + links.join(' ') : '';
+        return `<li id="ref-${escapeHtml(r.key)}" class="text-sm text-gray-700 leading-relaxed">`
+          + `<span class="text-gray-400 font-mono">[${r.num}]</span> ` + entry + url + '</li>';
+      }).join('');
+    html += `<div class="tutorai-bibliography mt-6">`
+      + `<h3 class="text-base font-semibold text-gray-800 mb-2">Quellen</h3>`
+      + `<ul class="tutorai-bibliography list-none space-y-1.5">${items}</ul></div>`;
+  }
 
   // 6c. Restore task references (@task:{id})
   //     Daten via refmap.tasks: Student (mode "reading") → nur freigeschaltete
@@ -1436,6 +1804,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
   targetElement.innerHTML = `<div class="markdown-preview">${html}</div>`;
   _cleanupBlockArtifacts(targetElement);
   if (slideMode) _applyFragmentMarkers(targetElement);
+  // Code-LaTeX (z. B. Pseudo-Code): im Skript direkt auf der finalen DOM
+  // anwenden; in Slides erst NACH Reveal's Highlight-Pass (s. tutoraiWireCodeMath).
+  if (!slideMode) applyCodeMath(targetElement);
 }
 
 // Byproducts aufräumen: Figure-/Applet-/Code-/Taskbox-/Tabellen-Placeholders
@@ -1785,6 +2156,170 @@ function renderLatexInline(latex) {
   }
 }
 
+// ─── Caption-/Code-Math & Subfigure-Helfer ──────────────────────────────
+// $…$-Paare in Captions (Figure/Code/Tabelle/Subfigure/Box) rendern.
+// Captions sind Kurztexte → hier (im Gegensatz zum Fließtext) werden ALLE
+// $-Paare als Formel gerendert; der Rest wird HTML-escaped.
+function renderCaptionMath(text) {
+  let out = '';
+  let last = 0;
+  const re = /\$([^$\n]+?)\$/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    out += escapeHtml(text.slice(last, m.index)) + renderLatexInline(m[1].trim());
+    last = m.index + m[0].length;
+  }
+  return out + escapeHtml(text.slice(last));
+}
+
+// Code-LaTeX-Heuristik: sieht ein $…$-Paar im Code nach Math aus?
+// (Backslash oder Math-Symbol) — sonst bleiben Shell-Variablen wie
+// $HOME $USER literal (einzelne Buchstaben wie $i$ sind mehrdeutig →
+// werden NICHT gerendert).
+function _codeMathLooksLikeMath(latex) {
+  return /\\|[{}^_()=+\-*\/<>≤≥≠∞∑∫√]/.test(latex);
+}
+
+// Subfigure-Inner-Text (s. 1e0) in [ {alt, src, height, label} ] auflösen:
+// pro Medium ![Caption](src) + optional BIS ZU ZWEI Attribut-Blöcke, die NUR
+// {height=X} und/oder {#fig:label} enthalten (je Token max. einmal,
+// beliebige Reihenfolge); Lücken zwischen den Innern reines Leerraum;
+// ≥2 Innere. Sonst null (Komplex bleibt literal — spiegelt die Server-Regex
+// exakt, s. _SF_INNER in api/script.py).
+function _parseSubfigInners(innerText) {
+  const inners = [];
+  let rest = innerText;
+  for (;;) {
+    const m = /^!\[([^\]]*)\]\(([^)\s!]+)\)/.exec(rest);
+    if (!m) return null;
+    rest = rest.slice(m[0].length);
+    let height = null;
+    let label = null;
+    for (let ti = 0; ti < 2; ti++) {
+      const am = /^[ \t]*(?:\r?\n[ \t]*)?\{([^{}]*)\}/.exec(rest);
+      if (!am) break;
+      const tok = am[1].trim();
+      rest = rest.slice(am[0].length);
+      const sm = tok.match(/^#fig:([\p{L}0-9_-]+)$/u);
+      const hm = tok.match(/^\.?height=([\d.]+)([a-z]*)$/);
+      if (sm) {
+        if (label !== null) return null; // Duplikat-Label
+        label = sm[1];
+      } else if (hm) {
+        if (hm[2] !== '' && hm[2] !== 'px') return null;
+        if (height !== null) return null; // Duplikat-Height
+        height = parseFloat(hm[1]);
+      } else {
+        return null; // unbekanntes Token
+      }
+    }
+    inners.push({ alt: m[1], src: m[2], height, label });
+    if (rest === '') break;
+    const gm = /^[ \t\r\n]+/.exec(rest);
+    if (!gm) return null; // keine reine Leerraum-Lücke → ungültig
+    rest = rest.slice(gm[0].length);
+  }
+  return inners.length >= 2 ? inners : null;
+}
+
+// Code-LaTeX (z. B. Pseudo-Code): $…$-Paare in <pre><code> als Inline-Formel
+// rendern — auf der finalen DOM (NACH dem Syntax-Highlighting; hljs ändert
+// textContent nicht, nur die Spans → Offsets bleiben gültig).
+//
+// WICHTIG: hljs zerteilt Paare gern über mehrere Text-Nodes/Spans — z. B.
+// Pseudo-Code voller $-Zeichen wird als Ruby auto-detected ($x, $: … werden
+// zu hljs-Variable-Spans, $ am Zeilenende schluckt das \n). Daher
+// node-basiertes, deterministisches Ersetzen OHNE splitText und OHNE
+// Lösch-Walk zwischen Nodes (beides bricht an solchen Span-Strukturen):
+//   1. Alle Text-Nodes mitsamt globalen Offsets EINMAL (vor jeglicher
+//      Änderung) sammeln.
+//   2. Jeden Node an den Math-Grenzen (Paar-Start/-Ende) seines Bereichs
+//      zerlegen: Nicht-Math-Abschnitte bleiben Text-Nodes im ursprünglichen
+//      (hljs-)Span → Highlighting bleibt erhalten; Math-Abschnitte fallen
+//      weg — und am Paar-START wird genau EIN KaTeX-Span eingesetzt (im
+//      Node, der den Start enthält; das Paar wird damit exakt einmal
+//      gerendert).
+// Paare, die nicht nach Math aussehen (s. _codeMathLooksLikeMath), bleiben
+// literal. Idempotent: gerendertes KaTeX enthält keine $-Paare.
+function applyCodeMath(root) {
+  root.querySelectorAll('pre code').forEach((code) => {
+    const full = code.textContent;
+    const re = /\$([^$\n]+?)\$/g;
+    const pairs = [];
+    let m;
+    while ((m = re.exec(full)) !== null) {
+      if (_codeMathLooksLikeMath(m[1])) {
+        pairs.push({ a: m.index, b: m.index + m[0].length, latex: m[1].trim() });
+      } else {
+        re.lastIndex = m.index + 1; // kein Math-Paar → ab der nächsten $-Position weitersuchen
+      }
+    }
+    if (pairs.length === 0) return;
+
+    const doc = code.ownerDocument;
+    const nodes = [];
+    let off = 0;
+    const walker = doc.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+    let tn;
+    while ((tn = walker.nextNode())) {
+      nodes.push({ node: tn, start: off, end: off + tn.nodeValue.length });
+      off += tn.nodeValue.length;
+    }
+
+    for (const t of nodes) {
+      const node = t.node;
+      if (!node.parentNode) continue; // Defensive: nicht mehr im Baum
+      const text = node.nodeValue;
+      // Grenzen = Node-Ränder + alle Paar-Grenzen im Inneren des Nodes
+      const bounds = [t.start, t.end];
+      for (const p of pairs) {
+        if (p.a > t.start && p.a < t.end) bounds.push(p.a);
+        if (p.b > t.start && p.b < t.end) bounds.push(p.b);
+      }
+      bounds.sort((x, y) => x - y);
+
+      const parts = [];
+      for (let i = 0; i + 1 < bounds.length; i++) {
+        const a = bounds[i];
+        const b = bounds[i + 1];
+        if (a === b) continue;
+        const inMath = pairs.some((p) => p.a <= a && a < p.b);
+        if (inMath) {
+          const starter = pairs.find((p) => p.a === a);
+          if (starter) parts.push({ kind: 'math', latex: starter.latex });
+          // Math-Text selbst fällt weg (wird durch den KaTeX-Span ersetzt)
+        } else {
+          parts.push({ kind: 'text', text: text.slice(a - t.start, b - t.start) });
+        }
+      }
+
+      const parent = node.parentNode;
+      const ref = node.nextSibling;
+      parent.removeChild(node);
+      for (const part of parts) {
+        let el;
+        if (part.kind === 'text') {
+          el = doc.createTextNode(part.text);
+        } else {
+          el = doc.createElement('span');
+          el.className = 'tutorai-code-math';
+          el.innerHTML = renderLatexInline(part.latex);
+        }
+        parent.insertBefore(el, ref);
+      }
+    }
+  });
+}
+
+// Slide-Mode: Reveal's Highlight-Plugin baut alle Code-Blöcke beim
+// Initialisieren neu (hljs.highlightElement = innerHTML-Reset) → Code-LaTeX
+// darf erst NACH dem Highlight-Pass gesetzt werden: "ready" hooken (feuert
+// nach Plugin-Init). Der Quelltext (inkl. $-Paaren) ist zu dem Zeitpunkt
+// unverändert (hljs ändert nur die Spans).
+function tutoraiWireCodeMath(reveal) {
+  reveal.on('ready', () => applyCodeMath(reveal.getRevealElement()));
+}
+
 // ─── LaTeX-Fragmente (\fragment{…} bzw. \htmlClass{fragment…}) ───────────
 // Formelteile schrittweise einblenden (Slides): \fragment{…} (Kurzform)
 // bzw. \htmlClass{fragment}{…}, mit ID: \fragment{id}{…} bzw.
@@ -1970,7 +2505,11 @@ function createMarkdownEditor(containerId, options = {}) {
   let isPreview = false;
 
   // Markdown-Optionen für Preview + Auto-Update (sectionId → globale Nummerierung)
-  const mdRenderOptions = { preview: true, sectionId: options.sectionId || null };
+  const mdRenderOptions = {
+    preview: true,
+    sectionId: options.sectionId || null,
+    bibliography: !!options.bibliography, // Ganze Dokumente: „Quellen“-Liste in der Preview
+  };
 
   // Preview rendern; options.onPreviewRender wird danach aufgerufen
   // (z. B. um Skript-Fragen-Markierungen im Edit-Modus neu anzuwenden)
@@ -2167,4 +2706,28 @@ if (typeof document !== 'undefined' && document.body) {
   _bindXrefTip();
 } else if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', _bindXrefTip);
+}
+
+// ─── Quellen-Deep-Links (#ref-{key}) ──────────────────────────────────
+// In-Page-Anker in der Quellenliste scrollen den Eintrag in die
+// Viewport-Mitte (statt Standard-Top-Align, das unter der sticky Nav-Bar
+// verschwindet). Kurzer Ring-Highlight wie beim Deep-Link im Quellen-Tab.
+function _bindRefAnchorScroll() {
+  document.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href^="#ref-"]') : null;
+    if (!a) return;
+    const el = document.getElementById(a.getAttribute('href').slice(1));
+    if (!el) return;
+    e.preventDefault();
+    history.replaceState(null, '', a.getAttribute('href'));
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-blue-400', 'rounded-md');
+    setTimeout(() => el.classList.remove('ring-2', 'ring-blue-400', 'rounded-md'), 2000);
+  });
+}
+
+if (typeof document !== 'undefined' && document.body) {
+  _bindRefAnchorScroll();
+} else if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', _bindRefAnchorScroll);
 }

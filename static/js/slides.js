@@ -18,8 +18,12 @@
  *                            (Ratio = --slides-aspect des Themes.)
  *                            — nicht mehr in Verwendung (Kacheln und
  *                            Design-Vorschau nutzen echte Reveal-Instanzen).
- * - buildSlideSection(slide, footerText) → <section> für Reveal
+ * - buildSlideSection(slide, footerText, slidePos) → <section> für Reveal
  *                            (Inhalt + Sprechernotiz als <aside class="notes");
+ *                            slidePos = { deckId, h } (Folien-Block-Index) →
+ *                            wird mit v (Unterfolien-Index) an renderMarkdown
+ *                            weitergereicht (S-Nummern unlabeled
+ *                            Subfigure-Komplexe, s. slides-refmap `figures`);
  *                            Standard-Transition ist "autoanimate"
  *                            (data-auto-animate); "transition: fade|slide|
  *                            zoom|none" setzt eine klassische Transition.
@@ -37,8 +41,13 @@ const SLIDE_FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
 const SLIDE_DIRECTIVE = /^(layout|transition|class|notes|background):\s*(\S.*)$/;
 const SLIDE_CLASS = /^[A-Za-z0-9_-]+$/;
 // background: Markdown-Bild-/Applet-Snippet ![Titel](/media/…) ohne Zusätze
-// (kein Label/Attribute) — der Pfad darf kein Whitespace enthalten.
-const SLIDE_BG_IMAGE = /^!\[([^\]]*)\]\(([^)\s]+)\)$/;
+// (kein Label/Attribute) — der Pfad darf kein Whitespace und kein { enthalten
+// (sonst würde ein falsch platziertes {zoom=X} innerhalb der Klammer still-
+//  schweigend als Pfadteil verschluckt; ungültige Zeile bleibt stattdessen
+//  literal sichtbar). Parität mit slides_service._BG_IMAGE.
+// Optionaler {zoom=X} (führender Punkt optional) gilt NUR für Applet-/Website-
+// (Iframe-)Backgrounds — Reveal kennt kein natives Bg-Zoom, s. wireBgZoom.
+const SLIDE_BG_IMAGE = /^!\[([^\]]*)\]\(([^)\s{]+)\)(?:[ \t]*\{\.?zoom=([\d.]+)\})?$/;
 // ?print-pdf-Modus: dort liegt das Folien-Bg als Element in der Folie (pro
 // PDF-Seite, interaktiv vor dem Druck) — Reveal's natives Bg-System
 // (data-background-*) ist im Print-Modus ausgeblendet und funktioniert
@@ -144,8 +153,13 @@ function _parseSlideBlock(block, index) {
       } else if (key === "background") {
         const bm = value.match(SLIDE_BG_IMAGE);
         if (bm) {
-          slide.background = { alt: bm[1], src: bm[2] };
-          consumed = true;
+          const zoom = bm[3] !== undefined ? parseFloat(bm[3]) : null;
+          // Zoom nur für Applet/Website (Iframe) — bei Bildern bleibt die
+          // Zeile literal (ungültige Schreibweise fällt so auf, s. 1e).
+          if (zoom === null || isAppletSrc(bm[2])) {
+            slide.background = { alt: bm[1], src: bm[2], zoom };
+            consumed = true;
+          }
         }
       } else if (key === "notes") {
         slide.notes = value;
@@ -207,15 +221,21 @@ function countSlides(slides) {
 /** Rendert eine Folie in ein Element (<section> oder .slides-canvas).
  *  slideMode: true → slide-eigene Gleichungs-Labels bekommen (S1), (S2), …
  *  und Skript-Labels verlinken zur Gleichung im Skript. */
-async function renderSlideInto(slide, container) {
+async function renderSlideInto(slide, container, slidePos) {
   container.innerHTML = "";
+  // Teil-Index (p) pari zu _slide_md_parts in api/slides.py: [Header?,
+  // nicht-leere Spalten…] — pro gerendertem (nicht-leerem) Teil
+  // weiterzählen. Nur relevant, wenn slidePos gesetzt ist (S-Nummern
+  // unlabeled Subfigure-Komplexe aus der slides-refmap).
+  let part = 0;
+  const nextPos = () => (slidePos ? { ...slidePos, p: part++ } : null);
   const isTwocol = slide.layout === "twocol" && slide.columns.length === 2;
   if (isTwocol) {
     if (slide.header) {
       // Überschrift spannt über beide Spalten (eigener Block vor dem Grid).
       const headerEl = document.createElement("div");
       headerEl.className = "slides-twocol-header";
-      await renderMarkdown(slide.header, headerEl, { slideMode: true });
+      await renderMarkdown(slide.header, headerEl, { slideMode: true, slidePos: nextPos() });
       container.appendChild(headerEl);
     }
     const wrap = document.createElement("div");
@@ -224,12 +244,12 @@ async function renderSlideInto(slide, container) {
       const colEl = document.createElement("div");
       colEl.className = "slides-col";
       wrap.appendChild(colEl);
-      if (colMd) await renderMarkdown(colMd, colEl, { slideMode: true });
+      if (colMd) await renderMarkdown(colMd, colEl, { slideMode: true, slidePos: nextPos() });
     }
     container.appendChild(wrap);
   } else {
     const md = slide.columns[0] || "";
-    if (md) await renderMarkdown(md, container, { slideMode: true });
+    if (md) await renderMarkdown(md, container, { slideMode: true, slidePos: nextPos() });
   }
 }
 
@@ -279,7 +299,7 @@ async function renderSlideThumb(slide, thumbEl, themeClass) {
  * Attribut würde dort durch den (leeren) aside.notes-Branch überschrieben
  * und in der Speaker-View nie angezeigt.
  */
-async function buildSlideSection(slide, footerText) {
+async function buildSlideSection(slide, footerText, slidePos) {
   // Vertikaler Stack (`--`-Unterfolien): Reveal-Nest <section>
   // <section>…</section>…</section>. Der Eltern-Section ist ein reiner
   // (inhaltloser) Container ohne Layout-Klasse — Reveal erkennt am
@@ -288,8 +308,10 @@ async function buildSlideSection(slide, footerText) {
   if (slide.children && slide.children.length > 0) {
     const stack = document.createElement("section");
     stack.className = "slides-stack";
-    for (const child of slide.children) {
-      stack.appendChild(await buildSlideSection(child, footerText));
+    for (let v = 0; v < slide.children.length; v++) {
+      // v = Unterfolien-Index (Parität zur slides-refmap-Iteration).
+      const pos = slidePos ? { ...slidePos, v } : null;
+      stack.appendChild(await buildSlideSection(slide.children[v], footerText, pos));
     }
     return stack;
   }
@@ -303,7 +325,8 @@ async function buildSlideSection(slide, footerText) {
   // faden ein/aus, der Inline-Transform-Zoom bleibt erhalten.
   const transition = slide.transition || SLIDE_DEFAULT_TRANSITION;
   if (footerText) section.setAttribute("data-footer", footerText);
-  await renderSlideInto(slide, section);
+  const pos = slidePos ? { ...slidePos, v: 0 } : null;
+  await renderSlideInto(slide, section, pos);
   // Folien-Hintergrund (background: ![Titel](…)):
   // - Präsentation/Vorschau: Reveal's natives Hintergrund-System
   //   (data-background-image / data-background-iframe) → deckt den ganzen
@@ -324,18 +347,47 @@ async function buildSlideSection(slide, footerText) {
       const bg = document.createElement(isApplet ? "iframe" : "img");
       bg.className = "tutorai-slide-bg";
       bg.src = slide.background.src;
+      let appletZoom = null;
       if (isApplet) {
         bg.setAttribute("sandbox", appletSandboxAttr(slide.background.src));
         bg.title = slide.background.alt;
         bg.loading = "lazy";
+        const z = slide.background.zoom;
+        if (z) {
+          // Zoom wie bei 6a (markdown-renderer.js): Layout-Box 1/zoom +
+          // transform scale — sichtbare Fläche unverändert, Inhalt ×z
+          // (oben links verankert). Inline schlägt die 100%-Regel für
+          // .tutorai-slide-bg (slides.css). Bei z<1 ist die Box größer
+          // als die Folie → Clip-Wrapper (s. .tutorai-slide-bg-clip).
+          bg.style.width = `calc(100% / ${z})`;
+          bg.style.height = `calc(100% / ${z})`;
+          bg.style.transform = `scale(${z})`;
+          bg.style.transformOrigin = "0 0";
+          appletZoom = z;
+        }
       } else {
         bg.alt = slide.background.alt;
       }
       section.classList.add("slides-has-bg");
-      section.appendChild(bg);
+      if (appletZoom) {
+        // Sections sind im print-pdf-Modus overflow:visible → ein
+        // rausgezoomtes (größerer Box) Bg würde in die Nachbar-PDF-Seiten
+        // bluten. In einem foliengroßen Clip-Wrapper abschneiden.
+        const clip = document.createElement("div");
+        clip.className = "tutorai-slide-bg-clip";
+        clip.appendChild(bg);
+        section.appendChild(clip);
+      } else {
+        section.appendChild(bg);
+      }
     } else if (isApplet) {
       section.setAttribute("data-background-iframe", slide.background.src);
       section.setAttribute("data-background-interactive", "");
+      // Reveal kennt kein natives Bg-Iframe-Zoom → wireBgZoom liest den
+      // Faktor aus diesem Attribut und skaliert das (lazy) angelegte Iframe.
+      if (slide.background.zoom) {
+        section.setAttribute("data-background-zoom", String(slide.background.zoom));
+      }
     } else {
       section.setAttribute("data-background-image", slide.background.src);
     }
@@ -352,6 +404,48 @@ async function buildSlideSection(slide, footerText) {
     section.appendChild(aside);
   }
   return section;
+}
+
+/**
+ * Folien-Hintergrund-Zoom ({zoom=X} bei background: ![…](….html/Website)):
+ * Reveal legt das Bg-Iframe mit 100%×100% an und skaliert es nicht
+ * (data-background-size wirkt nur auf CSS-Background-Images) → den Zoom
+ * setzen wir selbst: Layout-Box 1/zoom + transform scale(zoom) — exakt wie
+ * der Applet-Zoom bei 6a (markdown-renderer.js): sichtbare Fläche bleibt
+ * die Folie, der Iframe-Inhalt wird ×zoom größer (oben links verankert;
+ * das Applet layoutet in der 1/zoom-großen Box und wird vergrößert).
+ *
+ * MÜSSE NACH `await reveal.initialize()` aufgerufen werden (wie
+ * wireKatexFragmentResort): Das initiale slidechanged feuert während
+ * start(), also VOR der Listener-Registrierung → die aktuelle Folie wird
+ * direkt angewendet. backgrounds.update() (lazy Iframe-Anlage) läuft
+ * synchron NACH dem slidechanged-Dispatch → erst im nächsten Frame greift
+ * der Iframe (requestAnimationFrame).
+ */
+function wireBgZoom(reveal) {
+  const apply = (section) => {
+    if (!section) return;
+    const z = parseFloat(section.getAttribute("data-background-zoom"));
+    const content = section.slideBackgroundContentElement;
+    const iframe = content && content.querySelector ? content.querySelector("iframe") : null;
+    if (!iframe) return;
+    if (!z) return; // kein Zoom → Reveal's 100%×100% bleibt wirksam
+    // Reveal legt das Bg-Iframe mit max-width/max-height: 100% inline an —
+    // bei z<1 würde die 1/zoom-Box damit auf die Foliengröße gekappt und
+    // der Inhalt in die obere-linke Ecke geschrumpft. Caps aufheben
+    // (Präzedenz: reveal.css hebt genau diese Caps für Video-Bgs auf).
+    iframe.style.maxWidth = "none";
+    iframe.style.maxHeight = "none";
+    iframe.style.width = `calc(100% / ${z})`;
+    iframe.style.height = `calc(100% / ${z})`;
+    iframe.style.transform = `scale(${z})`;
+    iframe.style.transformOrigin = "0 0";
+  };
+  // Aktuelle Folie (Deep-Link #/n: der Bg ist nach initialize() geladen).
+  apply(reveal.getCurrentSlide());
+  reveal.on("slidechanged", (e) => {
+    requestAnimationFrame(() => apply(e.currentSlide));
+  });
 }
 
 /**

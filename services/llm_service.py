@@ -490,12 +490,19 @@ class LLMService:
         self,
         prompt: str,
         existing_html: str = "",
+        image_data_url: Optional[str] = None,
+        console_errors: Optional[list[str]] = None,
         config: Optional[dict] = None,
     ):
-        """Generiert/überarbeitet ein interaktives HTML-Applet via LLM.
+        """Generiert/überarbeitet ein HTML-Applet via LLM.
 
         prompt: Was das Applet zeigen/ermöglichen soll (bzw. Änderungswunsch
         bei existing_html). existing_html: aktueller HTML-Code (Refinement).
+        image_data_url: optionales Referenzbild (Data-URL, z. B. Medium aus
+        der Bibliothek oder hochgeladen/gezeichnet) — wird multimodal
+        angehängt; das LLM nutzt es als Basis (Umwandlung/Skizze).
+        console_errors: optionale Web-Konsole-Fehler aus der Applet-Preview
+        (Fehlermeldung + Stack) — dienen dem LLM als Diagnose-Hinweis.
         Das LLM liefert JSON: {"html", "title", "description"} — wird hier
         NICHT gespeichert (Preview-first im Applet-Studio).
 
@@ -505,6 +512,8 @@ class LLMService:
         tpl = Template(APPLET_PROMPT_TEMPLATE).render(
             prompt=prompt,
             existing_html=existing_html,
+            has_image=bool(image_data_url),
+            console_errors=console_errors or [],
         )
 
         # Komplettes HTML-Dokument → großzügiges Timeout + Token-Budget.
@@ -516,6 +525,7 @@ class LLMService:
             response_format={"type": "json_object"},
             config=self._public_config(cfg),
             max_tokens=APPLET_MAX_TOKENS,
+            images=[image_data_url] if image_data_url else None,
         )
 
     async def generate_socratic_hint(
@@ -1395,7 +1405,7 @@ class LLMService:
             "raw_response": "",
         }
 
-    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None, config: Optional[dict] = None, max_tokens: Optional[int] = None):
+    async def _call_with_json(self, prompt: str, response_format: Optional[dict] = None, config: Optional[dict] = None, max_tokens: Optional[int] = None, images: Optional[list[str]] = None):
         """
         Generischer LLM-Aufruf mit JSON-Response-Format.
 
@@ -1403,6 +1413,8 @@ class LLMService:
         verwendet (unterstuetzt global_settings / course_settings Resolver).
         max_tokens: optionale Obergrenze für die Antwortlänge (z. B. für große
         HTML-Generierungen), sonst Modell-Default.
+        images: optionale Data-URLs (z. B. Referenzbilder) — werden als
+        image_url-Content-Parts vor dem Prompt-Text übergeben (multimodal).
 
         retry=2 bei Fehlern (Rate Limits, Timeouts).
         """
@@ -1418,11 +1430,18 @@ class LLMService:
         last_content = ""
         last_thinking = ""
 
+        if images:
+            user_content: object = [
+                {"type": "image_url", "image_url": {"url": url}} for url in images
+            ] + [{"type": "text", "text": prompt}]
+        else:
+            user_content = prompt
+
         create_kwargs = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content},
             ],
             "temperature": self.temperature,
         }

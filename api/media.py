@@ -11,11 +11,13 @@ nicht ohne Kurs-Membership abrufbar sind.
 """
 
 import base64
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlmodel import Session, select
 
+from config import MEDIA_DIR
 from database.base import get_session
 from database.models import CourseMedia, CourseRole, MediaUsage, ScriptSection, User
 from services.auth_service import require_course_access
@@ -27,6 +29,13 @@ from services.content_edits import ContentEditError, _resolve_span
 
 router = APIRouter(prefix="/api", tags=["Medien"])
 llm_service = LLMService()
+
+# Referenzbild für die Applet-Generierung (Medium aus der Bibliothek oder
+# hochgeladen/gezeichnet): nur Rasterformate (SVG kein Vision-Input), und der
+# Base64-Payload bleibt unterhalb des 10-MB-Upload-Limits der Frontend.
+REFERENCE_IMAGE_MIMES = {"image/png", "image/jpeg", "image/webp"}
+MAX_REFERENCE_IMAGE_B64 = 14 * 1024 * 1024  # ≈ 10 MB Binär → 13.4 MB Base64
+_REFERENCE_IMAGE_URL_RE = re.compile(r"^data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$")
 
 
 def _apply_html_edits(html: str, edits: object) -> str:
@@ -233,17 +242,59 @@ async def generate_applet_llm(
 ):
     """LLM erzeugt/ändert Applet-HTML + Titel + Beschreibung (speichert NICHT).
 
-    Body: {"prompt": str, "existing_html": str (optional, für Refinement)}
+    Body: {"prompt": str, "existing_html": str (optional, für Refinement),
+           "media_id": int (optional — Bild-Medium aus der Bibliothek als Referenz),
+           "image_data_url": str (optional — hochgeladenes/gezeichnetes Bild),
+           "console_errors": list[str] (optional — Konsole-Fehler aus der Preview)}
+    media_id und image_data_url sind gegenseitig exklusiv.
     """
     body = await request.json()
     prompt = (body.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "Bitte gib an, was das Applet zeigen soll.")
     existing_html = (body.get("existing_html") or "").strip()
+    raw_media_id = body.get("media_id")
+    image_data_url = (body.get("image_data_url") or "").strip()
+
+    # Konsole-Fehler aus der Preview (Diagnose-Hinweis für das LLM): nur
+    # nicht-leere Strings, je max. 2000 Zeichen, insgesamt max. 10 Fehler.
+    raw_console_errors = body.get("console_errors")
+    console_errors: Optional[list[str]] = None
+    if raw_console_errors is not None:
+        if not isinstance(raw_console_errors, list) or len(raw_console_errors) > 20:
+            raise HTTPException(400, "Ungültiges Feld „console_errors“ (Liste mit max. 20 Fehler-Strings erwartet).")
+        console_errors = [str(e).strip()[:2000] for e in raw_console_errors if str(e).strip()][:10] or None
+
+    # ── Referenzbild auflösen (Medium aus der Bibliothek ODER Upload) ──
+    image_url: Optional[str] = None
+    if raw_media_id is not None and image_data_url:
+        raise HTTPException(400, "Bitte wähle entweder ein Medium aus der Bibliothek ODER ein hochgeladenes Bild — nicht beides.")
+    if raw_media_id is not None:
+        try:
+            ref_media = _get_media(session, course_id, int(raw_media_id))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Ungültige Medium-ID.")
+        if ref_media.media_type != "image" or ref_media.mime_type not in REFERENCE_IMAGE_MIMES:
+            raise HTTPException(400, "Das gewählte Medium kann nicht als Referenzbild verwendet werden (nur Bilder: PNG, JPEG, WebP).")
+        ref_path = MEDIA_DIR / ref_media.file_path
+        if not ref_path.is_file():
+            raise HTTPException(404, "Die Datei des Referenzmediums wurde nicht gefunden.")
+        image_url = f"data:{ref_media.mime_type};base64," + base64.b64encode(ref_path.read_bytes()).decode("ascii")
+    elif image_data_url:
+        m = _REFERENCE_IMAGE_URL_RE.fullmatch(image_data_url)
+        if not m:
+            raise HTTPException(400, "Ungültiges Referenzbild (PNG/JPEG/WebP als Data-URL erwartet).")
+        if len(m.group(2)) > MAX_REFERENCE_IMAGE_B64:
+            raise HTTPException(413, "Referenzbild zu groß (max. ca. 10 MB).")
+        image_url = image_data_url
 
     llm_cfg = dict(get_effective_llm_config(session, course_id))
     result = await llm_service.generate_applet(
-        prompt=prompt, existing_html=existing_html, config=llm_cfg
+        prompt=prompt,
+        existing_html=existing_html,
+        image_data_url=image_url,
+        console_errors=console_errors,
+        config=llm_cfg,
     )
     if not result.get("success"):
         raise HTTPException(502, f"LLM-Fehler: {result.get('error', 'Unbekannter Fehler')}")

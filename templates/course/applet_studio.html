@@ -1,18 +1,22 @@
 {% extends "course/base.html" %}
 
-{# ─────────────────────────────────────────────────────────────────────
-   Applet-Studio: interaktive HTML-Applets generieren (LLM) & bearbeiten
-   (manuell per CodeMirror). Nur PROF/Admin.
+{# ────────────────────────────────────────────────────────────────
+   Applet-Studio: HTML-Applets generieren (LLM) & bearbeiten (manuell per
+   CodeMirror). Applets können interaktiv sein ODER einfache, nicht-
+   interaktive Skizzen/Figuren (z. B. statisches SVG). Nur PROF/Admin.
+   Als Referenzbild für die Generierung kann ein Bild-Medium aus der
+   Medienbibliothek gewählt oder ein Foto/Zeichnung hochgeladen werden.
 
    Neu:  GET /courses/{id}/applets/new      (media = None)
    Edit: GET /courses/{id}/applets/{mid}    (media = CourseMedia, type applet)
 
    API:
    POST /api/courses/{id}/media/applet-llm   → LLM (HTML+Titel+Beschreibung, speichert NICHT)
+         Body: {prompt, existing_html?, media_id? ODER image_data_url?}
    POST /api/courses/{id}/media/applet       → neues Applet-Medium anlegen
    PUT  /api/courses/{id}/media/{mid}/applet → HTML (+Titel/Beschreibung) ersetzen
    GET  /api/courses/{id}/media/{mid}/applet → Quelle laden (Edit-Modus)
-   ───────────────────────────────────────────────────────────────────── #}
+   ──────────────────────────────────────────────────────────────── #}
 
 {% block course_content %}
 
@@ -35,8 +39,107 @@
             {{ "Änderungswunsch" if media else "Was soll das Applet zeigen?" }}
           </label>
           <textarea id="applet-prompt" rows="4"
-                    placeholder="z. B. „Interaktive Visualisierung der Entropie H(X) mit Slider für die Wahrscheinlichkeitsverteilung“ oder „3D-Darstellung einer binären Quelle mit OrbitControls“"
+                    placeholder="z. B. „Interaktive Visualisierung der Entropie H(X) mit Slider für die Wahrscheinlichkeitsverteilung“, „Wandle das angehängte Medium in ein interaktives Applet um“ oder „Einfache, nicht-interaktive Skizze der angehängten Figur als SVG“"
                     class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm"></textarea>
+        </div>
+
+        {# ── Referenzbild: Medium aus der Bibliothek ODER Foto/Zeichnung ── #}
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            Referenzbild <span class="font-normal text-gray-400">(optional)</span>
+          </label>
+          <select id="applet-media-select"
+                  class="w-full border border-purple-300 rounded px-3 py-1.5 text-sm bg-white">
+            <option value="">– kein Medium –</option>
+          </select>
+          <div class="flex items-center gap-2 mt-2">
+            <span class="text-xs text-gray-400">oder hochladen:</span>
+            <div class="flex items-center rounded-lg border border-purple-300 overflow-hidden">
+              <button id="applet-toggle-photo" type="button"
+                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 transition inline-flex items-center gap-1.5"
+                      title="Foto einer Figur hochladen">
+                <span>📷</span> Foto
+              </button>
+              <button id="applet-toggle-draw" type="button"
+                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 border-l border-purple-300 transition inline-flex items-center gap-1.5"
+                      title="Figur per Hand zeichnen">
+                <span>✏️</span> Zeichnen
+              </button>
+            </div>
+          </div>
+
+          {# Upload-Bereich (Foto / Zeichnen — analog task_solve.html) #}
+          <div id="applet-upload-area" class="hidden mt-3">
+            <!-- Foto-Modus -->
+            <div id="applet-photo-mode">
+              <div class="border-2 border-dashed border-purple-300 rounded-lg p-4 text-center bg-purple-50/50">
+                <div id="applet-drop-zone" class="cursor-pointer" onclick="document.getElementById('applet-file-input').click()">
+                  <div class="text-2xl mb-1">📸</div>
+                  <p class="text-xs text-purple-600 font-medium">Klicke oder ziehe ein Bild herein</p>
+                  <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
+                </div>
+                <input type="file" id="applet-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
+                <input type="file" id="applet-camera-input" accept="image/*" capture="environment" class="hidden" />
+                <button id="applet-camera-btn" type="button" class="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 transition">
+                  <span>📷</span><span>Foto mit Kamera machen</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Zeichnungs-Modus -->
+            <div id="applet-draw-mode" class="hidden">
+              <div class="border-2 border-dashed border-purple-300 rounded-lg p-3 bg-purple-50/50">
+                <div class="relative w-full">
+                  <canvas id="applet-canvas" class="w-full bg-white rounded cursor-crosshair touch-none block object-cover" style="height:280px;object-position:center"></canvas>
+                </div>
+                <div class="flex items-center justify-between mt-2">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button id="applet-clear-canvas-btn" type="button" class="text-xs bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-200 transition">
+                      🗑️ Löschen
+                    </button>
+                    <button id="applet-eraser-btn" type="button" class="text-xs bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg transition">
+                      <span id="applet-eraser-icon">🧽</span> <span id="applet-eraser-label">Radierer</span>
+                    </button>
+                    <div id="applet-stroke-width-btns" class="flex items-center gap-0.5 bg-white border border-gray-300 rounded p-0.5">
+                      <button type="button" data-width="2" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
+                        <div class="rounded-full border-2 border-gray-800" style="width:12px;height:12px"></div>
+                      </button>
+                      <button type="button" data-width="4" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded bg-purple-600">
+                        <div class="rounded-full border-2 border-white" style="width:18px;height:18px"></div>
+                      </button>
+                      <button type="button" data-width="6" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
+                        <div class="rounded-full border-2 border-gray-800" style="width:24px;height:24px"></div>
+                      </button>
+                    </div>
+                    <div class="flex items-center gap-0.5 bg-white border border-gray-300 rounded p-0.5">
+                      <button id="applet-undo-btn" type="button" class="text-gray-300 w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition cursor-default" title="Undo">
+                        <
+                      </button>
+                      <div class="w-px h-5 bg-gray-300"></div>
+                      <button id="applet-redo-btn" type="button" class="text-gray-300 w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition cursor-default" title="Redo">
+                        >
+                      </button>
+                    </div>
+                  </div>
+                  <button id="applet-use-drawing-btn" type="button" class="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-lg hover:bg-purple-700 transition">
+                    ✅ Als Referenz verwenden
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {# Referenzbild-Vorschau (erscheint nach Auswahl/Upload/Zeichnung) #}
+          <div id="applet-image-preview" class="hidden mt-3">
+            <div class="flex items-center gap-3 bg-white border border-purple-200 rounded-lg p-2">
+              <img id="applet-image-thumb" class="max-h-28 max-w-[160px] object-contain rounded border border-gray-200 bg-white" />
+              <div class="flex-1 min-w-0">
+                <p id="applet-image-name" class="text-xs text-gray-600 truncate font-medium"></p>
+                <p class="text-xs text-purple-600 mt-1">Wird der Generierung als Referenz übergeben.</p>
+              </div>
+              <button id="applet-image-remove" type="button" class="text-gray-400 hover:text-gray-600 text-lg flex-shrink-0" title="Referenzbild entfernen">✕</button>
+            </div>
+          </div>
         </div>
         <button id="applet-generate" type="button"
                 class="w-full bg-purple-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-purple-700 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed">
@@ -49,7 +152,9 @@
         <p class="text-xs text-gray-400">
           {{ "Der aktuelle HTML-Code wird als Kontext übergeben. " if media }}
           Das Ergebnis landet in Titel, Beschreibung und HTML-Code — bitte prüfen und
-          anschließend speichern. Chart.js, Three.js, Plotly &amp; KaTeX (lokal) stehen dem LLM zur Verfügung.
+          anschließend speichern. Chart.js, Three.js, Plotly &amp; KaTeX (lokal) stehen dem LLM zur
+          Verfügung. Als Referenz: ein Medium aus der Bibliothek oder ein Foto/Zeichnung —
+          auf Wunsch erzeugt das LLM auch eine einfache, nicht-interaktive Skizze (z. B. SVG).
         </p>
       </div>
     </div>
@@ -86,7 +191,12 @@
 
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
       <div class="flex items-center justify-between mb-3">
-        <h2 class="font-bold text-gray-800">👁️ Live-Preview</h2>
+        <div class="flex items-center gap-2">
+          <h2 class="font-bold text-gray-800">👁️ Live-Preview</h2>
+          <span id="applet-error-badge" class="hidden text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5" title="">
+            ⚠️ <span id="applet-error-count"></span> Konsole-Fehler
+          </span>
+        </div>
         <button id="applet-preview-refresh" type="button"
                 class="text-xs text-blue-600 hover:underline" title="Preview aus dem HTML-Code unten neu laden">
           ⟳ Vorschau aktualisieren
@@ -142,9 +252,10 @@
     matchBrackets: true,
   });
 
-  // Auto-Size-Boilerplate (identisch zum serverseitigen Versand in serve_media,
-  // main.py): ins srcdoc injizieren, damit die Preview wie eingebettete Applets
-  // mitwächst (ohne Boilerplate meldet das Applet keine Höhe).
+  // Auto-Size-Boilerplate (Auto-Size-Teil identisch zum serverseitigen Versand
+  // in serve_media, main.py; zusätzlich Konsole-Fehler-Capture für die
+  // Studio-Preview): ins srcdoc injizieren, damit die Preview wie eingebettete
+  // Applets mitwächst und JS-Fehler an die Eltern-Seite gemeldet werden.
   const APPLET_HEIGHT_SNIPPET =
     '<script>\n' +
     '(function () {\n' +
@@ -155,10 +266,64 @@
     '  window.addEventListener("resize", report);\n' +
     '  if (window.ResizeObserver) { new ResizeObserver(report).observe(document.body); }\n' +
     '  report();\n' +
+    '  function sendError(message, detail) {\n' +
+    '    try {\n' +
+    '      var msg = String(message || "Unbekannter Fehler") + (detail ? "\\n" + String(detail) : "");\n' +
+    '      parent.postMessage({ source: "tutorai-applet-error", message: msg.slice(0, 1500) }, "*");\n' +
+    '    } catch (e) {}\n' +
+    '  }\n' +
+    '  window.addEventListener("error", function (e) {\n' +
+    '    if (e.target && e.target !== window && (e.target.src || e.target.href)) {\n' +
+    '      sendError("Failed to load resource: " + (e.target.src || e.target.href));\n' +
+    '    } else if (e.message) {\n' +
+    '      var stack = e.error && e.error.stack ? e.error.stack.split("\\n").slice(1, 4).join("\\n") : "";\n' +
+    '      sendError(e.message + " (Zeile " + (e.lineno || "?") + ", Spalte " + (e.colno || "?"))", stack);\n' +
+    '    }\n' +
+    '  });\n' +
+    '  window.addEventListener("unhandledrejection", function (e) {\n' +
+    '    var r = e.reason;\n' +
+    '    sendError("Unhandled Promise Rejection: " + (r instanceof Error ? r.message + (r.stack ? "\\n" + r.stack : "") : String(r)));\n' +
+    '  });\n' +
     '})();\n' +
     '<\/script>\n';
 
+  // ─── Konsole-Fehler aus der Preview (werden der Generierung mitgegeben) ──
+  const appletErrors = [];
+  const MAX_APPLET_ERRORS = 10;
+  const errorBadge = document.getElementById("applet-error-badge");
+  const errorCountEl = document.getElementById("applet-error-count");
+
+  function updateErrorBadge() {
+    const n = appletErrors.length;
+    errorBadge.classList.toggle("hidden", n === 0);
+    if (n > 0) {
+      errorCountEl.textContent = n;
+      errorBadge.title = "Gemeldete Konsole-Fehler der Preview — werden beim nächsten Generieren als Kontext an das LLM mitgegeben:\n\n" + appletErrors.join("\n");
+    } else {
+      errorBadge.title = "";
+    }
+  }
+
+  window.addEventListener("message", (event) => {
+    const d = event.data;
+    if (!d || d.source !== "tutorai-applet-error") return;
+    const msg = String(d.message || "").trim();
+    if (!msg) return;
+    // Duplikate (z. B. wiederholt gemeldeter Load-Fehler) neu an das Ende schieben
+    const idx = appletErrors.indexOf(msg);
+    if (idx !== -1) appletErrors.splice(idx, 1);
+    appletErrors.push(msg);
+    if (appletErrors.length > MAX_APPLET_ERRORS) appletErrors.shift();
+    updateErrorBadge();
+  });
+
+  function clearAppletErrors() {
+    appletErrors.length = 0;
+    updateErrorBadge();
+  }
+
   function updatePreview() {
+    clearAppletErrors();
     let html = codeCM.getValue();
     if (html.trim() && !html.includes("tutorai-applet")) {
       const m = html.match(/<\/body\s*>/i);
@@ -175,6 +340,373 @@
     statusBox.classList.toggle("hidden", !busy);
     if (msg) statusText.textContent = msg;
   }
+
+  // ─── Referenzbild (Medium aus der Bibliothek oder Foto/Zeichnung) ──
+  // appletImage: {source:"media", mediaId, name, url} | {source:"upload", name, url, dataUrl} | null
+  let appletImage = null;
+
+  const mediaSelect = document.getElementById("applet-media-select");
+  const imagePreview = document.getElementById("applet-image-preview");
+  const imageThumb = document.getElementById("applet-image-thumb");
+  const imageNameEl = document.getElementById("applet-image-name");
+  const uploadArea = document.getElementById("applet-upload-area");
+  const photoMode = document.getElementById("applet-photo-mode");
+  const drawMode = document.getElementById("applet-draw-mode");
+  const togglePhoto = document.getElementById("applet-toggle-photo");
+  const toggleDraw = document.getElementById("applet-toggle-draw");
+  const dropZone = document.getElementById("applet-drop-zone");
+  const fileInput = document.getElementById("applet-file-input");
+  const cameraInput = document.getElementById("applet-camera-input");
+
+  async function loadMediaOptions() {
+    try {
+      const res = await fetch(`/api/courses/${courseId}/media`, { credentials: "same-origin" });
+      if (!res.ok) return;
+      const items = await res.json();
+      for (const m of items) {
+        if (m.media_type !== "image") continue;
+        if (!["image/png", "image/jpeg", "image/webp"].includes(m.mime_type)) continue;
+        const opt = document.createElement("option");
+        opt.value = m.id;
+        opt.textContent = m.title;
+        opt.dataset.url = m.url;
+        mediaSelect.appendChild(opt);
+      }
+    } catch (e) { /* Select bleibt leer — Referenz per Upload weiterhin möglich */ }
+  }
+
+  function setImage(ref) {
+    appletImage = ref;
+    if (ref) {
+      imageThumb.src = ref.url;
+      imageNameEl.textContent = ref.name;
+      imagePreview.classList.remove("hidden");
+      if (ref.source === "media") {
+        mediaSelect.value = String(ref.mediaId);
+        closeAppletUpload();
+      } else {
+        mediaSelect.value = "";
+      }
+    } else {
+      imagePreview.classList.add("hidden");
+      mediaSelect.value = "";
+    }
+  }
+
+  function activateToggle(btn, active) {
+    if (active) {
+      btn.classList.remove("text-gray-500", "hover:text-gray-700");
+      btn.classList.add("bg-purple-600", "text-white");
+    } else {
+      btn.classList.remove("bg-purple-600", "text-white");
+      btn.classList.add("text-gray-500", "hover:text-gray-700");
+    }
+  }
+
+  function showAppletPhotoMode() {
+    photoMode.classList.remove("hidden");
+    drawMode.classList.add("hidden");
+    uploadArea.classList.remove("hidden");
+    activateToggle(togglePhoto, true);
+    activateToggle(toggleDraw, false);
+  }
+
+  function showAppletDrawMode() {
+    photoMode.classList.add("hidden");
+    drawMode.classList.remove("hidden");
+    uploadArea.classList.remove("hidden");
+    activateToggle(toggleDraw, true);
+    activateToggle(togglePhoto, false);
+    setupDrawCanvas();
+  }
+
+  function closeAppletUpload() {
+    uploadArea.classList.add("hidden");
+    photoMode.classList.add("hidden");
+    drawMode.classList.add("hidden");
+    activateToggle(togglePhoto, false);
+    activateToggle(toggleDraw, false);
+    fileInput.value = "";
+  }
+
+  togglePhoto.addEventListener("click", () => {
+    if (togglePhoto.classList.contains("bg-purple-600")) closeAppletUpload();
+    else showAppletPhotoMode();
+  });
+  toggleDraw.addEventListener("click", () => {
+    if (toggleDraw.classList.contains("bg-purple-600")) closeAppletUpload();
+    else showAppletDrawMode();
+  });
+
+  mediaSelect.addEventListener("change", () => {
+    if (!mediaSelect.value) { setImage(null); return; }
+    const opt = mediaSelect.selectedOptions[0];
+    setImage({ source: "media", mediaId: parseInt(mediaSelect.value, 10), name: opt.textContent, url: opt.dataset.url });
+  });
+
+  document.getElementById("applet-image-remove").addEventListener("click", () => setImage(null));
+
+  function handleAppletImageFile(file) {
+    const allowedTypes = ["image/png", "image/jpeg", "image/webp"];
+    if (!allowedTypes.includes(file.type)) {
+      showToast("Nicht unterstütztes Format. Verwende PNG, JPEG oder WebP.", "error");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      showToast("Bild zu groß. Maximum sind 10 MB.", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setImage({ source: "upload", name: file.name, url: e.target.result, dataUrl: e.target.result });
+      closeAppletUpload();
+      showToast("Bild als Referenz hinterlegt — jetzt generieren.", "success");
+    };
+    reader.readAsDataURL(file);
+  }
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length > 0) handleAppletImageFile(fileInput.files[0]);
+  });
+  cameraInput.addEventListener("change", () => {
+    if (cameraInput.files.length > 0) handleAppletImageFile(cameraInput.files[0]);
+  });
+  document.getElementById("applet-camera-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    cameraInput.click();
+  });
+
+  if (dropZone) {
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.parentElement.classList.add("border-purple-500", "bg-purple-100");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.parentElement.classList.remove("border-purple-500", "bg-purple-100");
+    });
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.parentElement.classList.remove("border-purple-500", "bg-purple-100");
+      const files = e.dataTransfer.files;
+      if (files.length > 0) handleAppletImageFile(files[0]);
+    });
+  }
+
+  // ── Zeichnungs-Canvas (analog task_solve.html) ──
+  const drawCanvas = document.getElementById("applet-canvas");
+  const drawCtx = drawCanvas ? drawCanvas.getContext("2d") : null;
+  let isDrawing = false, isErasing = false;
+  let drawPrevX = 0, drawPrevY = 0;
+  let canvasSetupDone = false;
+  let isRestoring = false;
+  const MAX_UNDO_STATES = 50;
+  let undoStack = [], redoStack = [], preStrokeSnapshot = null;
+  let currentStrokeWidth = 4;
+
+  // Fixed high internal resolution – CSS object-cover handles visual scaling
+  const INTERNAL_W = 2000, INTERNAL_H = 1125;
+
+  function saveCanvasSnapshot() {
+    return drawCanvas.toDataURL("image/jpeg", 0.85);
+  }
+
+  function restoreCanvasFromDataUrl(dataUrl, callback) {
+    const img = new Image();
+    img.onload = () => {
+      drawCtx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
+      drawCtx.drawImage(img, 0, 0, INTERNAL_W, INTERNAL_H);
+      if (callback) callback();
+    };
+    img.src = dataUrl;
+  }
+
+  function updateUndoRedoButtons() {
+    const hasUndo = undoStack.length > 0;
+    const hasRedo = redoStack.length > 0;
+    undoBtn.classList.toggle("text-gray-600", hasUndo);
+    undoBtn.classList.toggle("text-gray-300", !hasUndo);
+    undoBtn.classList.toggle("cursor-pointer", hasUndo);
+    undoBtn.classList.toggle("cursor-default", !hasUndo);
+    redoBtn.classList.toggle("text-gray-600", hasRedo);
+    redoBtn.classList.toggle("text-gray-300", !hasRedo);
+    redoBtn.classList.toggle("cursor-pointer", hasRedo);
+    redoBtn.classList.toggle("cursor-default", !hasRedo);
+  }
+
+  function canvasUndo() {
+    if (undoStack.length === 0 || isRestoring) return;
+    isRestoring = true;
+    redoStack.push(saveCanvasSnapshot());
+    const prevState = undoStack.pop();
+    restoreCanvasFromDataUrl(prevState, () => {
+      isRestoring = false;
+      updateUndoRedoButtons();
+    });
+  }
+
+  function canvasRedo() {
+    if (redoStack.length === 0 || isRestoring) return;
+    isRestoring = true;
+    undoStack.push(saveCanvasSnapshot());
+    const nextState = redoStack.pop();
+    restoreCanvasFromDataUrl(nextState, () => {
+      isRestoring = false;
+      updateUndoRedoButtons();
+    });
+  }
+
+  const strokeWidthButtons = document.querySelectorAll("#applet-stroke-width-btns .stroke-width-btn");
+  const clearCanvasBtn = document.getElementById("applet-clear-canvas-btn");
+  const eraserBtn = document.getElementById("applet-eraser-btn");
+  const eraserIcon = document.getElementById("applet-eraser-icon");
+  const eraserLabel = document.getElementById("applet-eraser-label");
+  const undoBtn = document.getElementById("applet-undo-btn");
+  const redoBtn = document.getElementById("applet-redo-btn");
+
+  function setupDrawCanvas() {
+    if (canvasSetupDone || !drawCanvas || !drawCtx) return;
+    canvasSetupDone = true;
+
+    drawCanvas.width = INTERNAL_W;
+    drawCanvas.height = INTERNAL_H;
+    drawCtx.fillStyle = "#ffffff";
+    drawCtx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+    drawCtx.lineCap = "round";
+    drawCtx.lineJoin = "round";
+    drawCtx.strokeStyle = "#111827";
+
+    // Cache CSS→internal coords: only recompute on resize, not every pointermove
+    let cachedScale = 1, cachedOffX = 0, cachedOffY = 0;
+    let drawCanvasLeft = 0, drawCanvasTop = 0;
+    new ResizeObserver(() => {
+      isDrawing = false;
+      const r = drawCanvas.getBoundingClientRect();
+      cachedScale = Math.max(r.width / INTERNAL_W, r.height / INTERNAL_H);
+      cachedOffX = (INTERNAL_W * cachedScale - r.width) / 2;
+      cachedOffY = (INTERNAL_H * cachedScale - r.height) / 2;
+    }).observe(drawCanvas);
+    // Seed with initial dimensions
+    {
+      const r = drawCanvas.getBoundingClientRect();
+      cachedScale = Math.max(r.width / INTERNAL_W, r.height / INTERNAL_H);
+      cachedOffX = (INTERNAL_W * cachedScale - r.width) / 2;
+      cachedOffY = (INTERNAL_H * cachedScale - r.height) / 2;
+    }
+
+    strokeWidthButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        currentStrokeWidth = parseInt(btn.dataset.width);
+        strokeWidthButtons.forEach(b => {
+          b.classList.remove("bg-purple-600");
+          b.classList.add("hover:bg-gray-100");
+          const circle = b.querySelector("div");
+          circle.classList.remove("border-white");
+          circle.classList.add("border-gray-800");
+        });
+        btn.classList.add("bg-purple-600");
+        btn.classList.remove("hover:bg-gray-100");
+        const circle = btn.querySelector("div");
+        circle.classList.remove("border-gray-800");
+        circle.classList.add("border-white");
+      });
+    });
+
+    let pendingStroke = false;
+
+    function getPos(e) {
+      const cssX = (e.clientX ?? e.touches[0].clientX) - drawCanvasLeft;
+      const cssY = (e.clientY ?? e.touches[0].clientY) - drawCanvasTop;
+      return [(cssX + cachedOffX) / cachedScale, (cssY + cachedOffY) / cachedScale, cachedScale];
+    }
+
+    drawCanvas.addEventListener("pointerdown", (e) => {
+      if (isRestoring) return;
+      isDrawing = true;
+      const r = drawCanvas.getBoundingClientRect();
+      drawCanvasLeft = r.left;
+      drawCanvasTop = r.top;
+      preStrokeSnapshot = saveCanvasSnapshot();
+      const [sx, sy, scale] = getPos(e);
+      drawCtx.beginPath();
+      drawCtx.moveTo(sx, sy);
+      drawCtx.globalCompositeOperation = "source-over";
+      if (isErasing) {
+        drawCtx.lineWidth = (currentStrokeWidth * 3) / scale;
+        drawCtx.strokeStyle = "#ffffff";
+      } else {
+        drawCtx.lineWidth = currentStrokeWidth / scale;
+        drawCtx.strokeStyle = "#111827";
+      }
+      [drawPrevX, drawPrevY] = [sx, sy];
+    });
+    drawCanvas.addEventListener("pointermove", (e) => {
+      if (!isDrawing) return;
+      const [x, y] = getPos(e);
+      drawCtx.lineTo(x, y);
+      [drawPrevX, drawPrevY] = [x, y];
+      if (!pendingStroke) {
+        pendingStroke = true;
+        requestAnimationFrame(() => {
+          if (isDrawing) {
+            drawCtx.stroke();
+            drawCtx.beginPath();
+            drawCtx.moveTo(drawPrevX, drawPrevY);
+          }
+          pendingStroke = false;
+        });
+      }
+    });
+    const stopDraw = () => {
+      isDrawing = false;
+      if (drawCtx) drawCtx.stroke();
+      if (preStrokeSnapshot) {
+        undoStack.push(preStrokeSnapshot);
+        if (undoStack.length > MAX_UNDO_STATES) undoStack.shift();
+        redoStack = [];
+        preStrokeSnapshot = null;
+        updateUndoRedoButtons();
+      }
+    };
+    drawCanvas.addEventListener("pointerup", stopDraw);
+    drawCanvas.addEventListener("pointerleave", stopDraw);
+  }
+
+  clearCanvasBtn?.addEventListener("click", () => {
+    if (!drawCtx || !drawCanvas || isRestoring) return;
+    undoStack.push(saveCanvasSnapshot());
+    if (undoStack.length > MAX_UNDO_STATES) undoStack.shift();
+    redoStack = [];
+    drawCtx.fillStyle = "#ffffff";
+    drawCtx.fillRect(0, 0, INTERNAL_W, INTERNAL_H);
+    updateUndoRedoButtons();
+  });
+
+  document.getElementById("applet-use-drawing-btn").addEventListener("click", () => {
+    if (!drawCanvas) return;
+    const dataUrl = drawCanvas.toDataURL("image/jpeg", 0.92);
+    setImage({ source: "upload", name: "Gezeichnete Figur", url: dataUrl, dataUrl: dataUrl });
+    closeAppletUpload();
+    showToast("Zeichnung als Referenz hinterlegt — jetzt generieren.", "success");
+  });
+
+  eraserBtn?.addEventListener("click", () => {
+    isErasing = !isErasing;
+    if (isErasing) {
+      eraserIcon.textContent = "✏️";
+      eraserLabel.textContent = "Stift";
+      eraserBtn.classList.remove("bg-gray-200", "text-gray-600");
+      eraserBtn.classList.add("bg-purple-600", "text-white");
+    } else {
+      eraserIcon.textContent = "🧽";
+      eraserLabel.textContent = "Radierer";
+      eraserBtn.classList.remove("bg-purple-600", "text-white");
+      eraserBtn.classList.add("bg-gray-200", "text-gray-600");
+    }
+  });
+
+  undoBtn?.addEventListener("click", (e) => { e.preventDefault(); canvasUndo(); });
+  redoBtn?.addEventListener("click", (e) => { e.preventDefault(); canvasRedo(); });
+  updateUndoRedoButtons();
 
   // ─── Laden (Edit-Modus) ───────────────────────────────────────
 
@@ -203,11 +735,17 @@
     }
     setBusy(true, "Applet wird generiert — das kann bis zu 2 Minuten dauern …");
     try {
+      const genBody = { prompt: prompt, existing_html: codeCM.getValue() };
+      if (appletImage) {
+        if (appletImage.source === "media") genBody.media_id = appletImage.mediaId;
+        else genBody.image_data_url = appletImage.dataUrl;
+      }
+      if (appletErrors.length > 0) genBody.console_errors = appletErrors.slice();
       const res = await fetch(`/api/courses/${courseId}/media/applet-llm`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: prompt, existing_html: codeCM.getValue() }),
+        body: JSON.stringify(genBody),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "LLM-Fehler.");
@@ -268,6 +806,7 @@
   generateBtn.addEventListener("click", generateApplet);
   saveBtn.addEventListener("click", saveApplet);
   document.getElementById("applet-preview-refresh").addEventListener("click", updatePreview);
+  loadMediaOptions();
   loadApplet();
 })();
 </script>

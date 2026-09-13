@@ -482,7 +482,7 @@
           }
           card.setAttribute('data-section-title', fresh.title);
           const t = card.querySelector('.sq-title');
-          if (t) t.textContent = fresh.title;
+          if (t) t.innerHTML = renderCaptionMath(fresh.title);
           sqSetCardVisibility(card, fresh.is_visible);
         }
       } catch (e) { /* nicht kritisch — die Änderungen sind gespeichert */ }
@@ -825,11 +825,15 @@
       d.textContent = text;
       return d;
     };
-    const tocLink = (href, text, cls) => {
+    // Link mit Math im Titel: Präfix (Nummer) als Text, Titel via
+    // renderCaptionMath (LaTeX $…$ → gerenderte Formel, Rest HTML-escaped) —
+    // Titel aus der Refmap sind Server-Plain-Text mit möglichen $…$-Paaren.
+    const tocMathLink = (href, prefix, title, cls) => {
       const a = document.createElement('a');
       a.href = href;
       a.className = cls;
-      a.textContent = text;
+      a.appendChild(document.createTextNode(prefix));
+      if (title) a.insertAdjacentHTML('beforeend', renderCaptionMath(title));
       return a;
     };
     // Link mit Caption: Präfix (Nummer) als Text, Caption via renderCaptionMath
@@ -850,7 +854,7 @@
       const ch = refMap.chapters[id];
       const row = document.createElement('div');
       row.className = 'py-0.5 text-sm flex items-center gap-2';
-      row.appendChild(tocLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ' + ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0'));
+      row.appendChild(tocMathLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ', ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0'));
       if (SQ_IS_TUTOR && !ch.visible) {
         const badge = document.createElement('span');
         badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
@@ -860,8 +864,11 @@
       body.appendChild(row);
       for (const sec of (ch.sections || [])) {
         const srow = document.createElement('div');
-        srow.className = 'py-0.5 pl-5 text-sm';
-        srow.appendChild(tocLink('#' + sec.anchor, sec.num + '\u00a0' + sec.title, 'text-gray-500 hover:text-blue-600 hover:underline'));
+        // Hierarchie-Tiefe (h2→h6) als Einrückung: 20 px pro Stufe.
+        // 15/25 stehen nicht in Tailwinds Spacing-Skala → Arbitrary Values.
+        const pad = { 2: 'pl-5', 3: 'pl-10', 4: 'pl-[3.75rem]', 5: 'pl-20', 6: 'pl-[6.25rem]' }[sec.level] || 'pl-5';
+        srow.className = 'py-0.5 ' + pad + ' text-sm';
+        srow.appendChild(tocMathLink('#' + sec.anchor, sec.num + '\u00a0', sec.title, 'text-gray-500 hover:text-blue-600 hover:underline'));
         body.appendChild(srow);
       }
     }
@@ -1042,7 +1049,8 @@
         titleWrap.appendChild(chapNum);
         const title = document.createElement("span");
         title.className = "sq-title text-lg font-semibold text-blue-600";
-        title.textContent = s.title;
+        // LaTeX $…$ im Titel rendern (Rest HTML-escaped, s. renderCaptionMath)
+        title.innerHTML = renderCaptionMath(s.title);
         titleWrap.appendChild(title);
         if (SQ_IS_TUTOR && !s.is_visible) {
           const badge = document.createElement("span");

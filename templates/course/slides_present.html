@@ -114,7 +114,7 @@ function togglePageFullscreen() {
     return;
   }
 
-  const slides = parseSlides(content);
+  const slides = await parseSlides(content);
   if (slides.length === 0) {
     shell.innerHTML = '<div class="present-message">Dieses Deck enthält noch keine Folien.</div>';
     return;
@@ -169,6 +169,8 @@ function togglePageFullscreen() {
   // Code-LaTeX nach Reveal's Highlight-Pass
   tutoraiWireCodeMath(reveal);
   await reveal.initialize();
+  // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js)
+  tutoraiRegisterSlideReveal(document.getElementById("reveal-root"), reveal);
 
   // Visuelle Fragment-Reihenfolge (KaTeX-Underbraces): neu ableiten,
   // sobald eine Folie gelayoutet ist (beim Markdown-Render sind die

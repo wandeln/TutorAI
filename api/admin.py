@@ -4,7 +4,7 @@ Admin-Endpoints: Kurs-Management + User-Verwaltung + Systemeinstellungen.
 Rollen: Administrator (global)
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -29,7 +29,7 @@ from database.models import (
 )
 from services import import_service
 from services.auth_service import hash_password, require_global_admin
-from services.llm_service import get_llm_debug_log as get_llm_debug_entries
+from services.llm_service import get_llm_debug_entry, get_llm_debug_log
 from services.llm_service import record_llm_debug_entry
 from services.settings_resolver import get_effective_llm_config
 
@@ -788,17 +788,31 @@ async def test_llm(
 
 
 @router.get("/llm-debug-log")
-async def get_llm_debug_log(
+async def llm_debug_log(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    user_id: Optional[int] = Query(None),
     current_user: User = Depends(require_global_admin()),
 ):
-    """
-    Liefert das LLM-Debug-Log (persistent in der Datenbank, neueste zuerst).
+    """LLM-Debug-Log (paginiert, neueste zuerst) — Listenansicht NUR Metadaten.
 
-    Enthält jeden LLM-Call mit Prompt-Typ, Modell/URL, public/private,
-    System-Prompt, Prompt, Antwort, Thinking und Latenz.
+    Volltexte (System-Prompt/Prompt/Antwort/Thinking) liefert erst
+    GET /llm-debug-log/{entry_id} (Lazy-Loading in der UI).
     Retention: letzte 7 Tage, harte Limits auf Einträge und Größe.
     """
-    return {"entries": get_llm_debug_entries()}
+    return get_llm_debug_log(offset=offset, limit=limit, user_id=user_id)
+
+
+@router.get("/llm-debug-log/{entry_id}")
+async def llm_debug_entry_detail(
+    entry_id: int,
+    current_user: User = Depends(require_global_admin()),
+):
+    """Kompletter LLM-Debug-Log-Eintrag (mit Volltexten) — Lazy-Loading beim Aufklappen."""
+    entry = get_llm_debug_entry(entry_id)
+    if entry is None:
+        raise HTTPException(404, "Eintrag nicht gefunden (ggf. älter als 7 Tage oder purged).")
+    return entry
 
 
 class LdapTestRequest(BaseModel):

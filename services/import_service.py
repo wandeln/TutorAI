@@ -14,8 +14,6 @@ Stufen (Status pro Stufe in CourseImport — der Status IST das Steuerungs-Flag)
   script      : agentic Quellen-Sammlung + wortgetreue Kapitel-Konvertierung
                 → ScriptSection (Markdown)
   slides      : agentic Quellen-Sammlung + Slide-Decks → CourseMaterial (SLIDES)
-  refine      : nachträgliches Nachbessern bereits generierter Skript-Kapitel /
-                Slide-Decks (scope "script"|"slides" aus report["refine_options"])
 
 Stateless Runner: Pause/Resume/Cancel/Neustart laufen über denselben Code-Pfad.
 Der Job liest den Stufen-Status stateless aus der DB (frische Session pro
@@ -32,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import difflib
 import hashlib
 import json
 import logging
@@ -55,8 +52,8 @@ from config import (
     IMPORT_LLM_CONCURRENCY,
     IMPORT_FILE_CONCURRENCY,
     IMPORT_CHUNK_CHARS,
-    CHAPTER_INPUT_BUDGET,
-    IMPORT_SLIDE_DECK_SOURCE_BUDGET,
+    CHAPTER_INPUT_WARN_CHARS,
+    IMPORT_SLIDE_DECK_SOURCE_WARN_CHARS,
     IMPORT_READ_CHARS,
     IMPORT_READ_LINES,
     IMPORT_PLAN_MAX_ITERATIONS,
@@ -64,10 +61,7 @@ from config import (
     IMPORT_GATHER_MAX_ITERATIONS,
     IMPORT_PNG_DPI,
     IMPORT_PNG_MAX_DIM,
-    IMPORT_SLIDE_DECK_MAX_SLIDES,
     IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1,
-    IMPORT_ENABLE_REFINEMENT,
-    IMPORT_REFINE_MAX_CHARS,
     IMPORT_TIMEOUT_ANALYSIS,
     IMPORT_TIMEOUT_MEDIA,
     IMPORT_TIMEOUT_PLAN,
@@ -84,15 +78,11 @@ from database.models import (
     ScriptSection,
 )
 from services import bibtex as bib
-from services import content_edits
 from services import media_service
-from services.content_edits import ContentEditError
 from services.llm_service import LLMService, SLIDES_MAX_TOKENS
 from services.settings_resolver import get_effective_llm_config
 from services.slides_service import (
     SlideError,
-    apply_slide_edits,
-    numbered_slide_content,
     parse_slides,
     slide_count,
 )
@@ -131,7 +121,7 @@ def spawn_job(coro) -> asyncio.Task:
 
 # Reihenfolge der Stufen (für UI/Validierung)
 IMPORT_STAGES = ("filemap", "media", "references", "ref_extract", "plan",
-                 "slides_plan", "script", "slides", "refine")
+                 "slides_plan", "script", "slides")
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 IMAGE_MIME = {
@@ -291,53 +281,6 @@ def append_report(
     _mutate(import_id, fn)
 
 
-def _merge_report_plans(import_id: int, field: str, plans: dict[str, str]) -> None:
-    """Merged Planner-Beschreibungen für bestehende Kapitel/Decks in den Report ein
-    ("existing_section_plans"/"existing_deck_plans": {id: description}).
-    Bestehende Einträge derselben IDs werden überschrieben, andere Report-Felder
-    bleiben erhalten."""
-    def fn(imp: CourseImport):
-        r = dict(imp.report or {})
-        cur = r.get(field)
-        if not isinstance(cur, dict):
-            cur = {}
-        cur.update(plans)
-        r[field] = cur
-        imp.report = r
-
-    _mutate(import_id, fn)
-
-
-def _merge_existing_plans(
-    import_id: int,
-    field: str,
-    raw: Any,
-    id_key: str,
-    valid_ids: set[int],
-) -> None:
-    """Validiert und speichert die Planner-Pläne für bestehende Kapitel/Decks.
-
-    LLM-Output ist untrusted: ids werden gegen die Kurs-Kapitel/-Decks whitelisted.
-    """
-    if not isinstance(raw, list):
-        return
-    plans: dict[str, str] = {}
-    for p in raw[:60]:
-        if not isinstance(p, dict):
-            continue
-        try:
-            pid = int(p.get(id_key))
-        except (TypeError, ValueError):
-            continue
-        if pid not in valid_ids:
-            continue
-        desc = str(p.get("description") or "").strip()[:2000]
-        if desc:
-            plans[str(pid)] = desc
-    if plans:
-        _merge_report_plans(import_id, field, plans)
-
-
 def set_filemap_entry(import_id: int, path: str, entry: dict) -> None:
     def fn(imp: CourseImport):
         fm = dict(imp.file_map or {})
@@ -433,56 +376,6 @@ def get_slides_plan(imp: CourseImport) -> list[dict]:
 def set_slides_plan(import_id: int, decks: list[dict]) -> None:
     def fn(imp: CourseImport):
         imp.slides_plan = decks
-
-    _mutate(import_id, fn)
-
-
-def prune_stale_plan_refs(course_id: int, imp: CourseImport) -> bool:
-    """Löscht Plan-Einträge, die auf gelöschte Kurs-Kapitel/Decks zeigen.
-
-    Wird ein generiertes/importiertes Skript-Kapitel (ScriptSection) oder
-    Slide-Deck (CourseMaterial SLIDES) aus dem Kurs gelöscht, darf der
-    zugehörige Plan-Eintrag (section_id/material_id) nicht mehr Bestand haben
-    — sonst würde er in der Import-UI als nicht entfernbares „bestehendes
-    Kapitel“ erscheinen und beim Generieren unter neuer ID neu angelegt.
-    Returns: True, wenn ein Plan geändert wurde (Committen liegt beim Aufrufer).
-    """
-    def _alive(value: Any, ids: set[int]) -> bool:
-        try:
-            return int(value) in ids
-        except (TypeError, ValueError):
-            return False
-
-    changed = False
-    sec_ids = {sc["id"] for sc in _course_sections(course_id)}
-    deck_ids = {d["id"] for d in _course_decks(course_id)}
-
-    plan = imp.chapter_plan or []
-    if plan:
-        kept = [
-            c for c in plan
-            if (not c.get("section_id") or _alive(c.get("section_id"), sec_ids))
-            and (not c.get("material_id") or _alive(c.get("material_id"), deck_ids))
-        ]
-        if len(kept) != len(plan):
-            imp.chapter_plan = kept
-            changed = True
-    if imp.slides_plan:
-        kept = [
-            d for d in imp.slides_plan
-            if (not d.get("material_id") or _alive(d.get("material_id"), deck_ids))
-        ]
-        if len(kept) != len(imp.slides_plan):
-            imp.slides_plan = kept
-            changed = True
-    return changed
-
-
-def prune_stale_plan_refs_job(course_id: int, import_id: int) -> None:
-    """Verwaiste Plan-Verknüpfungen bereinigen (eigene Session, Job-Start)."""
-    def fn(imp: CourseImport):
-        if prune_stale_plan_refs(course_id, imp):
-            imp.updated_at = datetime.now()
 
     _mutate(import_id, fn)
 
@@ -782,19 +675,38 @@ def build_manifest(staging: Path, entries: list[dict]) -> tuple[list[dict], list
             m["type"] = "markdown"
             m["read_path"] = f"extracted/{path}"
             read_path = m["read_path"]
-        elif ext in (".docx", ".pptx"):
+        elif ext in (".docx", ".pptx", ".odt", ".odp"):
             m["type"] = ext.lstrip(".")
             read_path = f"sidecars/{path}.md"
             sp = sidecars / f"{path}.md"
             if not sp.is_file():
                 try:
                     sp.parent.mkdir(parents=True, exist_ok=True)
-                    text = _docx_to_md(p) if ext == ".docx" else _pptx_to_md(p)
+                    media_dir = f"{path}.media"
+                    if ext == ".docx":
+                        text = _docx_to_md(p, media_dir)
+                    elif ext == ".pptx":
+                        text = _pptx_to_md(p, media_dir)
+                    elif ext == ".odt":
+                        text = _odt_to_md(p)
+                    else:
+                        text = _odp_to_md(p)
                     sp.write_text(text, encoding="utf-8")
                 except Exception as exc:
                     m["type"] = "other"
                     read_path = None
                     warnings.append(f"{ext}-Konvertierung fehlgeschlagen: {path} ({exc})")
+            # Eingebettete Office-Medien extrahieren: eigene Manifest-Einträge
+            # (Pfad = <office>.media/<Datei>), importierbar in der Medien-Stufe;
+            # die Sidecar-Bild-Marker referenzieren exakt diese Pfade.
+            for base in _extract_office_media(p, extracted / f"{path}.media", _OFFICE_MEDIA_PREFIXES[ext]):
+                mp = f"{path}.media/{base}"
+                mp_ext = Path(base).suffix.lower()
+                manifest.append({
+                    "path": mp,
+                    "size": int((extracted / mp).stat().st_size) if (extracted / mp).is_file() else 0,
+                    "type": "image" if mp_ext in IMAGE_EXTS else ("svg" if mp_ext == ".svg" else ("eps" if mp_ext == ".eps" else "other")),
+                })
         else:
             m["type"] = "other"
             warnings.append(f"Dateityp wird ignoriert (kein unterstütztes Format): {path}")
@@ -827,7 +739,25 @@ def _pdf_to_md(path: Path) -> str:
         doc.close()
 
 
-def _docx_to_md(path: Path) -> str:
+def _docx_para_images(para: "Paragraph", doc: "Document") -> list[str]:
+    """Eingebettete Bild-Basenames eines docx-Paragraphs (in Reihenfolge)."""
+    from docx.oxml.ns import qn
+
+    names: list[str] = []
+    for blip in para._p.findall(".//" + qn("a:blip")):
+        rid = blip.get(qn("r:embed"))
+        if not rid:
+            continue
+        part = doc.part.related_parts.get(rid)
+        if part is None:
+            continue
+        base = str(getattr(part, "partname", "") or "").rsplit("/", 1)[-1]
+        if base and base not in names:
+            names.append(base)
+    return names
+
+
+def _docx_to_md(path: Path, media_dir: str = "") -> str:
     from docx import Document
     from docx.table import Table
     from docx.text.paragraph import Paragraph
@@ -839,22 +769,26 @@ def _docx_to_md(path: Path) -> str:
         if child.tag == qn("w:p"):
             para = Paragraph(child, doc)
             text = para.text.strip()
-            if not text:
-                continue
-            style = (para.style.name or "") if para.style is not None else ""
-            sl = style.lower()
-            if sl.startswith("heading"):
-                level = re.sub(r"\D", "", sl)
-                hashes = "#" * min(int(level or 2) + 1, 6)
-                out.append(f"{hashes} {text}")
-            elif sl.startswith("title"):
-                out.append(f"# {text}")
-            elif sl.startswith("list bullet") or sl.startswith("list paragraph"):
-                out.append(f"- {text}")
-            elif sl.startswith("list number"):
-                out.append(f"1. {text}")
-            else:
-                out.append(text)
+            if text:
+                style = (para.style.name or "") if para.style is not None else ""
+                sl = style.lower()
+                if sl.startswith("heading"):
+                    level = re.sub(r"\D", "", sl)
+                    hashes = "#" * min(int(level or 2) + 1, 6)
+                    out.append(f"{hashes} {text}")
+                elif sl.startswith("title"):
+                    out.append(f"# {text}")
+                elif sl.startswith("list bullet") or sl.startswith("list paragraph"):
+                    out.append(f"- {text}")
+                elif sl.startswith("list number"):
+                    out.append(f"1. {text}")
+                else:
+                    out.append(text)
+            # Bild-Marker: extrahierte Office-Medien am Dokumentort verankern
+            # (Pfad = Manifest-Pfad der extrahierten Datei)
+            if media_dir:
+                for base in _docx_para_images(para, doc):
+                    out.append(f"![Bild]({media_dir}/{base})")
         elif child.tag == qn("w:tbl"):
             table = Table(child, doc)
             rows = []
@@ -870,7 +804,19 @@ def _docx_to_md(path: Path) -> str:
     return "\n".join(out)
 
 
-def _pptx_to_md(path: Path) -> str:
+def _pptx_slide_images(slide) -> list[str]:
+    """Eingebettete Bild-Basenames einer pptx-Folie (via Slide-Part-Relationships)."""
+    names: list[str] = []
+    for rel in slide.part.rels.values():
+        if "image" not in rel.reltype:
+            continue
+        base = str(getattr(rel.target_part, "partname", "") or "").rsplit("/", 1)[-1]
+        if base and base not in names:
+            names.append(base)
+    return names
+
+
+def _pptx_to_md(path: Path, media_dir: str = "") -> str:
     from pptx import Presentation
 
     prs = Presentation(str(path))
@@ -891,6 +837,11 @@ def _pptx_to_md(path: Path) -> str:
                     if line.strip():
                         texts.append(line)
         out.extend(texts)
+        # Bild-Marker: extrahierte Office-Medien am Folienort verankern
+        # (Pfad = Manifest-Pfad der extrahierten Datei)
+        if media_dir:
+            for base in _pptx_slide_images(slide):
+                out.append(f"![Bild]({media_dir}/{base})")
         try:
             if slide.has_notes_slide:
                 notes = (slide.notes_slide.notes_text_frame.text or "").strip()
@@ -900,6 +851,81 @@ def _pptx_to_md(path: Path) -> str:
             pass
         out.append("")
     return "\n".join(out)
+
+
+_ODT_TEXT_P = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}p"
+
+
+def _odt_to_md(path: Path) -> str:
+    """Best-effort-Text aus einer odt-Datei (content.xml, Absätze; ohne Bild-Marker)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        root = ET.fromstring(z.read("content.xml"))
+    out: list[str] = []
+    for p in root.iter(_ODT_TEXT_P):
+        t = "".join(p.itertext()).strip()
+        if t:
+            out.append(t)
+    return "\n".join(out)
+
+
+def _odp_to_md(path: Path) -> str:
+    """Best-effort-Text aus einer odp-Datei (Folien-Titel/Texte; ohne Bild-Marker)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        slide_names = sorted(
+            (n for n in z.namelist() if re.match(r"ppt/slides/slide\d+\.xml$", n)),
+            key=lambda n: int(re.search(r"slide(\d+)\.xml$", n).group(1)),
+        )
+        out: list[str] = []
+        for n in slide_names:
+            num = int(re.search(r"slide(\d+)\.xml$", n).group(1))
+            out.append(f"%% Folie {num} %%")
+            root = ET.fromstring(z.read(n))
+            for el in root.iter():
+                if el.tag.endswith("}p"):
+                    t = "".join(el.itertext()).strip()
+                    if t:
+                        out.append(t)
+            out.append("")
+    return "\n".join(out)
+
+
+_OFFICE_MEDIA_PREFIXES = {
+    ".docx": ("word/media/",),
+    ".pptx": ("ppt/media/",),
+    ".odt": ("Pictures/", "Object/"),
+    ".odp": ("Pictures/", "Object/"),
+}
+
+
+def _extract_office_media(src: Path, dest_dir: Path, prefixes: tuple[str, ...]) -> list[str]:
+    """Eingebettete Medien einer Office-Zip (docx/pptx/odt/odp) nach dest_dir
+    extrahieren. Returns: extrahierte Basenames."""
+    import zipfile
+
+    out: list[str] = []
+    try:
+        with zipfile.ZipFile(src) as z:
+            for name in z.namelist():
+                if not any(name.startswith(pref) for pref in prefixes):
+                    continue
+                base = name.rsplit("/", 1)[-1]
+                if not base or base in out or base.startswith("~$"):
+                    continue
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest = dest_dir / base
+                if not dest.is_file():
+                    with z.open(name) as fsrc:
+                        dest.write_bytes(fsrc.read())
+                out.append(base)
+    except Exception:
+        pass
+    return out
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -2270,26 +2296,6 @@ def _course_decks(course_id: int) -> list[dict]:
         return [{"id": d.id, "title": d.title, "display_order": d.display_order, "content": d.content or ""} for d in decks]
 
 
-def _build_course_decks_text(course_id: int) -> str:
-    decks = _course_decks(course_id)
-    if not decks:
-        return "(keine bestehenden Slide-Decks im Zielkurs)"
-    out = []
-    directive_prefixes = ("layout:", "transition:", "class:", "notes:", "background:")
-    for d in decks:
-        blocks = [b.strip() for b in re.split(r"^---\s*$", d["content"], flags=re.M) if b.strip()]
-        lines = [f"### [{d['id']}] \u201e{d['title']}\u201c ({len(blocks)} Folien)"]
-        for i, b in enumerate(blocks[:60], 1):
-            first = next(
-                (l.strip() for l in b.splitlines()
-                 if l.strip() and not l.strip().startswith(directive_prefixes)),
-                "",
-            )
-            lines.append(f"  - Folie {i}: {first[:120]}")
-        out.append("\n".join(lines))
-    return "\n".join(out)
-
-
 def _course_sections(course_id: int) -> list[dict]:
     """Bestehende Skript-Kapitel des Zielkurses (id, title, display_order, summary)."""
     with Session(engine) as s:
@@ -2301,17 +2307,6 @@ def _course_sections(course_id: int) -> list[dict]:
         return [{"id": sc.id, "title": sc.title, "display_order": sc.display_order,
                  "summary": (sc.summary or "").strip()} for sc in secs]
 
-
-def _build_course_sections_text(course_id: int) -> str:
-    """Skript-Kapitel-Kontext für Planner/Gather (id + Titel + Kurzzusammenfassung)."""
-    secs = _course_sections(course_id)
-    if not secs:
-        return "(keine bestehenden Skript-Kapitel im Zielkurs)"
-    lines = []
-    for sc in secs[:60]:
-        s = sc["summary"][:300] or "(keine Zusammenfassung)"
-        lines.append(f"- [{sc['id']}] {sc['title']} — {s}")
-    return "\n".join(lines)
 
 
 def _course_media_list(course_id: int) -> list[dict]:
@@ -2358,71 +2353,6 @@ def _build_references_text(course_id: int) -> str:
     return "\n".join(lines)
 
 
-def _norm_title(t: Any) -> str:
-    """Titel normalisieren für Duplikat-Vergleich (Nummerierung/Punktuation weg)."""
-    s = re.sub(r"\s+", " ", str(t or "")).strip().lower()
-    s = re.sub(r"^(kapitel|chapter|abschnitt|teil|section)\s*[\d.\-:\s]+", "", s)
-    s = re.sub(r"[\d.]+[a-z]?\s*\)\s*", "", s)  # „2.1) “-Suffixe
-    s = re.sub(r"[^a-z0-9äöüß]+", " ", s).strip()
-    return s
-
-
-def _title_similar(a: str, b: str) -> bool:
-    """Titel-Ähnlichkeit (Dedup): exakt, Enthaltung oder hohe Sequenz-Überschneidung."""
-    if not a or not b:
-        return False
-    if a == b or a in b or b in a:
-        return True
-    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
-
-
-def _dedupe_plan_proposals(chapters: list[dict], existing_titles: list[str]) -> tuple[list[dict], list[str]]:
-    """Entfernt Plan-Vorschläge, deren Inhalt bereits existiert (Duplikat-Schutz).
-
-    Vergleicht LLM-Vorschläge titelähnlich mit bestehenden Kurs-Kapiteln/-Decks und
-    bereits akzeptierten Vorschlägen — derselbe Inhalt darf nur EINMAL importiert
-    werden. Returns: (behaltene Vorschläge, entfernte Titel).
-    """
-    keep: list[dict] = []
-    removed: list[str] = []
-    accepted = [_norm_title(t) for t in existing_titles if _norm_title(t)]
-    for ch in chapters:
-        nt = _norm_title(ch.get("title"))
-        if nt and any(_title_similar(nt, x) for x in accepted):
-            removed.append(str(ch.get("title") or "?"))
-            continue
-        keep.append(ch)
-        if nt:
-            accepted.append(nt)
-    return keep, removed
-
-
-def _find_source_overlaps(chapters: list[dict]) -> list[str]:
-    """Kapitel-Paare mit überlappenden Quellen (gleiche Datei + Zeilenbereich).
-
-    Signal für doppelte Importe (z. B. main.tex UND Teilkapitel-Dateien im Plan).
-    """
-    ranges: dict[str, list[tuple[int, int, str]]] = {}
-    for ch in chapters or []:
-        title = str(ch.get("title") or "?")[:60]
-        for s in ch.get("sources") or []:
-            try:
-                rng = (int(s.get("start_line") or 1), int(s.get("end_line") or 1), title)
-            except (TypeError, ValueError):
-                continue
-            ranges.setdefault(str(s.get("file")), []).append(rng)
-    out: list[str] = []
-    for f, lst in ranges.items():
-        lst.sort()
-        for i in range(len(lst)):
-            for j in range(i + 1, len(lst)):
-                s1, e1, t1 = lst[i]
-                s2, e2, t2 = lst[j]
-                if t1 != t2 and s2 <= e1:  # sortiert nach Start → Overlap-Check reicht
-                    out.append(f"{f}: „{t1}“ (Zeilen {s1}-{e1}) & „{t2}“ (Zeilen {s2}-{e2})")
-    return out
-
-
 def _as_int(v: Any, default: int, lo: int = 1, hi: int = 10**9) -> int:
     try:
         n = int(v)
@@ -2431,9 +2361,12 @@ def _as_int(v: Any, default: int, lo: int = 1, hi: int = 10**9) -> int:
     return max(lo, min(n, hi))
 
 
-def _normalize_plan(raw: Any, manifest: list[dict]) -> list[dict]:
-    """Validiert/normalisiert den LLM-Plan (Pfade/Zahlen gegen das Manifest)."""
-    by_path = {m["path"]: m for m in manifest}
+def _normalize_plan(raw: Any) -> list[dict]:
+    """Validiert/normalisiert den LLM-Plan (NUR Titel/Aktiv/Beschreibung).
+
+    Quellen werden NICHT im Plan gehalten — sie ermittelt der Gather-Schritt
+    vor der Generierung aus Beschreibung + Dateibaum.
+    """
     out: list[dict] = []
     if not isinstance(raw, list):
         return out
@@ -2443,34 +2376,10 @@ def _normalize_plan(raw: Any, manifest: list[dict]) -> list[dict]:
         title = str(ch.get("title") or "").strip()[:300]
         if not title:
             continue
-        sources = []
-        for src in (ch.get("sources") or [])[:20]:
-            if not isinstance(src, dict):
-                continue
-            f = str(src.get("file") or "")
-            m = by_path.get(f)
-            if not m or not m.get("read_path"):
-                continue
-            lc = max(1, int(m.get("line_count") or 1))
-            s = _as_int(src.get("start_line"), 1, 1, lc)
-            e = _as_int(src.get("end_line"), lc, s, lc)
-            sources.append({"file": f, "start_line": s, "end_line": e})
-        sections = []
-        se = ch.get("sections")
-        if isinstance(se, list):
-            for v in se[:10]:
-                try:
-                    n = int(v)
-                except (TypeError, ValueError):
-                    continue
-                if 0 < n < 10**9 and n not in sections:
-                    sections.append(n)
         out.append({
             "title": title,
             "enabled": bool(ch.get("enabled", True)),
             "description": str(ch.get("description") or "").strip()[:2000],
-            "sources": sources,
-            "sections": sections,
             "section_id": None,
             "material_id": None,
             "script_status": "pending",
@@ -2481,28 +2390,26 @@ def _normalize_plan(raw: Any, manifest: list[dict]) -> list[dict]:
     return out
 
 
-def normalize_plan(raw: Any, manifest: list[dict]) -> list[dict]:
+def normalize_plan(raw: Any) -> list[dict]:
     """Öffentliche Hülle für die API (manuelle Plan-Edits der UI validieren)."""
-    return _normalize_plan(raw, manifest)
+    return _normalize_plan(raw)
 
 
 def _derive_slides_plan(chapter_plan: list[dict]) -> list[dict]:
-    """Legacy-Ableitung: 1:1-Folien-Plan aus dem Skript-Plan (inkl. pptx-„slides“-Mapping).
+    """Legacy-Ableitung: 1:1-Folien-Plan aus dem Skript-Plan (Titel/Aktiv/Status).
 
     Wird genutzt, solange ein Import noch kein eigenes slides_plan hat (vor der
-    Pläne-Separierung erstellte Imports), und als Default im Planner.
+    Pläne-Separierung erstellte Imports).
     """
     out: list[dict] = []
-    for i, ch in enumerate(chapter_plan or []):
+    for ch in chapter_plan or []:
         title = str(ch.get("title") or "").strip()[:300]
         if not title:
             continue
         out.append({
             "title": title,
             "enabled": bool(ch.get("enabled", True)),
-            "script_chapters": [i] if ch.get("enabled", True) else [],
-            "sources": [dict(s) for s in (ch.get("sources") or [])],
-            "slides": dict(ch["slides"]) if isinstance(ch.get("slides"), dict) else None,
+            "description": str(ch.get("description") or "").strip()[:2000],
             "material_id": ch.get("material_id"),
             "slides_status": ch.get("slides_status") or "pending",
             "slides_error": ch.get("slides_error"),
@@ -2510,13 +2417,12 @@ def _derive_slides_plan(chapter_plan: list[dict]) -> list[dict]:
     return out
 
 
-def _normalize_slides_plan(raw: Any, manifest: list[dict], n_script: int, one_based: bool) -> list[dict]:
-    """Validiert/normalisiert den Folien-Plan (Pfade/Zahlen gegen das Manifest).
+def _normalize_slides_plan(raw: Any) -> list[dict]:
+    """Validiert/normalisiert den Folien-Plan (NUR Titel/Aktiv/Beschreibung).
 
-    one_based=True: script_chapters als 1-basierte Positionen (LLM-Konvention);
-    one_based=False: 0-basierte Indizes (UI/DB).
+    Analog zum Skript-Plan: Quellen (inkl. pptx-Folienbereiche) werden NICHT im
+    Plan gehalten — der Gather-Schritt ermittelt sie vor der Generierung.
     """
-    by_path = {m["path"]: m for m in manifest}
     out: list[dict] = []
     if not isinstance(raw, list):
         return out
@@ -2526,55 +2432,10 @@ def _normalize_slides_plan(raw: Any, manifest: list[dict], n_script: int, one_ba
         title = str(d.get("title") or "").strip()[:300]
         if not title:
             continue
-        idxs: list[int] = []
-        sc = d.get("script_chapters")
-        if isinstance(sc, list):
-            for v in sc[:10]:
-                try:
-                    n = int(v)
-                except (TypeError, ValueError):
-                    continue
-                n = n - 1 if one_based else n
-                if 0 <= n < n_script and n not in idxs:
-                    idxs.append(n)
-        sources = []
-        for src in (d.get("sources") or [])[:20]:
-            if not isinstance(src, dict):
-                continue
-            f = str(src.get("file") or "")
-            m = by_path.get(f)
-            if not m or not m.get("read_path"):
-                continue
-            lc = max(1, int(m.get("line_count") or 1))
-            s = _as_int(src.get("start_line"), 1, 1, lc)
-            e = _as_int(src.get("end_line"), lc, s, lc)
-            sources.append({"file": f, "start_line": s, "end_line": e})
-        slides = None
-        sl = d.get("slides")
-        if isinstance(sl, dict):
-            dm = by_path.get(str(sl.get("deck") or ""))
-            if dm and dm.get("type") == "pptx":
-                start = _as_int(sl.get("start"), 1)
-                end = _as_int(sl.get("end"), start, start)
-                slides = {"deck": dm["path"], "start": start, "end": end}
-        sections = []
-        se = d.get("sections")
-        if isinstance(se, list):
-            for v in se[:10]:
-                try:
-                    n = int(v)
-                except (TypeError, ValueError):
-                    continue
-                if 0 < n < 10**9 and n not in sections:
-                    sections.append(n)
         out.append({
             "title": title,
             "enabled": bool(d.get("enabled", True)),
             "description": str(d.get("description") or "").strip()[:2000],
-            "script_chapters": idxs,
-            "sources": sources,
-            "slides": slides,
-            "sections": sections,
             "material_id": None,
             "slides_status": "pending",
             "slides_error": None,
@@ -2582,9 +2443,9 @@ def _normalize_slides_plan(raw: Any, manifest: list[dict], n_script: int, one_ba
     return out
 
 
-def normalize_slides_plan(raw: Any, manifest: list[dict], n_script: int) -> list[dict]:
-    """Öffentliche Hülle für die API (manuelle Folien-Plan-Edits der UI, 0-basiert)."""
-    return _normalize_slides_plan(raw, manifest, n_script, one_based=False)
+def normalize_slides_plan(raw: Any) -> list[dict]:
+    """Öffentliche Hülle für die API (manuelle Folien-Plan-Edits der UI)."""
+    return _normalize_slides_plan(raw)
 
 
 def _fallback_plan(manifest: list[dict], file_map: dict) -> list[dict]:
@@ -2593,13 +2454,10 @@ def _fallback_plan(manifest: list[dict], file_map: dict) -> list[dict]:
     for m in manifest:
         if not m.get("read_path"):
             continue
-        lc = max(1, int(m.get("line_count") or 1))
         out.append({
             "title": Path(m["path"]).stem[:300],
             "enabled": True,
-            "description": "",
-            "sources": [{"file": m["path"], "start_line": 1, "end_line": lc}],
-            "slides": None,
+            "description": f"Quelldatei: {m['path']} (ganze Datei).",
             "section_id": None,
             "material_id": None,
             "script_status": "pending",
@@ -2641,60 +2499,29 @@ def _planner_read(manifest: list[dict], staging: Path, action: dict) -> str:
     return f"Zeilen {start}-{shown_end} von {n}{note}:\n" + "".join(out_lines)
 
 
-async def _generate_missing_existing_descs(
-    course_id: int,
-    import_id: int,
-    field: str,
-    items_text: str,
-    file_tree: str,
-    digests: str,
-    valid_ids: set[int],
-    llm_cfg: dict,
-) -> None:
-    """Fallback: LLM-Beschreibungen für BESTEHENDE Kapitel/Decks, für die der
-    Planner keine geliefert hat (Report-Feld {id: description} wird ergänzt)."""
-    snap = job_snapshot(import_id)
-    if snap is None:
-        return
-    have = set(((snap["report"] or {}).get(field) or {}).keys())
-    missing = {i for i in valid_ids if str(i) not in have}
-    if not missing:
-        return
-    set_progress(import_id, current="Beschreibungen für bestehende Kurs-Materialien werden erstellt …")
-    res = await llm_service.import_existing_desc_step(
-        items_text, file_tree, digests[:12000], config=llm_cfg
-    )
-    if not res["success"]:
-        append_report(import_id, warnings=[
-            "Beschreibungen für bestehende Kurs-Materialien konnten nicht erstellt werden (LLM-Aufruf)."
-        ])
-        return
-    plans: dict[str, str] = {}
-    raw = (res.get("data") or {}).get("plans")
-    for p in (raw if isinstance(raw, list) else [])[:60]:
-        if not isinstance(p, dict):
+def _previous_plan_text(entries: list[dict]) -> str:
+    """Frühere Plan-Vorschläge (Titel + Beschreibung) als Text für den LLM-Planner."""
+    lines: list[str] = []
+    for e in entries or []:
+        title = str(e.get("title") or "").strip()
+        if not title:
             continue
-        try:
-            pid = int(p.get("id"))
-        except (TypeError, ValueError):
-            continue
-        if pid not in missing:
-            continue
-        desc = str(p.get("description") or "").strip()[:2000]
-        if desc:
-            plans[str(pid)] = desc
-    if plans:
-        _merge_report_plans(import_id, field, plans)
+        desc = str(e.get("description") or "").strip() or "(keine Beschreibung)"
+        lines.append(f"- {title} — {desc}")
+    return "\n".join(lines[:40]) if lines else "(keine vorherigen Vorschläge)"
 
 
 async def run_planner_job(course_id: int, import_id: int) -> None:
-    """Stufe 4: agentic Skript-Planner → chapter_plan (neue Vorschläge; bestehende
-    Kurs-Kapitel/Regenerierungs-Einträge bleiben erhalten)."""
+    """Stufe 4: agentic Skript-Planner → chapter_plan.
+
+    Der neue Plan ERSETZT die alten Vorschläge vollständig (die alten Vorschläge
+    werden dem LLM mitgegeben, damit es sie übernehmen/ergänzen kann). Bestehende
+    Kurs-Kapitel werden bei der Planung NICHT berücksichtigt.
+    """
     logger.info("Import %s (Kurs %s): plan gestartet", import_id, course_id)
     try:
         set_stage_status(import_id, "plan", "running")
         set_progress(import_id, current="Kapitel-Planner analysiert die Materialien …")
-        prune_stale_plan_refs_job(course_id, import_id)
         snap = job_snapshot(import_id)
         if snap is None:
             return
@@ -2706,9 +2533,9 @@ async def run_planner_job(course_id: int, import_id: int) -> None:
         main_tex_entries = [m["path"] for m in snap["manifest"] if m.get("main_tex")]
         main_tex = (
             f"HINWEIS: Main-TeX-Datei(en): {', '.join(main_tex_entries)} — darin steckt meist die Dokumentstruktur."
-            if main_tex_entries else "(keine main.tex mit \\\\documentclass gefunden)"
+            if main_tex_entries else "(keine main.tex mit \\documentclass gefunden)"
         )
-        course_sections = _build_course_sections_text(course_id)
+        previous_plan = _previous_plan_text(snap["chapter_plan"])
 
         steps = "(noch keine)"
         tool_budget = 0
@@ -2718,7 +2545,7 @@ async def run_planner_job(course_id: int, import_id: int) -> None:
                 return
             set_progress(import_id, current=f"Kapitel-Planner: Schritt {i + 1}/{IMPORT_PLAN_MAX_ITERATIONS} …")
             res = await llm_service.import_script_planner_step(
-                file_tree, digests, main_tex, course_sections, steps, config=llm_cfg
+                file_tree, digests, main_tex, previous_plan, steps, config=llm_cfg
             )
             if not res["success"]:
                 break
@@ -2738,11 +2565,7 @@ async def run_planner_job(course_id: int, import_id: int) -> None:
                 raw_chapters = action.get("script_plan")
                 if raw_chapters is None:
                     raw_chapters = action.get("chapters")  # altes (einzelnes) Format
-                chapters = _normalize_plan(raw_chapters, snap["manifest"])
-                _merge_existing_plans(
-                    import_id, "existing_section_plans", action.get("existing_section_plans"),
-                    "section_id", {sc["id"] for sc in _course_sections(course_id)},
-                )
+                chapters = _normalize_plan(raw_chapters)
                 if action.get("notes"):
                     append_report(import_id, warnings=[f"Planner-Anmerkung: {str(action['notes'])[:300]}"])
                 break
@@ -2756,33 +2579,11 @@ async def run_planner_job(course_id: int, import_id: int) -> None:
             append_report(import_id, warnings=[
                 "Kapitel-Planner lief nicht erfolgreich zu Ende — Fallback-Plan erstellt (je Text-Datei ein Kapitel)."
             ])
-        # Regenerierungs-Einträge (section_id gesetzt) bleiben erhalten;
-        # die übrigen Plan-Einträge (Vorschläge) werden ersetzt.
-        kept = [dict(c) for c in snap["chapter_plan"] if c.get("section_id")]
-        # Duplikat-Schutz: Vorschläge, die einem bestehenden Kurs-Kapitel (oder einem
-        # bereits behaltenen Vorschlag) zu ähnlich sind, dürfen nicht erneut angelegt
-        # werden — sonst landet derselbe Inhalt mehrfach im Skript.
-        chapters, removed = _dedupe_plan_proposals(
-            chapters, [sc["title"] for sc in _course_sections(course_id)] + [c["title"] for c in kept]
-        )
-        if removed:
-            append_report(import_id, warnings=[
-                "Kapitel-Vorschlag(e) entfernt (Inhalt existiert bereits im Kurs): " + ", ".join(removed[:8])
-            ])
-        overlaps = _find_source_overlaps(kept + chapters)
-        if overlaps:
-            append_report(import_id, warnings=[
-                "Achtung: überlappende Quellen in mehreren Kapiteln (Inhalt könnte doppelt generiert werden): "
-                + "; ".join(overlaps[:5])
-            ])
-        set_chapter_plan(import_id, kept + chapters)
-        await _generate_missing_existing_descs(
-            course_id, import_id, "existing_section_plans", course_sections,
-            file_tree, digests, {sc["id"] for sc in _course_sections(course_id)}, llm_cfg,
-        )
+        # Der neue Plan ersetzt die alten Vorschläge komplett.
+        set_chapter_plan(import_id, chapters)
         set_stage_status(import_id, "plan", "done")
         set_progress(import_id, current="Kapitel-Vorschläge erstellt.")
-        logger.info("Import %s: plan abgeschlossen (%d Vorschläge, %d behalten)", import_id, len(chapters), len(kept))
+        logger.info("Import %s: plan abgeschlossen (%d Vorschläge)", import_id, len(chapters))
     except Exception as exc:
         logger.exception("Import %s: plan Job fehlgeschlagen", import_id)
         append_report(import_id, errors=[f"plan-Job intern fehlgeschlagen: {exc}"])
@@ -2791,13 +2592,16 @@ async def run_planner_job(course_id: int, import_id: int) -> None:
 
 
 async def run_slides_planner_job(course_id: int, import_id: int) -> None:
-    """Stufe 4b: agentic Folien-Planner → slides_plan (neue Vorschläge; bestehende
-    Kurs-Decks/Regenerierungs-Einträge bleiben erhalten)."""
+    """Stufe 4b: agentic Folien-Planner → slides_plan.
+
+    Der neue Plan ERSETZT die alten Vorschläge vollständig (die alten Vorschläge
+    werden dem LLM mitgegeben, damit es sie übernehmen/ergänzen kann). Bestehende
+    Kurs-Decks/-Kapitel werden bei der Planung NICHT berücksichtigt.
+    """
     logger.info("Import %s (Kurs %s): slides_plan gestartet", import_id, course_id)
     try:
         set_stage_status(import_id, "slides_plan", "running")
         set_progress(import_id, current="Folien-Planner analysiert die Materialien …")
-        prune_stale_plan_refs_job(course_id, import_id)
         snap = job_snapshot(import_id)
         if snap is None:
             return
@@ -2807,8 +2611,7 @@ async def run_slides_planner_job(course_id: int, import_id: int) -> None:
         file_tree = _build_file_tree_text(snap["manifest"])
         digests = _build_digests_text(snap["manifest"], snap["file_map"])
         zip_decks = _build_zip_decks_text(snap["manifest"], staging)
-        course_decks = _build_course_decks_text(course_id)
-        course_sections = _build_course_sections_text(course_id)
+        previous_plan = _previous_plan_text(snap["slides_plan"])
 
         steps = "(noch keine)"
         tool_budget = 0
@@ -2818,7 +2621,7 @@ async def run_slides_planner_job(course_id: int, import_id: int) -> None:
                 return
             set_progress(import_id, current=f"Folien-Planner: Schritt {i + 1}/{IMPORT_PLAN_MAX_ITERATIONS} …")
             res = await llm_service.import_slides_planner_step(
-                file_tree, digests, zip_decks, course_decks, course_sections, steps, config=llm_cfg
+                file_tree, digests, zip_decks, previous_plan, steps, config=llm_cfg
             )
             if not res["success"]:
                 break
@@ -2838,11 +2641,7 @@ async def run_slides_planner_job(course_id: int, import_id: int) -> None:
                 raw = action.get("slides_plan")
                 if raw is None:
                     raw = action.get("decks")  # Fallback-Format
-                decks = _normalize_slides_plan(raw, snap["manifest"], n_script=0, one_based=True)
-                _merge_existing_plans(
-                    import_id, "existing_deck_plans", action.get("existing_deck_plans"),
-                    "deck_id", {d["id"] for d in _course_decks(course_id)},
-                )
+                decks = _normalize_slides_plan(raw)
                 if action.get("notes"):
                     append_report(import_id, warnings=[f"Folien-Planner-Anmerkung: {str(action['notes'])[:300]}"])
                 break
@@ -2852,29 +2651,16 @@ async def run_slides_planner_job(course_id: int, import_id: int) -> None:
             )
 
         if decks is None or not decks:
-            # Fallback: 1:1 aus bestehenden/neuen Skript-Kapiteln ableiten
-            deck_chapters = [dict(c) for c in snap["chapter_plan"]]
-            decks = _derive_slides_plan(deck_chapters)
+            # Fallback: 1:1 aus den Skript-Kapiteln ableiten
+            decks = _derive_slides_plan(snap["chapter_plan"])
             append_report(import_id, warnings=[
                 "Folien-Planner lief nicht erfolgreich zu Ende — Folien-Plan aus dem Skript-Plan abgeleitet."
             ])
-        kept = [dict(d) for d in snap["slides_plan"] if d.get("material_id")]
-        # Duplikat-Schutz (analog Skript-Planner)
-        decks, removed = _dedupe_plan_proposals(
-            decks, [d["title"] for d in _course_decks(course_id)] + [d["title"] for d in kept]
-        )
-        if removed:
-            append_report(import_id, warnings=[
-                "Deck-Vorschlag(e) entfernt (Deck existiert bereits im Kurs): " + ", ".join(removed[:8])
-            ])
-        set_slides_plan(import_id, kept + decks)
-        await _generate_missing_existing_descs(
-            course_id, import_id, "existing_deck_plans", course_decks,
-            file_tree, digests, {d["id"] for d in _course_decks(course_id)}, llm_cfg,
-        )
+        # Der neue Plan ersetzt die alten Vorschläge komplett.
+        set_slides_plan(import_id, decks)
         set_stage_status(import_id, "slides_plan", "done")
         set_progress(import_id, current="Deck-Vorschläge erstellt.")
-        logger.info("Import %s: slides_plan abgeschlossen (%d Vorschläge, %d behalten)", import_id, len(decks), len(kept))
+        logger.info("Import %s: slides_plan abgeschlossen (%d Vorschläge)", import_id, len(decks))
     except Exception as exc:
         logger.exception("Import %s: slides_plan Job fehlgeschlagen", import_id)
         append_report(import_id, errors=[f"slides_plan-Job intern fehlgeschlagen: {exc}"])
@@ -2883,94 +2669,8 @@ async def run_slides_planner_job(course_id: int, import_id: int) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# TeX-Pre-Converter (deterministisch, best effort) + Sanitizer
+# Sanitizer
 # ═══════════════════════════════════════════════════════════════════
-
-_EQ_ENVS = ("equation", "equation*", "align", "align*", "gather", "gather*", "multline", "multline*")
-_TEX_SECTIONS = {
-    "chapter": "## ", "part": "## ", "section": "## ",
-    "subsection": "### ", "subsubsection": "#### ",
-}
-
-
-def _snake(s: str) -> str:
-    t = re.sub(r"[^a-zA-Z0-9]+", "_", str(s or "")).strip("_").lower()
-    return t[:40] or "label"
-
-
-def _match_brace_arg(text: str, i: int) -> Optional[tuple[str, int]]:
-    """text[i] muss '{' sein → (Argument, Index nach schließender Klammer)."""
-    if i >= len(text) or text[i] != "{":
-        return None
-    depth = 0
-    j = i
-    while j < len(text):
-        c = text[j]
-        if c == "\\" and j + 1 < len(text):
-            j += 2
-            continue
-        if c == "{":
-            depth += 1
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return text[i + 1 : j], j + 1
-        j += 1
-    return None
-
-
-def scan_tex_labels(tex: str) -> dict[str, dict]:
-    """Sammelt \\label{Name} → {prefix, label} (Kontext: figure→fig, equation→eq, sonst sec)."""
-    out: dict[str, dict] = {}
-    for m in re.finditer(r"\\begin\{(equation|equation\*|align|align\*|gather|gather\*|multline|multline\*)\}(.*?)\\end\{\1\}", tex, re.S):
-        lm = re.search(r"\\label\{([^}]+)\}", m.group(2))
-        if lm:
-            out.setdefault(lm.group(1), {"prefix": "eq", "label": _snake(lm.group(1))})
-    for m in re.finditer(r"\\begin\{figure\*?\}(.*?)\\end\{figure\*?\}", tex, re.S):
-        lm = re.search(r"\\label\{([^}]+)\}", m.group(1))
-        if lm:
-            out.setdefault(lm.group(1), {"prefix": "fig", "label": _snake(lm.group(1))})
-    for m in re.finditer(
-        r"\\(chapter|part|section|subsection|subsubsection)\s*(?:\[[^\]]*\])?\{[^{}]*\}\s*\\label\{([^}]+)\}",
-        tex,
-    ):
-        out.setdefault(m.group(2), {"prefix": "sec", "label": _snake(m.group(2))})
-    for m in re.finditer(r"\\label\{([^}]+)\}", tex):
-        out.setdefault(m.group(1), {"prefix": "sec", "label": _snake(m.group(1))})
-    return out
-
-
-def scan_tex_macros(tex: str) -> dict[str, str]:
-    """Sammelt Makro-Definitionen: \\newcommand{\\X}{…}/\\renewcommand/\\def (best effort)."""
-    out: dict[str, str] = {}
-    for pat in (
-        r"\\newcommand\*?\s*\\([A-Za-z]+)\s*(?:\[\d+\])?\s*\{",
-        r"\\renewcommand\*?\s*\\([A-Za-z]+)\s*(?:\[\d+\])?\s*\{",
-    ):
-        for m in re.finditer(pat, tex):
-            arg, _ = _match_brace_arg(tex, m.end() - 1)
-            if arg is not None:
-                out.setdefault(m.group(1), arg)
-    for m in re.finditer(r"\\def\\([A-Za-z]+)\s*\{", tex):
-        arg, _ = _match_brace_arg(tex, m.end() - 1)
-        if arg is not None:
-            out.setdefault(m.group(1), arg)
-    return out
-
-
-def _inline_tex_to_md(s: str) -> str:
-    s = re.sub(r"\\textbf\{([^{}]*)\}", r"**\1**", s)
-    s = re.sub(r"\\(?:textit|emph)\{([^{}]*)\}", r"*\1*", s)
-    s = re.sub(r"\\texttt\{([^{}]*)\}", r"`\1`", s)
-    s = re.sub(r"\\footnote\{(?:[^{}]|\{[^{}]*\})*\}", "", s)
-    return s
-
-
-def _ref_to_md(label: str, label_map: dict) -> str:
-    info = label_map.get(label)
-    if info:
-        return f"@{info['prefix']}:{info['label']}"
-    return f"@sec:{_snake(label)}"  # unbekannt: Best-Effort-sec-Ref
 
 
 def _resolve_image_path(ref: str, image_map: dict) -> Optional[str]:
@@ -2989,169 +2689,6 @@ def _resolve_image_path(ref: str, image_map: dict) -> Optional[str]:
             if p.rsplit("/", 1)[-1] == b:
                 return url
     return None
-
-
-def _convert_heading_line(line: str, cmd: str, prefix: str, label_map: dict) -> str:
-    m = re.match(rf"^\\{cmd}(?:\s*\[[^\]]*\])?\s*", line)
-    i = m.end() if m else 0
-    title, rest = "", ""
-    if i < len(line) and line[i] == "{":
-        arg = _match_brace_arg(line, i)
-        if arg:
-            title = _inline_tex_to_md(arg[0]).strip()
-            rest = line[arg[1]:]
-    lm = re.match(r"\s*\\label\{([^}]+)\}", rest)
-    label = ""
-    if lm:
-        info = label_map.get(lm.group(1))
-        if info and info["prefix"] == "sec":
-            label = f" {{#sec:{info['label']}}}"
-        rest = rest[lm.end():]
-    if not title:
-        return rest.strip()
-    return f"{prefix}{title}{label}"
-
-
-def _convert_lists(line: str, list_kind: Optional[str]) -> str:
-    m = re.match(r"^\\item(?:\[([^\]]*)\])?\s*(.*)$", line)
-    if m and list_kind:
-        content = m.group(2)
-        if list_kind == "description" and m.group(1):
-            return f"- **{_inline_tex_to_md(m.group(1)).strip()}**: {content}"
-        return f"- {content}"
-    if list_kind and line:
-        return f"  {line}"
-    return line
-
-
-def _convert_inline(line: str, image_map: dict, label_map: dict) -> str:
-    if line in ("\\[", "\\]", "\\[ ", "\\] "):
-        return "$$"
-
-    def _inc_repl(m: re.Match) -> str:
-        url = _resolve_image_path(m.group(1), image_map)
-        return f"![]({url})" if url else ""  # nicht importiert → Bild weg
-
-    line = re.sub(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", _inc_repl, line)
-    line = re.sub(r"\\textbf\{([^{}]*)\}", r"**\1**", line)
-    line = re.sub(r"\\(?:textit|emph)\{([^{}]*)\}", r"*\1*", line)
-    line = re.sub(r"\\texttt\{([^{}]*)\}", r"`\1`", line)
-    line = re.sub(r"\\underline\{([^{}]*)\}", r"\1", line)
-    line = re.sub(r"\\footnote\{(?:[^{}]|\{[^{}]*\})*\}", "", line)
-    line = re.sub(r"\\verb\|([^|]*)\|", r"`\1`", line)
-    line = re.sub(
-        r"\\(?:ref|eqref|autoref|cref|Cref|pageref)\{([^}]+)\}",
-        lambda m: _ref_to_md(m.group(1), label_map),
-        line,
-    )
-    line = re.sub(r"\\label\{[^}]+\}", "", line)  # Rest (außerhalb Env-Abbau)
-    line = re.sub(
-        r"\\(?:tableofcontents|maketitle|newpage|clearpage|pagebreak|nopagebreak"
-        r"|hline|hrule|noindent|centering|large|Large|LARGE|small|footnotesize|bibliography"
-        r"|bibliographystyle|cite|nocite|url)\b",
-        "",
-        line,
-    )
-    line = re.sub(r"\s{2,}", " ", line)
-    return line.strip()
-
-
-def _convert_figure_env(buf: list[str], label_map: dict, image_map: dict) -> list[str]:
-    text = "\n".join(buf)
-    m = re.search(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", text)
-    caption = ""
-    cm = re.search(r"\\caption(?:\s*\[[^\]]*\])?\s*\{", text)
-    if cm:
-        arg = _match_brace_arg(text, cm.end() - 1)
-        if arg:
-            caption = _inline_tex_to_md(arg[0]).strip()
-    label_old = None
-    lm = re.search(r"\\label\{([^}]+)\}", text)
-    if lm:
-        label_old = lm.group(1)
-    label = ""
-    if label_old and label_old in label_map and label_map[label_old]["prefix"] == "fig":
-        label = f" {{#fig:{label_map[label_old]['label']}}}"
-    out: list[str] = []
-    if m:
-        url = _resolve_image_path(m.group(1), image_map)
-        alt = caption or m.group(1).rsplit("/", 1)[-1]
-        if url:
-            out.append(f"![{alt}]({url}){label}")
-        elif caption:
-            out.append(f"*{caption}*" + (label if label else ""))  # Bild weg, Caption bleibt
-    elif caption:
-        out.append(f"*{caption}*")
-    return out
-
-
-def tex_to_markdown(tex: str, label_map: dict, image_map: dict) -> str:
-    """Best-Effort-Konvertierung TeX → Markdown (vor dem LLM-Pass)."""
-    lines = (tex or "").splitlines()
-    out: list[str] = []
-    fig_buf: Optional[list[str]] = None
-    eq_buf: Optional[list[str]] = None
-    list_kind: Optional[str] = None
-    for raw in lines:
-        line = raw.strip()
-        if not line or line.startswith("%"):
-            continue
-        m = re.match(r"^\\begin\{(\w+\*?)\}", line)
-        if m:
-            env = m.group(1)
-            rest = line[m.end():].strip()
-            if env in ("figure", "figure*"):
-                fig_buf = []
-                if rest:
-                    fig_buf.append(rest)
-            elif env in _EQ_ENVS:
-                eq_buf = []
-                if rest:
-                    eq_buf.append(rest)
-            elif env in ("itemize", "enumerate", "description"):
-                list_kind = env
-            # unbekannte Env: Marker weglassen, Inhalt behalten
-            continue
-        m = re.match(r"^\\end\{(\w+\*?)\}", line)
-        if m:
-            env = m.group(1)
-            if env in ("figure", "figure*") and fig_buf is not None:
-                out.extend(_convert_figure_env(fig_buf, label_map, image_map))
-                fig_buf = None
-            elif env in _EQ_ENVS and eq_buf is not None:
-                eq_text = " ".join(x for x in eq_buf if x).strip()
-                lm = re.search(r"\\label\{([^}]+)\}", eq_text)
-                eq_text = re.sub(r"\\label\{[^}]+\}", "", eq_text).strip()
-                if eq_text:
-                    suffix = ""
-                    if lm and lm.group(1) in label_map and label_map[lm.group(1)]["prefix"] == "eq":
-                        suffix = f" {{#eq:{label_map[lm.group(1)]['label']}}}"
-                    out.append(f"$${eq_text}$$ {suffix}".strip())
-                eq_buf = None
-            elif env in ("itemize", "enumerate", "description"):
-                list_kind = None
-            continue
-        if fig_buf is not None:
-            fig_buf.append(line)
-            continue
-        if eq_buf is not None:
-            eq_buf.append(line)
-            continue
-        for cmd, prefix in _TEX_SECTIONS.items():
-            if re.match(rf"^\\{cmd}(?:\s*\[[^\]]*\])?\s*\{{", line):
-                line = _convert_heading_line(line, cmd, prefix, label_map)
-                break
-        line = _convert_lists(line, list_kind)
-        line = _convert_inline(line, image_map, label_map)
-        if line:
-            out.append(line)
-    if fig_buf is not None:
-        out.extend(_convert_figure_env(fig_buf, label_map, image_map))
-    if eq_buf is not None:
-        eq_text = " ".join(eq_buf).strip()
-        if eq_text:
-            out.append(f"$${eq_text}$$")
-    return "\n".join(out)
 
 
 # ─── Sanitizer (LLM-Output mit untrusted Input — Defense in Depth) ───
@@ -3230,84 +2767,10 @@ def strip_outer_fence(text: str) -> str:
     return t
 
 
-def chunk_markdown(text: str, max_chars: int) -> list[str]:
-    """Teilt Markdown an '## '-Grenzen (weich) in Chunks ≤ max_chars."""
-    t = (text or "").strip()
-    if len(t) <= max_chars:
-        return [t] if t else []
-    parts = re.split(r"(?m)^(?=## )", t)
-    chunks: list[str] = []
-    cur = ""
-    for part in parts:
-        if cur and len(cur) + len(part) > max_chars:
-            chunks.append(cur)
-            cur = part
-        else:
-            cur += part
-    if cur:
-        chunks.append(cur)
-    # überlange Einzel-Chunks hart teilen
-    final: list[str] = []
-    for c in chunks:
-        while len(c) > max_chars:
-            final.append(c[:max_chars])
-            c = c[max_chars:]
-        if c:
-            final.append(c)
-    return [c for c in final if c.strip()]
-
 
 # ═══════════════════════════════════════════════════════════════════
 # STUFE 5: script (wortgetreue Kapitel-Konvertierung → ScriptSection)
 # ═══════════════════════════════════════════════════════════════════
-
-def _build_label_map(snap: dict, staging: Path) -> dict:
-    """Globale Label-Map aus allen enabled tex-Quellen der Kapitel."""
-    label_map: dict[str, dict] = {}
-    by_path = {m["path"]: m for m in snap["manifest"]}
-    for ch in snap["chapter_plan"]:
-        if not ch.get("enabled"):
-            continue
-        for src in ch.get("sources") or []:
-            m = by_path.get(str(src.get("file") or ""))
-            if not m or m.get("type") != "tex" or not m.get("read_path"):
-                continue
-            p = staging / m["read_path"]
-            if not p.is_file():
-                continue
-            try:
-                lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
-                s_ = max(1, int(src.get("start_line") or 1))
-                e_ = min(len(lines), int(src.get("end_line") or len(lines)))
-                text = "\n".join(lines[s_ - 1 : e_])
-            except (OSError, ValueError):
-                continue
-            for old, info in scan_tex_labels(text).items():
-                label_map.setdefault(old, info)
-    return label_map
-
-
-def _build_macro_map(snap: dict, staging: Path) -> dict[str, str]:
-    """Makro-Definitionen aus ALLEN tex-Dateien der Zip (Preamble inkluvidiert).
-
-    Makros werden oft in main.tex/Preamble definiert und in den Kapiteln genutzt —
-    deshalb wird die ganze Datei gescannt, nicht nur die Kapitel-Slices.
-    """
-    out: dict[str, str] = {}
-    for m in snap["manifest"]:
-        if m.get("type") != "tex" or not m.get("read_path"):
-            continue
-        p = staging / m["read_path"]
-        if not p.is_file():
-            continue
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        for name, arg in scan_tex_macros(text).items():
-            out.setdefault(name, arg[:500])
-    return out
-
 
 def _existing_section_labels(course_id: int) -> set[str]:
     labels: set[str] = set()
@@ -3338,6 +2801,9 @@ def _chapter_label(title: str, idx: int, used_labels: set[str]) -> str:
 def _plan_digest(ch: dict, file_map: dict) -> str:
     """Grobe Zusammenfassung eines Plan-Kapitels aus den Chunk-Digests (Fallback-Kontext)."""
     parts = []
+    desc = (ch.get("description") or "").strip()
+    if desc:
+        parts.append(desc)
     for src in ch.get("sources") or []:
         entry = file_map.get(src.get("file", "")) or {}
         for c in entry.get("chunks") or []:
@@ -3385,33 +2851,29 @@ def _collect_sources(staging: Path, ch: dict, by_path: dict) -> tuple[str, set[s
     return "\n\n".join(parts), img_refs, has_tex
 
 
-def _label_table(label_map: dict) -> str:
-    if not label_map:
-        return "(keine — neue snake_case-Labels vergeben)"
-    lines = [f"\u005cref{{{old}}} → @{info['prefix']}:{info['label']}" for old, info in list(label_map.items())[:200]]
-    return "\n".join(lines)
-
-
-def _macro_table(macro_map: dict) -> str:
-    if not macro_map:
-        return "(keine gefunden — nur Standard-Kommandos verwenden)"
-    lines = [f"\\{name} = {arg}" for name, arg in list(macro_map.items())[:100]]
-    return "\n".join(lines)
-
-
-def _image_table(img_refs: set[str], image_map: dict) -> str:
-    """ALLE importierten Medien (Zip-Pfad → Medien-URL); in den Quellen referenzierte
-    Einträge werden markiert. Nicht auflösbare Referenzen werden separat gemeldet."""
+def _image_table(
+    img_refs: set[str], image_map: dict, descriptions: Optional[dict[str, str]] = None
+) -> str:
+    """ALLE importierten Medien (Zip-Pfad → Medien-URL, mit Kurzbeschreibung); in den
+    Quellen referenzierte Einträge werden markiert. Nicht auflösbare Referenzen
+    werden separat gemeldet."""
     lines = []
     entries = []
+    descs = descriptions or {}
     for path in sorted(image_map):
         url = image_map[path]
         if not url:
             continue
         marked = any(_resolve_image_path(ref, image_map) == url for ref in img_refs)
-        entries.append(f"{path} → {url}" + ("  [in den Quellen referenziert]" if marked else ""))
+        entry = f"{path} → {url}"
+        d = (descs.get(path) or "").strip()
+        if d:
+            entry += f" — „{d}“"
+        if marked:
+            entry += "  [in den Quellen referenziert]"
+        entries.append(entry)
     if entries:
-        lines.append("ALLE importierten Medien (Original-Pfad → Medien-URL; für Bilder NUR diese URLs verwenden):")
+        lines.append("ALLE importierten Medien (Original-Pfad → Medien-URL, mit Kurzbeschreibung; für Bilder NUR diese URLs verwenden):")
         lines.append("\n".join(entries[:300]))
     unresolved = [ref for ref in sorted(img_refs) if not _resolve_image_path(ref, image_map)]
     if unresolved:
@@ -3419,75 +2881,85 @@ def _image_table(img_refs: set[str], image_map: dict) -> str:
     return "\n".join(lines) or "(keine Medien importiert)"
 
 
-async def _refine_chapter_content(
-    import_id: int,
-    title: str,
-    content: str,
-    source_text: str,
-    llm_cfg: dict,
-    llm_sem: asyncio.Semaphore,
-    other_chapters: str = "",
-    stage: str = "script",
-    image_checklist: Optional[str] = None,
-) -> tuple[str, list[str]]:
-    """Eine Verifikations- + Refinement-Runde: Das LLM vergleicht den Entwurf mit dem
-    Quelltext und korrigiert Lücken (Abschnitte, Boxen, Bilder, Tabellen) sowie
-    Sprach-/Wortlaut-Drift. Bevorzugt werden lokale „content_edits“ geliefert
-    (serverseitig angewendet); „content“ (Volltext) bleibt Fallback.
-    Returns: (content, warns) — der Entwurf bleibt unverändert, wenn der
-    Refinement-Versuch fehlschlägt oder klar verschlechtert.
-    other_chapters: Summaries/Labels der anderen Kapitel (Querverweise).
-    stage: Gate-Name ("script" beim Generieren, "refine" bei der Nachbesserung).
-    image_checklist: fertige BILD-CHECKLISTE (eine Medien-URL pro Zeile); wird nur
-    dann aus dem Quelltext per Regex extrahiert, wenn None übergeben wird
-    (roher TeX-Quelltext enthält keine ![…](…)-Markdown-Bilder)."""
-    warns: list[str] = []
-    if not IMPORT_ENABLE_REFINEMENT:
-        return content, warns
-    if len(content) + len(source_text) > IMPORT_REFINE_MAX_CHARS:
-        warns.append(f"Skript „{title}“: Verifikations-Refinement übersprungen (Quelltext + Entwurf zu groß).")
-        return content, warns
-    # Bild-Checkliste: jede Medien-URL aus dem Quelltext muss im Ergebnis vorkommen.
-    # Bei rohem TeX-Quelltext greift die ![…](…)-Regex nicht → explizite Checkliste
-    # (aufgelöste Medien-URLs) von den Call-Sites übergeben; Fallback = Regex.
-    if image_checklist is None:
-        checklist = sorted(
-            {u for u in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", source_text) if u.startswith("/media/")}
-        )
-        image_checklist = "\n".join(checklist) if checklist else "(keine Bilder im Quelltext)"
-    async with llm_sem:
-        if not await gate(import_id, stage):
-            raise RuntimeError("gestoppt (Pause/Cancel)")
-        res = await llm_service.import_refine_chapter(
-            title, content, source_text, image_checklist=image_checklist,
-            other_chapters=other_chapters, config=llm_cfg
-        )
-    if not res["success"]:
-        warns.append(f"Skript „{title}“: Verifikations-Refinement fehlgeschlagen ({res.get('error')}) — Entwurf behalten.")
-        return content, warns
-    data = res["data"] or {}
-    new_content = (data.get("content") or "").strip()
-    edits = data.get("content_edits")
-    if new_content:
-        refined = strip_outer_fence(new_content)
-    elif isinstance(edits, list) and edits:
-        # Lokale Korrekturen serverseitig anwenden (der Rest bleibt garantiert unverändert)
-        try:
-            refined, ewarns = content_edits.apply_content_edits(content, edits)
-        except ContentEditError as e:
-            warns.append(f"Skript „{title}“: content_edits konnten nicht angewendet werden ({e}) — Entwurf behalten.")
-            return content, warns
-        refined = refined.strip()
-        warns.extend(ewarns)
-    else:
-        # LLM: bereits alles korrekt
-        return content, warns
-    if len(refined) < 0.8 * len(content):
-        # Safety: Refinement-Ergebnis eindeutig zu kurz (Trunkation) → nicht akzeptieren
-        warns.append(f"Skript „{title}“: Refinement-Ergebnis deutlich kürzer als der Entwurf — Entwurf behalten.")
-        return content, warns
-    refined, rwarns = sanitize_untrusted_markdown(refined)
-    return refined, warns + rwarns
+def _media_descriptions(snap: dict) -> dict[str, str]:
+    """Zip-Pfad → Kurzbeschreibung (llm_description) der importierten Medien.
+
+    Für Bild-Mappings in den Import-Prompts: Das LLM soll anhand der Beschreibung
+    die passende Abbildung an der richtigen Stelle einsetzen.
+    """
+    ids: set[int] = set()
+    for info in snap["media_map"].values():
+        for mid in info.get("media_ids") or []:
+            try:
+                ids.add(int(mid))
+            except (TypeError, ValueError):
+                pass
+    if not ids:
+        return {}
+    id_descs: dict[int, str] = {}
+    with Session(engine) as s:
+        for m in s.exec(select(CourseMedia).where(CourseMedia.id.in_(ids))).all():
+            d = (m.llm_description or "").strip()
+            if d:
+                id_descs[m.id] = d[:300]
+    out: dict[str, str] = {}
+    for path, info in snap["media_map"].items():
+        for mid in info.get("media_ids") or []:
+            try:
+                d = id_descs.get(int(mid))
+            except (TypeError, ValueError):
+                continue
+            if d:
+                out[path] = d
+                break
+    return out
+
+
+def _deck_summary_lines(course_id: int, exclude_ids: Optional[set[int]] = None) -> list[str]:
+    """Folien-Decks des Kurses (Titel + interne Zusammenfassung) für Cross-Ref-Kontexte."""
+    exclude = exclude_ids or set()
+    lines: list[str] = []
+    with Session(engine) as s:
+        mats = s.exec(
+            select(CourseMaterial)
+            .where(CourseMaterial.course_id == course_id)
+            .where(CourseMaterial.material_type == MaterialType.SLIDES)
+            .order_by(CourseMaterial.display_order.asc(), CourseMaterial.id.asc())  # type: ignore[attr-defined]
+        ).all()
+        for mat in mats:
+            if mat.id in exclude:
+                continue
+            summ = (mat.summary or "").strip()
+            if summ:
+                lines.append(f"- {mat.title}: {summ}")
+    return lines
+
+
+def _deck_other_context(snap: dict, course_id: int, current_material_id: Optional[int]) -> str:
+    """Kontext-Block für Deck-Prompts (generieren): andere Folien-Decks und
+    Skript-Kapitel mit internen Zusammenfassungen (Medien kommen über das Bild-Mapping)."""
+    deck_lines = _deck_summary_lines(course_id, exclude_ids={current_material_id} if current_material_id else set())
+    chapter_lines: list[str] = []
+    with Session(engine) as s:
+        for c in snap["chapter_plan"]:
+            if not c.get("section_id"):
+                continue
+            sec = s.get(ScriptSection, c["section_id"])
+            summ = (sec.summary or "").strip() if sec else ""
+            chapter_lines.append(f"- {c['title']}: {summ or _plan_digest(c, snap['file_map'])}")
+    return (
+        "FOLIEN-DECKS:\n" + ("\n".join(deck_lines) or "(keine)") + "\n\n"
+        "SKRIPT-KAPITEL:\n" + ("\n".join(chapter_lines) or "(keine)")
+    )
+
+
+def _with_decks(others: str, deck_context: str) -> str:
+    """Kapitel-Kontext + Folien-Deck-Zusammenfassungen unter einem Block vereinen."""
+    if not deck_context:
+        return others or "(keine)"
+    if not others or others == "(keine)":
+        return "FOLIEN-DECKS DES KURSES:\n" + deck_context
+    return others + "\n\nFOLIEN-DECKS DES KURSES:\n" + deck_context
 
 
 async def _generate_chapter(
@@ -3497,36 +2969,23 @@ async def _generate_chapter(
     snap: dict,
     ch: dict,
     idx: int,
-    n_enabled: int,
-    label_map: dict,
-    macro_map: dict,
     by_path: dict,
     used_labels: set[str],
     chapter_summaries: dict[int, str],
     llm_cfg: dict,
     llm_sem: asyncio.Semaphore,
+    deck_context: str = "",
+    media_descs: Optional[dict[str, str]] = None,
 ) -> tuple[str, str, list[str]]:
-    """Generiert das Markdown eines Kapitels. Returns: (content, sec_label, warnings)."""
+    """Generiert das Markdown eines Kapitels. Returns: (content, sec_label, warnings).
+
+    deck_context: Zusammenfassungen der Folien-Decks des Kurses (Cross-Ref-Kontext).
+    media_descs: Zip-Pfad → Kurzbeschreibung der importierten Medien (Bild-Mapping).
+    """
     warns: list[str] = []
     raw, img_refs, _has_tex = await asyncio.to_thread(_collect_sources, staging, ch, by_path)
-    # Bestehende Kurs-Kapitel (via Gather) dienen als zusätzliche Quelle
-    sec_content = await asyncio.to_thread(_section_sources_content, ch.get("sections") or [])
-    if not raw.strip() and not sec_content.strip():
+    if not raw.strip():
         raise RuntimeError("Kein Quelltext für dieses Kapitel (Sources leer/ungültig).")
-
-    # Edit-Modus: Das Kapitel selbst (section_id) existiert bereits und ist zugleich
-    # Quelle — das LLM soll Bestand und neuen Import-Inhalt MERGEN statt blind
-    # zu überschreiben (sec_content-Chunks werden dem Quelltext vorangestellt).
-    edit_note = ""
-    if ch.get("section_id") and sec_content.strip():
-        edit_note = (
-            "\nBESONDERER MODUS — EDIT VON BESTEHENDEM KAPITEL: Der vorangestellte Teil des "
-            "Quelltextes unten ist der BESTEHENDE Inhalt dieses Kapitels; der folgende Teil ist der "
-            "neue Quelltext aus den Import-Materialien. Nutze den bestehenden Inhalt als BASIS: "
-            "Passagen, die der neue Quelltext nicht betrifft, möglichst wortgetreu BEHALTEN, "
-            "neue Inhalte an der passenden Stelle ERGÄNZEN, widersprüchliche/aktualisierte "
-            "Passagen ERSETZEN. Liefere das vollständige, zusammengeführte Kapitel."
-        )
 
     # Bild-URLs (nur importierte Medien)
     url_map = {}
@@ -3541,24 +3000,24 @@ async def _generate_chapter(
             f"Skript „{ch['title']}“: {len(unresolved_imgs)} Bildreferenz(en) nicht in den importierten "
             f"Medien auffindbar — die Bilder fallen weg: {', '.join(unresolved_imgs[:10])}"
         )
-    # Debug-Log: welche Quellen (Dateien/Zeilen, bestehende Kapitel) + Bildstatistik
+    # Debug-Log: welche Quellen (Dateien/Zeilen) + Bildstatistik
     src_desc = ", ".join(
         f"{s.get('file')} (Z {s.get('start_line') or 1}–{s.get('end_line')})" for s in (ch.get("sources") or [])[:20]
-    ) or "(keine — nur bestehende Kapitel)"
-    sec_titles = await asyncio.to_thread(_section_titles, ch.get("sections") or [])
+    ) or "(keine)"
     log_bits = [f"Quellen: {src_desc}"]
-    if sec_titles:
-        log_bits.append("bestehende Kapitel: " + ", ".join(f"“{t}”" for t in sec_titles))
     if img_refs:
         log_bits.append(f"Bilder: {len(img_refs) - len(unresolved_imgs)}/{len(img_refs)} aufgelöst")
     append_report(import_id, log=[f"Skript „{ch['title']}“: " + " | ".join(log_bits)])
     # Roh bleibt roh: Das LLM konvertiert LaTeX/Markdown selbst (Prompt erklärt
     # die Marker-Zeilen) — eine vor-konvertierte Fassung verwirrte es eher.
-    parts = chunk_markdown(raw, CHAPTER_INPUT_BUDGET) if raw.strip() else []
-    if sec_content.strip():
-        parts = chunk_markdown(sec_content, CHAPTER_INPUT_BUDGET) + parts
-    if not parts:
-        raise RuntimeError("Kapitel-Quelltext leer nach Konvertierung.")
+    # EIN LLM-Call pro Kapitel (wie bei Slides): der Quelltext wird NICHT
+    # gekappt — bei sehr großen Inputs nur warnen (kleine Kontextfenster
+    # könnten überlaufen).
+    if len(raw) > CHAPTER_INPUT_WARN_CHARS:
+        warns.append(
+            f"Skript „{ch['title']}“: Achtung, sehr großer Input ({len(raw)} Zeichen) — "
+            f"bei zu kleinen Kontextfenstern können Probleme auftauchen."
+        )
 
     # Kontext: andere Kapitel (generierte Summaries, sonst Plan-Digests) — auch
     # bereits existierende Kapitel (section_id), selbst wenn sie in diesem Lauf
@@ -3571,80 +3030,46 @@ async def _generate_chapter(
             continue  # weder aktiv noch bereits generiert → kein Kontext
         s = chapter_summaries.get(i) or _plan_digest(c, snap["file_map"])
         others.append(f"- {c['title']}: {s}")
-    other_text = "\n".join(others) or "(keine)"
-    # Refinement-Kontext: gleiche Liste, aber für ALLE Kapitel (inkl. aktueller)
-    # mit {#sec:label}-Kurzangabe, damit das LLM Querverweise konsistent setzt
-    refine_others = []
-    for i, c in enumerate(snap["chapter_plan"]):
-        if i == idx:
-            continue
-        if not c.get("enabled") and not c.get("section_id"):
-            continue  # weder aktiv noch bereits generiert → kein Kontext
-        s = chapter_summaries.get(i) or _plan_digest(c, snap["file_map"])
-        lab = ""
-        if c.get("section_id"):
-            with Session(engine) as sdb:
-                sc = sdb.get(ScriptSection, c["section_id"])
-            if sc:
-                m = re.match(r"\s*\{#sec:([a-z0-9_]+)\}", sc.content or "")
-                if m:
-                    lab = m.group(1)
-        refine_others.append(f"- {c['title']} ({'@sec:' + lab if lab else 'noch kein Label'}): {s}")
+    other_text = _with_decks("\n".join(others), deck_context)
     references_text = await asyncio.to_thread(_build_references_text, course_id)
 
-    sec_label = _chapter_label(ch["title"], idx, used_labels)
-    out_parts: list[str] = []
-    for i, part in enumerate(parts):
-        part_info = (
-            f"Das Kapitel ist in {len(parts)} Teile aufgeteilt; liefere NUR Teil {i + 1} weiter"
-            f" (fortlaufender Text; keine Kapitel-Überschrift/-Label am Anfang, wenn Teil 1>1)."
-            if len(parts) > 1 else ""
+    async with llm_sem:
+        if not await gate(import_id, "script"):
+            raise RuntimeError("gestoppt (Pause/Cancel)")
+        res = await llm_service.import_convert_chapter(
+            chapter_title=ch["title"],
+            other_chapters=other_text,
+            image_map=_image_table(img_refs, url_map, media_descs or {}),
+            references=references_text,
+            source_text=raw,
+            config=llm_cfg,
+            # Output-Budget: das konvertierte Kapitel ist grob so lang wie die
+            # Quelle (≈1 Token pro 4 Zeichen) + Puffer. (Provider clamps ggf. auf
+            # das Modell-Output-Limit; abgeschnittene Antworten werden in
+            # _call_plain automatisch fortgesetzt.)
+            max_tokens=min(65536, len(raw) // 4 + 8192),
         )
-        async with llm_sem:
-            if not await gate(import_id, "script"):
-                raise RuntimeError("gestoppt (Pause/Cancel)")
-            res = await llm_service.import_convert_chapter(
-                chapter_title=ch["title"],
-                chapter_position=f"Kapitel {idx + 1} von {n_enabled}.",
-                part_info=part_info,
-                edit_note=edit_note,
-                other_chapters=other_text,
-                label_map=_label_table(label_map),
-                macro_map=_macro_table(macro_map),
-                image_map=_image_table(img_refs, url_map),
-                references=references_text,
-                source_text=part,
-                config=llm_cfg,
-            )
-        if not res["success"]:
-            raise RuntimeError(f"LLM-Konvertierung fehlgeschlagen: {res.get('error')}")
-        text = strip_outer_fence(res["data"]["model_solution"])
-        if not text.strip():
-            raise RuntimeError("LLM hat leeren Inhalt geliefert.")
-        out_parts.append(text)
-
-    content = "\n\n".join(out_parts).strip()
-    # LLM-Label-Zeile am Anfang ersetzen durch das deterministische
-    content = re.sub(r"^\s*\{#sec:[a-z0-9_]+\}\s*", "", content, count=1).strip()
-    content = f"{{#sec:{sec_label}}}\n\n" + content
+    if not res["success"]:
+        raise RuntimeError(f"LLM-Konvertierung fehlgeschlagen: {res.get('error')}")
+    content = strip_outer_fence(res["data"]["model_solution"]).strip()
+    if not content:
+        raise RuntimeError("LLM hat leeren Inhalt geliefert.")
+    # Das LLM-Kapitel-Label (aus dem Quell-\label abgeleitet, s. Label-Regeln im
+    # Prompt) wird übernommen — es ist Single Source of Truth für Cross-Refs
+    # (Summaries, andere Kapitel, Folien). Fehlt es, wird ein deterministischer
+    # Title-Slug-Label vorgeworfen (damit @sec:-Referenzen aufs Kapitel
+    # funktionieren); used_labels hält den Slug kollisionsfrei.
+    m = re.match(r"^\s*\{#sec:([a-z0-9_]+)\}\s*", content)
+    if m:
+        sec_label = m.group(1)
+        used_labels.add(sec_label)
+    else:
+        sec_label = _chapter_label(ch["title"], idx, used_labels)
+        content = f"{{#sec:{sec_label}}}\n\n" + content
 
     # Sanitizer (untrusted input!)
     content, sanitize_warns = sanitize_untrusted_markdown(content)
     warns.extend(sanitize_warns)
-
-    # Verifikation + Refinement: Vollständigkeits-Check des Entwurfs gegen die Quellen.
-    # Bild-Checkliste explizit: TeX-Bildpfade aufgelöst + ggf. Bestand-Bilder des
-    # Kapitels (Edit-Modus) — im rohen TeX greift die Regex-Extraktion nicht.
-    img_checklist = sorted(
-        {u for u in (_resolve_image_path(r, url_map) for r in img_refs) if u}
-        | {u for u in re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", sec_content) if u.startswith("/media/")}
-    )
-    content, refine_warns = await _refine_chapter_content(
-        import_id, ch["title"], content, "\n\n".join(parts), llm_cfg, llm_sem,
-        other_chapters="\n".join(refine_others) or "(keine)",
-        image_checklist="\n".join(img_checklist) if img_checklist else "(keine Bilder im Quelltext)",
-    )
-    warns.extend(refine_warns)
 
     # Post-Check: erwartete Bild-URLs vorhanden?
     expected = [_resolve_image_path(r, url_map) for r in img_refs]
@@ -3672,7 +3097,7 @@ def _save_section(
             sec = ScriptSection(
                 course_id=course_id, title=title[:300], content=content,
                 is_visible=False, display_order=order, created_by=created_by,
-                summary=summary[:2000],
+                summary=summary,
             )
             s.add(sec)
         s.commit()
@@ -3681,101 +3106,16 @@ def _save_section(
         return sec.id
 
 
-def _draft_sources_text(sources: list[dict]) -> str:
-    if not sources:
-        return "(keine — bitte selbst aus Dateibaum + Digests ermitteln)"
-    return "\n".join(
-        f"- {s['file']} (Zeilen {s['start_line']}-{s['end_line']})" for s in sources[:20]
-    )
-
-
 GATHER_KIND_RULES = {
     "script": (
         "- Für das Skript-Kapitel muss der Inhalt möglichst WORTGETREU generiert werden:"
         " nimm in 'sources' ALLE Dateien/Bereiche auf, die den Lehrinhalt dieses Kapitels enthalten"
         " (nichts Wichtiges auslassen, in Lehrstoff-Reihenfolge)."
-        " Soll der bereits generierte Inhalt bestehender Kurs-Kapitel als (Haupt-)Quelle dienen,"
-        " liste deren ids in 'sections' auf."
-        " EDIT MODUS: Ist das Kapitel im Kontext als bestehendes Kapitel markiert, das aus der Zip"
-        " (neu)generiert/erweitert werden soll, sammle in 'sources' die Import-Dateien mit dem"
-        " neuen/aktualisierten Inhalt UND gib die id des Kapitels selbst in 'sections' an"
-        " (sein Bestandsinhalt dient dann als Basis für den Merge)."
     ),
     "slides": (
         "- Für Slide-Decks genügen kompakte Quellen (die Folien fassen den Inhalt zusammen)."
-        " Sollen bereits generierte Kurs-Kapitel als Hauptquelle dienen (in der Regel der Fall),"
-        " liste deren ids in 'sections' auf — rohe Dateien aus der Zip ergänze in 'sources'"
-        " nur, wenn der Kapitelinhalt das Deck nicht abdeckt."
     ),
 }
-
-
-def _gather_read_section(course_id: int, action: dict) -> str:
-    """Gather-Tool read_section: Inhalt eines bestehenden Kurs-Kapitels (mit Cap)."""
-    try:
-        sid = int(action.get("section_id"))
-    except (TypeError, ValueError):
-        return "FEHLER: section_id muss eine Ganzzahl sein."
-    with Session(engine) as s:
-        sec = s.get(ScriptSection, sid)
-        ok = sec is not None and sec.course_id == course_id
-        title = sec.title if ok else ""
-        content = (sec.content or "").strip() if ok else ""
-    if not content:
-        return f"FEHLER: Kapitel mit id {sid} nicht gefunden oder leer."
-    if len(content) > IMPORT_READ_CHARS:
-        content = content[:IMPORT_READ_CHARS] + "\n… (gekürzt — vollständigen Inhalt über die Quelldateien lesen)"
-    return f'Skript-Kapitel (id {sid}): „{title}“\n{content}'
-
-
-def _gather_read_deck(course_id: int, action: dict) -> str:
-    """Gather-Tool read_deck: Inhalt eines bestehenden Slide-Decks (mit Cap)."""
-    try:
-        did = int(action.get("deck_id"))
-    except (TypeError, ValueError):
-        return "FEHLER: deck_id muss eine Ganzzahl sein."
-    with Session(engine) as s:
-        d = s.get(CourseMaterial, did)
-        ok = d is not None and d.course_id == course_id and d.material_type == MaterialType.SLIDES
-        title = d.title if ok else ""
-        content = (d.content or "").strip() if ok else ""
-    if not content:
-        return f"FEHLER: Slide-Deck mit id {did} nicht gefunden oder leer."
-    if len(content) > IMPORT_READ_CHARS:
-        content = content[:IMPORT_READ_CHARS] + "\n… (gekürzt)"
-    return f'Slide-Deck (id {did}): „{title}“\n{content}'
-
-
-def _section_sources_content(section_ids: list) -> str:
-    """Inhalt bestehender Kurs-Kapitel (zusätzliche Quelle für Generierung)."""
-    parts: list[str] = []
-    for sid in (section_ids or [])[:5]:
-        try:
-            sid = int(sid)
-        except (TypeError, ValueError):
-            continue
-        with Session(engine) as s:
-            sec = s.get(ScriptSection, sid)
-            if sec and (sec.content or "").strip():
-                parts.append(f'=== Skript-Kapitel „{sec.title}“ (bestehender Inhalt) ===\n{sec.content.strip()}')
-    return "\n\n".join(parts)
-
-
-def _section_titles(section_ids: list) -> list[str]:
-    """Titel bestehender Kurs-Kapitel (für den Debug-Log)."""
-    nums: list[int] = []
-    for sid in section_ids or []:
-        try:
-            nums.append(int(sid))
-        except (TypeError, ValueError):
-            continue
-    if not nums:
-        return []
-    with Session(engine) as s:
-        secs = s.exec(select(ScriptSection).where(ScriptSection.id.in_(nums))).all()  # type: ignore[attr-defined]
-        by_id = {sec.id: str(sec.title or f"#{sec.id}") for sec in secs}
-    return [by_id[n] for n in nums if n in by_id]
-
 
 async def _gather_sources(
     course_id: int,
@@ -3784,19 +3124,19 @@ async def _gather_sources(
     staging: Path,
     title: str,
     description: str,
-    draft_sources: list[dict],
     kind: str,
     stage: str,
     llm_cfg: dict,
     llm_sem: asyncio.Semaphore,
-) -> Optional[tuple[list[dict], list[int], str]]:
+) -> Optional[tuple[list[dict], str]]:
     """Agentic Quellen-Sammlung für ein Kapitel/Deck (LLM-Action-Loop).
 
-    Tools: read_file (gestagte Dateien), read_section/read_deck (bestehende
-    Kurs-Materialien), finish (sources + sections + notes).
-    Returns: (sources, sections, notes) oder None = LLM-Aufruf fehlgeschlagen.
+    Das LLM ermittelt aus BESCHREIBUNG (Quelldateien mit Pfad + Zeilenbereich,
+    vom Plan) + Dateibaum + Digests die konkreten Quellen in der Zip.
+    Tools: read_file (gestagte Dateien), finish (sources + notes).
+    Returns: (sources, notes) oder None = LLM-Aufruf fehlgeschlagen.
     LLM-Output ist untrusted: Pfade werden gegen das Manifest gewhitelisted,
-    Zeilen gegen line_count geclamped, sections gegen die Kurs-Kapitel validiert.
+    Zeilen gegen line_count geclamped.
     """
     manifest = snap["manifest"]
     by_path = {m["path"]: m for m in manifest}
@@ -3804,12 +3144,8 @@ async def _gather_sources(
     digests = _build_digests_text(manifest, snap["file_map"])
     if len(digests) > 24000:
         digests = digests[:24000] + "\n… (Digests gekürzt)"
-    sections_text = _build_course_sections_text(course_id)
-    decks_text = _build_course_decks_text(course_id)
     media_text = _build_media_list_text(course_id)
     references_text = _build_references_text(course_id)
-    draft_text = _draft_sources_text(draft_sources)
-    valid_sections = {sc["id"] for sc in _course_sections(course_id)}
 
     steps = "(noch keine)"
     tool_budget = 0
@@ -3823,8 +3159,7 @@ async def _gather_sources(
         async with llm_sem:
             res = await llm_service.import_gather_step(
                 kind, GATHER_KIND_RULES.get(kind, ""), title, description or "(keine)",
-                draft_text, file_tree, digests, sections_text, decks_text, media_text,
-                references_text, steps, config=llm_cfg,
+                file_tree, digests, media_text, references_text, steps, config=llm_cfg,
             )
         if not res["success"]:
             logger.warning(
@@ -3833,13 +3168,8 @@ async def _gather_sources(
             return None
         action = res["data"] or {}
         act = str(action.get("action") or "")
-        if act in ("read_file", "read_section", "read_deck"):
-            if act == "read_file":
-                tool_out = _planner_read(manifest, staging, action)
-            elif act == "read_section":
-                tool_out = await asyncio.to_thread(_gather_read_section, course_id, action)
-            else:
-                tool_out = await asyncio.to_thread(_gather_read_deck, course_id, action)
+        if act == "read_file":
+            tool_out = _planner_read(manifest, staging, action)
             tool_budget += len(tool_out)
             steps += (
                 f"\n### Schritt {i + 1}\nLLM: {json.dumps(action, ensure_ascii=False)}\n"
@@ -3862,27 +3192,18 @@ async def _gather_sources(
                 s = _as_int(src.get("start_line"), 1, 1, lc)
                 e = _as_int(src.get("end_line"), lc, s, lc)
                 out.append({"file": f, "start_line": s, "end_line": e})
-            secs: list[int] = []
-            raw_secs = action.get("sections")
-            for v in (raw_secs if isinstance(raw_secs, list) else [])[:10]:
-                try:
-                    n = int(v)
-                except (TypeError, ValueError):
-                    continue
-                if n in valid_sections and n not in secs:
-                    secs.append(n)
             notes = str(action.get("notes") or "").strip()[:500]
-            return out, secs, notes
+            return out, notes
         steps += (
             f"\n### Schritt {i + 1}\nLLM: {json.dumps(action, ensure_ascii=False)}\n"
-            "Tool: (unbekannte Aktion — verwende read_file, read_section, read_deck oder finish)\n"
+            "Tool: (unbekannte Aktion — verwende read_file oder finish)\n"
         )
 
-    # Iterations-Budget erschöpft → Plangeber-Quellen (Draft) verwenden
+    # Iterations-Budget erschöpft → keine Quellen ermittelt
     append_report(import_id, warnings=[
-        f'Quellen-Sammlung „{title}“ unvollständig (Iterations-Budget) — die Plan-Quellen werden verwendet.'
+        f'Quellen-Sammlung „{title}“ unvollständig (Iterations-Budget) — keine Quellen ermittelt.'
     ])
-    return [dict(s) for s in draft_sources], [], ""
+    return [], ""
 
 
 async def run_script_job(course_id: int, import_id: int) -> None:
@@ -3890,7 +3211,6 @@ async def run_script_job(course_id: int, import_id: int) -> None:
     logger.info("Import %s (Kurs %s): script gestartet", import_id, course_id)
     try:
         set_stage_status(import_id, "script", "running")
-        prune_stale_plan_refs_job(course_id, import_id)
         snap = job_snapshot(import_id)
         if snap is None:
             return
@@ -3902,8 +3222,6 @@ async def run_script_job(course_id: int, import_id: int) -> None:
             set_stage_status(import_id, "script", "done")
             return
 
-        label_map = await asyncio.to_thread(_build_label_map, snap, staging)
-        macro_map = await asyncio.to_thread(_build_macro_map, snap, staging)
         used_labels = _existing_section_labels(course_id)
         # Labels bereits generierter Kapitel dieses Imports mitzählen
         for i, c in enumerate(snap["chapter_plan"]):
@@ -3923,6 +3241,9 @@ async def run_script_job(course_id: int, import_id: int) -> None:
                     sec = s.get(ScriptSection, c["section_id"])
                     if sec and sec.summary:
                         chapter_summaries[i] = sec.summary
+        # Folien-Decks des Kurses (Summary) + Medien-Kurzbeschreibungen für den Kontext
+        deck_context = "\n".join(_deck_summary_lines(course_id))
+        media_descs = await asyncio.to_thread(_media_descriptions, snap)
 
         llm_cfg = get_llm_config(course_id, IMPORT_TIMEOUT_CONVERT)
         llm_sem = asyncio.Semaphore(IMPORT_LLM_CONCURRENCY)
@@ -3960,18 +3281,16 @@ async def run_script_job(course_id: int, import_id: int) -> None:
                 return
             set_progress(import_id, current=f"Skript: {ch['title']}", unit_key=unit_key, unit_total=1)
             try:
-                # Kapitel ohne Quellen (z. B. nachträglich angelegt) → LLM sammelt sie.
-                # Auch bestehende Kapitel (section_id) werden erneut „gathered“, solange sie
-                # keine Import-Quellen haben: ihr Bestandsinhalt ist die Edit-Basis, aber die
-                # neuen Inhalte aus der Zip müssen extra gesucht werden.
-                # (Sobald sources gesetzt sind, wird der Gather übersprungen → resume-safe.)
-                if (not ch.get("sources") and not ch.get("sections")) or (
-                    ch.get("section_id") and not ch.get("sources")
-                ):
+                # Kapitel ohne Quellen → LLM ermittelt sie aus Beschreibung + Dateibaum.
+                # Auch bereits generierte Kapitel (section_id, erneute Generierung)
+                # werden „gathered“, solange sie keine Quellen haben; das Kapitel wird
+                # danach komplett neu aus den Import-Materialien generiert.
+                # (Sobald sources gesetzt sind → Gather wird übersprungen, resume-safe.)
+                if not ch.get("sources"):
                     set_progress(import_id, current=f"Skript: {ch['title']} — Quellen werden aus den Materialien ermittelt …")
                     gathered = await _gather_sources(
                         course_id, import_id, snap, staging, ch["title"],
-                        ch.get("description") or "", ch.get("sources") or [],
+                        ch.get("description") or "",
                         "script", "script", llm_cfg, llm_sem,
                     )
                     if gathered is None:
@@ -3983,32 +3302,22 @@ async def run_script_job(course_id: int, import_id: int) -> None:
                             f"Skript-Kapitel „{ch['title']}“: Quellen-Sammlung fehlgeschlagen (LLM-Aufruf)."
                         ])
                         continue
-                    sources, sections, _notes = gathered
+                    sources, _notes = gathered
                     patch: dict[str, Any] = {}
                     if sources:
                         patch["sources"] = sources
-                    if ch.get("section_id"):
-                        # Der eigene Bestand ist immer Basis des Edits (auch wenn das LLM
-                        # ihn nicht explizit nennt)
-                        patch["sections"] = list(dict.fromkeys(list(sections) + [ch["section_id"]]))
-                    elif sections:
-                        patch["sections"] = sections
                     if patch:
                         update_plan_chapter(import_id, idx, patch)
                         ch.update(patch)
                         append_report(import_id, warnings=[
                             f"Skript-Kapitel „{ch['title']}“: Quellen automatisch ermittelt "
-                            f"({len(sources)} Datei(n), {len(sections)} bestehende Kapitel)."
+                            f"({len(sources)} Datei(n))."
                         ])
                         gather_log = ", ".join(
                             f"{s.get('file')} (Z {s.get('start_line') or 1}–{s.get('end_line')})" for s in sources[:20]
                         ) or "(keine)"
-                        gather_bits = [f"Skript „{ch['title']}“: Quellen automatisch ermittelt: {gather_log}"]
-                        sec_titles = _section_titles(sections)
-                        if sec_titles:
-                            gather_bits.append("bestehende Kapitel: " + ", ".join(f"“{t}”" for t in sec_titles))
-                        append_report(import_id, log=[" | ".join(gather_bits)])
-                    if not sources and not sections:
+                        append_report(import_id, log=[f"Skript „{ch['title']}“: Quellen automatisch ermittelt: {gather_log}"])
+                    if not sources:
                         update_plan_chapter(import_id, idx, {
                             "script_status": "error",
                             "script_error": "Keine passenden Quellen in den importierten Materialien gefunden.",
@@ -4018,8 +3327,9 @@ async def run_script_job(course_id: int, import_id: int) -> None:
                         ])
                         continue
                 content, _sec_label, warns = await _generate_chapter(
-                    course_id, import_id, staging, snap, ch, idx, len(enabled),
-                    label_map, macro_map, by_path, used_labels, chapter_summaries, llm_cfg, llm_sem,
+                    course_id, import_id, staging, snap, ch, idx,
+                    by_path, used_labels, chapter_summaries, llm_cfg, llm_sem,
+                    deck_context=deck_context, media_descs=media_descs,
                 )
                 for w in warns:
                     append_report(import_id, warnings=[w])
@@ -4028,12 +3338,12 @@ async def run_script_job(course_id: int, import_id: int) -> None:
                 async with llm_sem:
                     if await gate(import_id, "script"):
                         res = await llm_service.import_chapter_summary(
-                            ch["title"], content[:40000], config=llm_cfg
+                            ch["title"], content, config=llm_cfg
                         )
                     else:
                         res = {"success": False}
                 if res.get("success"):
-                    summary = strip_outer_fence(res["data"]["model_solution"])[:2000]
+                    summary = strip_outer_fence(res["data"]["model_solution"])
                 section_id = _save_section(
                     course_id, snap["created_by"], ch["title"], content, idx,
                     ch.get("section_id"), summary,
@@ -4109,6 +3419,19 @@ def cap_slides(content: str, max_slides: int) -> str:
     return "\n".join(out)
 
 
+def _deck_output_tokens(n_src_slides: int, source_chars: int) -> int:
+    """Output-Budget für die Deck-Generierung.
+
+    1:1-Modus: skaliert mit der Anzahl der Quell-Folien (~600 Token/Folie).
+    Sonst: skaliert grob mit der Quelltext-Größe (≈ 1 Token pro 4 Zeichen)
+    mit 64k-Cap — ohne Foliengrenze kann ein Deck deutlich über 25 Folien
+    werden, die Standard-SLIDES_MAX_TOKENS reichen dann nicht.
+    """
+    if n_src_slides:
+        return max(SLIDES_MAX_TOKENS, 600 * n_src_slides)
+    return max(SLIDES_MAX_TOKENS, min(65536, source_chars // 4 + 4096))
+
+
 def _deck_source_sections(snap: dict, dk: dict) -> list[tuple[str, str]]:
     """(Kapitel-Titel, Skript-Inhalt) der Quell-Kapitel eines Decks (in Reihenfolge).
 
@@ -4144,131 +3467,53 @@ def _deck_source_sections(snap: dict, dk: dict) -> list[tuple[str, str]]:
     return out
 
 
-async def _refine_deck_content(
-    import_id: int,
-    title: str,
-    content: str,
-    source_text: str,
-    n_src_slides: int,
-    max_tokens: int,
-    llm_cfg: dict,
-    llm_sem: asyncio.Semaphore,
-    other_context: str = "",
-    stage: str = "slides",
-) -> str:
-    """Eine Verifikations- + Refinement-Runde für ein Deck (Vollständigkeits-Check
-    gegen die Quellen; im 1:1-Modus zusätzlich Foliengenzahl-Check). Bevorzugt
-    werden lokale „content_edits“ geliefert (serverseitig angewendet);
-    „content“ (Volltext) bleibt Fallback. Der Entwurf bleibt, wenn der
-    Refinement-Versuch fehlschlägt oder klar verschlechtert.
-    other_context: Summaries der anderen Decks/Skript-Kapitel (Querverweise).
-    stage: Gate-Name ("slides" beim Generieren, "refine" bei der Nachbesserung)."""
-    if not IMPORT_ENABLE_REFINEMENT:
-        return content
-    if len(content) + len(source_text) > IMPORT_REFINE_MAX_CHARS:
-        append_report(import_id, warnings=[
-            f"Deck „{title}“: Verifikations-Refinement übersprungen (Quellen + Entwurf zu groß)."
-        ])
-        return content
-    if n_src_slides:
-        count_note = (
-            f"EXAKTE FOLIENZAHL: Es gab {n_src_slides} Quell-Folien — das Deck soll EXAKT "
-            f"{n_src_slides} Folien haben (1 Quellfolie = 1 Ziel-Folie)."
-        )
-        count_check = (
-            f"- Foliengenzahl: das Deck soll EXAKT {n_src_slides} Folien enthalten "
-            f"(aktuell: {slide_count(content)}) — passe sie an, falls nötig."
-        )
-    else:
-        count_note = ""
-        count_check = (
-            "- Foliengenzahl: halte die Obergrenze (max. "
-            f"{IMPORT_SLIDE_DECK_MAX_SLIDES} Folien) ein."
-        )
-    # Mit Foliennummern-Markern ans LLM (damit Edits fehlerfrei referenzieren
-    # können); die Edits selbst werden auf den RAW-Inhalt angewendet.
-    async with llm_sem:
-        if not await gate(import_id, stage):
-            raise RuntimeError("gestoppt (Pause/Cancel)")
-        res = await llm_service.import_refine_slide_deck(
-            title, numbered_slide_content(content), source_text, count_note, count_check,
-            other_context=other_context, config=llm_cfg, max_tokens=max_tokens,
-        )
-    if not res["success"]:
-        append_report(import_id, warnings=[
-            f"Deck „{title}“: Verifikations-Refinement fehlgeschlagen ({res.get('error')}) — Entwurf behalten."
-        ])
-        return content
-    data = res["data"] or {}
-    new_content = (data.get("content") or "").strip()
-    edits = data.get("content_edits")
-    if new_content:
-        refined = strip_outer_fence(new_content)
-        # Defensive: Marker gehören nie in den Deck-Inhalt
-        refined = re.sub(r"^\s*%%\s*Folie\s+\d+\s*%%\s*\n?", "", refined, flags=re.M).strip()
-        try:
-            parse_slides(refined)
-        except SlideError as e:
-            append_report(import_id, warnings=[
-                f"Deck „{title}“: Refinement-Volltext im ungültigen Format ({e}) — Entwurf behalten."
-            ])
-            return content
-    elif isinstance(edits, list) and edits:
-        # Lokale Korrekturen serverseitig anwenden (der Rest bleibt garantiert unverändert)
-        try:
-            refined = apply_slide_edits(content, edits)
-        except SlideError as e:
-            append_report(import_id, warnings=[
-                f"Deck „{title}“: content_edits konnten nicht angewendet werden ({e}) — Entwurf behalten."
-            ])
-            return content
-    else:
-        # LLM: bereits alles korrekt
-        return content
-    if n_src_slides:
-        # 1:1: akzeptieren, wenn das Ergebnis dem Zielfolien-Count mindestens genauso
-        # nah ist wie der Entwurf (sonst Regression)
-        if abs(slide_count(refined) - n_src_slides) > abs(slide_count(content) - n_src_slides):
-            return content
-    elif slide_count(refined) < slide_count(content):
-        return content  # keine Regression: weniger Folien nicht akzeptieren
-    refined, warns = sanitize_untrusted_markdown(refined)
-    for w in warns:
-        append_report(import_id, warnings=[w])
-    return refined
-
-
 def _resolve_source_slides(import_id: int, dk: dict, staging: Path, by_path: dict) -> tuple[str, int]:
-    """(Prompt-Text, Anzahl) der Quell-Folien aus dem pptx-Mapping (1:1-Konvertierung).
+    """(Prompt-Text, Anzahl) der Quell-Folien aus den pptx-Quellen des Decks.
 
+    Die Quellen des Decks zeigen auf pptx-Dateien mit Zeilenbereich (in den
+    Sidecar-.md, die „%% Folie N %%“-Marker enthalten); alle Folien, deren
+    Marker im Zeilenbereich liegt, werden 1:1 konvertiert.
     Returns: ("(keine Quell-Folien …)", 0), falls das Deck keine auflösbaren
     Quell-Folien hat.
     """
     src_slides = "(keine Quell-Folien für dieses Deck — aus der QUELLE generieren)"
-    sl = dk.get("slides")
-    if not sl:
+    collected: list[tuple[int, str]] = []
+    for src in dk.get("sources") or []:
+        m = by_path.get(str(src.get("file") or ""))
+        if not m or m.get("type") != "pptx" or not m.get("read_path"):
+            continue
+        p = staging / m["read_path"]
+        if not p.is_file():
+            continue
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        lo = max(1, int(src.get("start_line") or 1))
+        hi = min(len(lines), int(src.get("end_line") or len(lines)))
+        markers = [
+            (i + 1, int(nm.group(1)))
+            for i, ln in enumerate(lines)
+            if (nm := re.match(r"^%% Folie (\d+) %%\s*$", ln.strip()))
+        ]
+        for k, (line_no, slide_no) in enumerate(markers):
+            if not (lo <= line_no <= hi):
+                continue
+            end_no = markers[k + 1][0] - 1 if k + 1 < len(markers) else len(lines)
+            body = "\n".join(lines[line_no:end_no]).strip()
+            if body:
+                collected.append((slide_no, body))
+    if not collected:
         return src_slides, 0
-    dm = by_path.get(str(sl.get("deck") or ""))
-    if not dm or not dm.get("read_path"):
-        return src_slides, 0
-    p = staging / dm["read_path"]
-    if not p.is_file():
-        return src_slides, 0
-    blocks = _pptx_slide_blocks(p.read_text(encoding="utf-8", errors="replace"))
-    sel = [(n, b) for n, b in blocks if int(sl.get("start", 1)) <= n <= int(sl.get("end", 10**9))]
-    if not sel:
-        return src_slides, 0
-    if len(sel) > IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1:
-        sel = sel[:IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1]
+    n_total = len(collected)
+    if n_total > IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1:
+        collected = collected[:IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1]
         append_report(import_id, warnings=[
-            f"Deck „{dk['title']}“: {len(sel)} Quell-Folien, nur die ersten "
+            f"Deck „{dk['title']}“: {n_total} Quell-Folien, nur die ersten "
             f"{IMPORT_SLIDE_DECK_MAX_SLIDES_1TO1} konvertiert (Sicherheits-Cap)."
         ])
     return (
         f"QUELLE FOLIEN (1:1 konvertieren, Reihenfolge + Inhalt beibehalten; "
-        f"Ziel: EXAKT {len(sel)} Folien — eine Quellfolie = eine Ziel-Folie):\n"
-        + "\n\n".join(f"%% Folie {n} %%\n{b}" for n, b in sel)
-    ), len(sel)
+        f"Ziel: EXAKT {len(collected)} Folien — eine Quellfolie = eine Ziel-Folie):\n"
+        + "\n\n".join(f"%% Folie {n} %%\n{b}" for n, b in collected)
+    ), len(collected)
 
 
 async def _generate_deck(
@@ -4278,12 +3523,15 @@ async def _generate_deck(
     snap: dict,
     dk: dict,
     idx: int,
-    label_map: dict,
     by_path: dict,
     llm_cfg: dict,
     llm_sem: asyncio.Semaphore,
+    media_descs: Optional[dict[str, str]] = None,
 ) -> str:
-    """Generiert + validiert ein Slide-Deck für einen Folien-Plan-Eintrag (1 Retry bei Fehler)."""
+    """Generiert + validiert ein Slide-Deck für einen Folien-Plan-Eintrag (1 Retry bei Fehler).
+
+    media_descs: Zip-Pfad → Kurzbeschreibung der importierten Medien (Bild-Mapping).
+    """
     # Quelle: Skript-Kapitel des Decks (sections bzw. legacy script_chapters), sonst rohe Sources
     section_parts = _deck_source_sections(snap, dk)
     section_content = "\n\n".join(
@@ -4292,62 +3540,55 @@ async def _generate_deck(
     # Quell-Folien früh auflösen: bei vorhandenen Quell-Folien sind sie die 1:1-Referenz
     # → der Text-Quellen-Fallback (Gather/Rohtext) wird übersprungen
     src_slides, n_src_slides = _resolve_source_slides(import_id, dk, staging, by_path)
+    url_map = {p: i["url"] for p, i in snap["media_map"].items() if i.get("url")}
+    img_refs: set[str] = set()
     used_raw_sources = False
     if not section_content.strip() and n_src_slides == 0:
         if not dk.get("sources"):
-            # Deck ohne Quellen (z. B. nachträglich angelegt) → LLM sammelt die Materialien
+            # Deck ohne Quellen → LLM ermittelt sie aus Beschreibung + Dateibaum
             set_progress(import_id, current=f"Folien: {dk['title']} — Quellen werden aus den Materialien ermittelt …")
             gathered = await _gather_sources(
                 course_id, import_id, snap, staging, dk["title"],
-                dk.get("description") or "", dk.get("sources") or [],
+                dk.get("description") or "",
                 "slides", "slides", llm_cfg, llm_sem,
             )
             if gathered is None:
                 raise RuntimeError("Quellen-Sammlung fehlgeschlagen (LLM-Aufruf).")
-            sources, sections, _notes = gathered
+            sources, _notes = gathered
             patch: dict[str, Any] = {}
             if sources:
                 patch["sources"] = sources
-            if sections:
-                patch["sections"] = sections
             if patch:
                 update_slides_deck(import_id, idx, patch)
                 dk.update(patch)
                 append_report(import_id, warnings=[
-                    f"Deck „{dk['title']}“: Quellen automatisch ermittelt "
-                    f"({len(patch.get('sources') or [])} Datei(n), {len(patch.get('sections') or [])} bestehende Kapitel)."
+                    f"Deck „{dk['title']}“: Quellen automatisch ermittelt ({len(sources)} Datei(n))."
                 ])
                 gather_log = ", ".join(
-                    f"{s.get('file')} (Z {s.get('start_line') or 1}–{s.get('end_line')})" for s in (sources or [])[:20]
+                    f"{s.get('file')} (Z {s.get('start_line') or 1}–{s.get('end_line')})" for s in sources[:20]
                 ) or "(keine)"
-                gather_bits = [f"Deck „{dk['title']}“: Quellen automatisch ermittelt: {gather_log}"]
-                sec_titles = _section_titles(sections)
-                if sec_titles:
-                    gather_bits.append("bestehende Kapitel: " + ", ".join(f"“{t}”" for t in sec_titles))
-                append_report(import_id, log=[" | ".join(gather_bits)])
+                append_report(import_id, log=[f"Deck „{dk['title']}“: Quellen automatisch ermittelt: {gather_log}"])
             section_parts = _deck_source_sections(snap, dk)
             section_content = "\n\n".join(
                 f'=== Skript-Kapitel „{t}“ ===\n{c}' for t, c in section_parts if c.strip()
             )
-        raw, _refs, has_tex = await asyncio.to_thread(_collect_sources, staging, dk, by_path)
+        raw, img_refs, _has_tex = await asyncio.to_thread(_collect_sources, staging, dk, by_path)
+        # Roh bleibt roh: Das LLM konvertiert LaTeX/Markdown selbst (der Prompt erklärt
+        # die Marker-Zeilen) — analog zum Skript-Import.
         if raw.strip():
-            if has_tex:
-                url_map = {p: i["url"] for p, i in snap["media_map"].items() if i.get("url")}
-                converted = tex_to_markdown(raw, label_map, url_map)
-            else:
-                converted = raw
             section_content = (
-                section_content + "\n\n" + converted if section_content.strip() else converted
+                section_content + "\n\n" + raw if section_content.strip() else raw
             )
             used_raw_sources = True
+        # Nach dem Gather können pptx-Quellen vorliegen → 1:1-Quell-Folien neu
+        # auflösen (die Quellen kamen erst jetzt von der LLM-Sammlung).
+        src_slides, n_src_slides = _resolve_source_slides(import_id, dk, staging, by_path)
     # Debug-Log: welche Quellen (Skript-Kapitel, Dateien, 1:1-Folien) dienen diesem Deck
     src_bits: list[str] = []
     if section_parts:
-        n_chars = len(section_content)
-        truncated = n_chars > IMPORT_SLIDE_DECK_SOURCE_BUDGET
         src_bits.append(
-            "Skript-Kapitel: " + ", ".join(f"“{t}”" for t, _ in section_parts)
-            + f" ({n_chars} Zeichen" + (f", auf {IMPORT_SLIDE_DECK_SOURCE_BUDGET} gekappt)" if truncated else ")")
+            "Skript-Kapitel: " + ", ".join(f"“{t}“" for t, _ in section_parts)
+            + f" ({len(section_content)} Zeichen)"
         )
     if used_raw_sources and dk.get("sources"):
         src_bits.append("Dateien: " + ", ".join(
@@ -4357,65 +3598,36 @@ async def _generate_deck(
         src_bits.append(f"1:1 aus {n_src_slides} Quell-Folien (pptx)")
     append_report(import_id, log=[f"Deck „{dk['title']}“: Quelle: " + (" | ".join(src_bits) or "(keine)")])
 
-    # Kontext: andere Decks (mit Skript-Zusammenfassungen) + Medien + Skript-Labels
-    other_lines = []
-    plan = snap["chapter_plan"]
-    for i, c in enumerate(snap["slides_plan"]):
-        if i == idx or not c.get("enabled"):
-            continue
-        parts: list[str] = []
-        for sid in c.get("sections") or []:
-            try:
-                n = int(sid)
-            except (TypeError, ValueError):
-                continue
-            with Session(engine) as s:
-                sec = s.get(ScriptSection, n)
-                if sec and sec.summary:
-                    parts.append(sec.summary)
-        if not parts:
-            for j in c.get("script_chapters") or []:
-                if 0 <= j < len(plan) and plan[j].get("section_id"):
-                    with Session(engine) as s:
-                        sec = s.get(ScriptSection, plan[j]["section_id"])
-                        if sec and sec.summary:
-                            parts.append(sec.summary)
-        other_lines.append(f"- {c['title']}: {'; '.join(parts) or _plan_digest(c, snap['file_map'])}")
-    with Session(engine) as s:
-        media = media_service.unused_media_for_script(s, course_id)
-    media_lines = [
-        f"- {m['title']} ({m['url']})" + (f": {m['description']}" if m["description"] else "")
-        for m in media[:40]
-    ]
+    # Kontext: andere Decks + Skript-Kapitel (interne Summaries) — Medien kommen
+    # über das Bild-Mapping (inkl. Kurzbeschreibungen)
+    other_context = _deck_other_context(snap, course_id, dk.get("material_id"))
     script_labels = _extract_labels(section_content)
     ref_text = await asyncio.to_thread(_build_references_text, course_id)
-    context = (
-        "ANDERE DECKS DES FOLIEN-PLANS:\n" + ("\n".join(other_lines) or "(keine)") + "\n\n"
-        "MEDIENBIBLIOTHEK:\n" + ("\n".join(media_lines) or "(keine)") + "\n\n"
-        "SKRIPT-LABELS DER QUELLE (für gemeinsame Objekte EXAKT wiederverwenden):\n"
-        + (", ".join(sorted(script_labels)) or "(keine)") + "\n\n"
-        "QUELLENVERZEICHNIS DES KURSES (nur Kontext — in Folien KEINE Zitate einbauen):\n"
-        + ref_text
-    )
+    image_map_text = _image_table(img_refs, url_map, media_descs or {})
 
     if not section_content.strip() and n_src_slides == 0:
         raise RuntimeError("Kein Quelltext für dieses Deck (Skript-Kapitel und Sources leer).")
 
-    # 1:1-Modus (QUELLE FOLIEN vorhanden): kein Zusammenfassungs-Cap — das Deck
-    # orientiert sich 1:1 an den Quell-Folien
+    # 1:1-Modus (QUELLE FOLIEN vorhanden): Foliengenzahl = Anzahl der Quell-Folien.
+    # Sonst: keine Obergrenze — das LLM wählt die Foliengenzahl passend zum Inhalt.
     is_1to1 = n_src_slides > 0
-    effective_max = n_src_slides if is_1to1 else IMPORT_SLIDE_DECK_MAX_SLIDES
-    max_tokens = max(SLIDES_MAX_TOKENS, 600 * n_src_slides) if is_1to1 else SLIDES_MAX_TOKENS
+    max_slides_text = (
+        f"EXAKT {n_src_slides} — eine Quellfolie = eine Ziel-Folie"
+        if is_1to1 else
+        "keine feste Obergrenze — orientiere dich am Inhalt der QUELLE: so viele "
+        "Folien wie nötig, um den Inhalt vollständig und übersichtlich darzustellen"
+    )
 
-    source = section_content[:IMPORT_SLIDE_DECK_SOURCE_BUDGET] or (
+    source = section_content or (
         "(keine Text-Quelle — die QUELLE FOLIEN oben sind die Grundlage)" if is_1to1 else ""
     )
-    if len(section_content) > IMPORT_SLIDE_DECK_SOURCE_BUDGET:
+    max_tokens = _deck_output_tokens(n_src_slides, len(source))
+    if len(section_content) > IMPORT_SLIDE_DECK_SOURCE_WARN_CHARS:
         append_report(import_id, warnings=[
-            f"Deck „{dk['title']}“: Quelltext (Skript-Kapitel, {len(section_content)} Zeichen) auf "
-            f"{IMPORT_SLIDE_DECK_SOURCE_BUDGET} gekappt — das LLM sieht nur den Anfang des Kapitels."
+            f"Deck „{dk['title']}“: Achtung, sehr großer Input ({len(section_content)} Zeichen) — "
+            f"bei zu kleinen Kontextfenstern können Probleme auftauchen."
         ])
-    ctx = context
+    ctx = other_context
     last_err: Optional[str] = None
     content: Optional[str] = None
     for attempt in range(2):
@@ -4423,31 +3635,29 @@ async def _generate_deck(
             if not await gate(import_id, "slides"):
                 raise RuntimeError("gestoppt (Pause/Cancel)")
             res = await llm_service.import_generate_slide_deck(
-                dk["title"], effective_max, ctx, src_slides, source,
+                dk["title"], max_slides_text, ctx,
+                ", ".join(sorted(script_labels)) or "(keine)",
+                image_map_text, ref_text, src_slides, source,
                 config=llm_cfg, max_tokens=max_tokens,
             )
         if not res["success"]:
             last_err = str(res.get("error") or "LLM-Fehler")
-            ctx = context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err} — korrigiere das Deck-Format strikt."
+            ctx = other_context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err} — korrigiere das Deck-Format strikt."
             continue
         draft = strip_outer_fence(res["data"]["model_solution"]).strip()
         if not draft:
             last_err = "LLM hat leeren Inhalt geliefert."
-            ctx = context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err}"
+            ctx = other_context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err}"
             continue
         try:
             n = slide_count(draft)
             if is_1to1 and n > n_src_slides + 2:
-                # Runaway-Schutz im 1:1-Modus (sonst: kein Cap — Foliengenzahl ist Ziel)
+                # Runaway-Schutz im 1:1-Modus (sonst: kein Cap — Foliengenzahl
+                # orientiert sich am Inhalt der QUELLE)
                 draft = cap_slides(draft, n_src_slides + 2)
                 append_report(import_id, warnings=[
                     f"Deck „{dk['title']}“: {n} Folien, auf {n_src_slides + 2} gekappt "
                     f"(Sicherheits-Cap im 1:1-Modus)."
-                ])
-            elif not is_1to1 and n > IMPORT_SLIDE_DECK_MAX_SLIDES:
-                draft = cap_slides(draft, IMPORT_SLIDE_DECK_MAX_SLIDES)
-                append_report(import_id, warnings=[
-                    f"Deck „{dk['title']}“: {n} Folien auf {IMPORT_SLIDE_DECK_MAX_SLIDES} gekappt."
                 ])
             parse_slides(draft)  # strikte Validierung (wirft SlideError)
             draft, warns = sanitize_untrusted_markdown(draft)
@@ -4457,18 +3667,16 @@ async def _generate_deck(
             break
         except SlideError as e:
             last_err = str(e)
-            ctx = context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err} — nutze das Format EXAKT wie beschrieben."
+            ctx = other_context + f"\n\nFEHLER DES VORIGEN VERSUCHS: {last_err} — nutze das Format EXAKT wie beschrieben."
     if content is None:
         raise RuntimeError(f"Deck konnte nicht generiert/validiert werden: {last_err}")
 
-    # Verifikation + Refinement: Vollständigkeits-Check des Decks gegen die Quellen
-    # (1:1-Modus: die Quell-Folien sind die Referenz, sonst die Text-Quellen)
-    refine_source = src_slides if is_1to1 else section_content
-    content = await _refine_deck_content(
-        import_id, dk["title"], content, refine_source, n_src_slides,
-        max_tokens, llm_cfg, llm_sem,
-        other_context="\n".join(other_lines) or "(keine)",
-    )
+    # Post-Check: erwartete Bild-URLs vorhanden?
+    for url in {u for u in (_resolve_image_path(r, url_map) for r in img_refs) if u}:
+        if url not in content:
+            append_report(import_id, warnings=[
+                f"Deck „{dk['title']}“: erwartetes Bild {url} fehlt im generierten Deck."
+            ])
     return content
 
 
@@ -4477,8 +3685,6 @@ async def run_slides_job(course_id: int, import_id: int) -> None:
     logger.info("Import %s (Kurs %s): slides gestartet", import_id, course_id)
     try:
         set_stage_status(import_id, "slides", "running")
-        # Verwaiste Verknüpfungen (gelöschte Decks/Kapitel) vor Ableitung bereinigen
-        prune_stale_plan_refs_job(course_id, import_id)
         # Legacy: noch kein eigenes slides_plan → 1:1 aus dem Skript-Plan ableiten
         def _ensure_slides_plan(imp: CourseImport):
             if not (imp.slides_plan or []) and (imp.chapter_plan or []):
@@ -4527,7 +3733,7 @@ async def run_slides_job(course_id: int, import_id: int) -> None:
             s.commit()
         delete_original = bool((snap["report"].get("slides_options") or {}).get("delete_original"))
 
-        label_map = await asyncio.to_thread(_build_label_map, snap, staging)
+        media_descs = await asyncio.to_thread(_media_descriptions, snap)
         llm_cfg = get_llm_config(course_id, IMPORT_TIMEOUT_CONVERT)
         llm_sem = asyncio.Semaphore(IMPORT_LLM_CONCURRENCY)
 
@@ -4541,7 +3747,8 @@ async def run_slides_job(course_id: int, import_id: int) -> None:
             set_progress(import_id, current=f"Folien: {dk['title']}", unit_key=unit_key, unit_total=1)
             try:
                 content = await _generate_deck(
-                    course_id, import_id, staging, snap, dk, idx, label_map, by_path, llm_cfg, llm_sem
+                    course_id, import_id, staging, snap, dk, idx,
+                    by_path, llm_cfg, llm_sem, media_descs=media_descs,
                 )
                 with Session(engine) as s:
                     mat = s.get(CourseMaterial, dk["material_id"]) if dk.get("material_id") else None
@@ -4566,12 +3773,12 @@ async def run_slides_job(course_id: int, import_id: int) -> None:
                 async with llm_sem:
                     if await gate(import_id, "slides"):
                         res = await llm_service.import_deck_summary(
-                            dk["title"], content[:40000], config=llm_cfg
+                            dk["title"], content, config=llm_cfg
                         )
                     else:
                         res = {"success": False}
                 if res.get("success"):
-                    deck_summary = strip_outer_fence(res["data"]["model_solution"])[:2000]
+                    deck_summary = strip_outer_fence(res["data"]["model_solution"])
                     with Session(engine) as s:
                         mat = s.get(CourseMaterial, mat_id)
                         if mat and mat.summary != deck_summary:
@@ -4624,321 +3831,19 @@ async def run_slides_job(course_id: int, import_id: int) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# STUFE 7: refine (nachträgliches Nachbessern generierter Kapitel/Decks)
-# ═══════════════════════════════════════════════════════════════
-
-def _reset_refine_units(import_id: int) -> None:
-    """Unit-Counter der refine-Stufe löschen (nur bei NEUEN Läufen, run_id-Matching
-    im Job — Resume mit gleichem run_id behält die Done-Flags für Idempotenz)."""
-    def fn(imp: CourseImport):
-        p = dict(imp.progress or {})
-        p["units"] = {k: v for k, v in (p.get("units") or {}).items() if not k.startswith("refine:")}
-        imp.progress = p
-
-    _mutate(import_id, fn)
-
-
-def _set_refine_reset_run(import_id: int, run_id: str) -> None:
-    def fn(imp: CourseImport):
-        r = dict(imp.report or {})
-        ro = dict(r.get("refine_options") or {})
-        ro["last_reset_run"] = run_id
-        r["refine_options"] = ro
-        imp.report = r
-
-    _mutate(import_id, fn)
-
-
-async def run_refine_job(course_id: int, import_id: int) -> None:
-    """STUFE 7: bereits generierte Skript-Kapitel / Slide-Decks nachbessern.
-
-    Scope ("script"|"slides") kommt aus report["refine_options"]["scope"]
-    (stateless für Resume). Nur Einträge, deren Checkbox gesetzt ist
-    (enabled=True), werden nachbearbeitet; nach erfolgreicher Verarbeitung wird
-    die Checkbox automatisch wieder deaktiviert (erneutes Anhaken = erneut
-    nachbessern). Pro Unit wird derselbe Verifikations-/Refinement-Pfad
-    ausgeführt wie direkt nach der Generierung — hier auf dem DB-Bestand; Änderungen
-    werden zurückgeschrieben (inkl. Summary-Refresh). Neustarts erhält ein frisches
-    run_id vom API-Endpunkt → Unit-Counter werden zurückgesetzt; Resume (gleicher
-    run_id) überspringt bereits verarbeitete Units (progress.units["refine:..."]).
-    """
-    logger.info("Import %s (Kurs %s): refine gestartet", import_id, course_id)
-    try:
-        set_stage_status(import_id, "refine", "running")
-        snap = job_snapshot(import_id)
-        if snap is None:
-            return
-        opts = snap["report"].get("refine_options") or {}
-        scope = str(opts.get("scope") or "")
-        if scope not in ("script", "slides"):
-            append_report(import_id, errors=["Nachbesserung: Scope fehlt im Report — bitte neu starten."])
-            set_stage_status(import_id, "refine", "error")
-            return
-        run_id = str(opts.get("run_id") or "")
-        if run_id and opts.get("last_reset_run") != run_id:
-            _reset_refine_units(import_id)
-            _set_refine_reset_run(import_id, run_id)
-            snap = job_snapshot(import_id)
-            if snap is None:
-                return
-        units_map = (snap["progress"] or {}).get("units") or {}
-        staging = staging_dir(course_id, snap["job_id"])
-        by_path = {m["path"]: m for m in snap["manifest"]}
-        llm_cfg = get_llm_config(course_id, IMPORT_TIMEOUT_CONVERT)
-        llm_sem = asyncio.Semaphore(IMPORT_LLM_CONCURRENCY)
-
-        if scope == "script":
-            plan = snap["chapter_plan"]
-            set_progress(import_id, stage="refine", stage_total=len([c for c in plan if c.get("section_id") and c.get("enabled")]), stage_reset=True)
-            # Kontext: Summaries + {#sec:label}s aller bestehenden Kapitel
-            summaries: dict[int, str] = {}
-            labels: dict[int, str] = {}
-            for i, c in enumerate(plan):
-                if not c.get("section_id"):
-                    continue
-                with Session(engine) as s:
-                    sec = s.get(ScriptSection, c["section_id"])
-                if sec:
-                    if sec.summary:
-                        summaries[i] = sec.summary
-                    m = re.match(r"\s*\{#sec:([a-z0-9_]+)\}", sec.content or "")
-                    if m:
-                        labels[i] = m.group(1)
-            url_map = {p: info["url"] for p, info in snap["media_map"].items() if info.get("url")}
-            for i, c in enumerate(plan):
-                if not c.get("section_id") or not c.get("enabled"):
-                    continue  # Nur per Checkbox angeklickte Kapitel nachbessern
-                unit_key = f"refine:script:{i}"
-                if units_map.get(unit_key, {}).get("done"):
-                    continue  # Resume: bereits in diesem Lauf verarbeitet
-                if not await gate(import_id, "refine"):
-                    return
-                set_progress(import_id, current=f"Nachbessern (Skript): {c['title']}", unit_key=unit_key, unit_total=1)
-                try:
-                    with Session(engine) as s:
-                        sec = s.get(ScriptSection, c["section_id"])
-                    if sec is None:
-                        append_report(import_id, warnings=[
-                            f"Skript „{c['title']}“: Kapitel nicht mehr vorhanden — übersprungen."
-                        ])
-                        set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                        continue
-                    content = sec.content or ""
-                    raw, img_refs, _has_tex = await asyncio.to_thread(_collect_sources, staging, c, by_path)
-                    source_text = raw  # roh wie bei der Generierung (LLM konvertiert selbst)
-                    if not source_text.strip():
-                        append_report(import_id, log=[
-                            f"Nachbessern Skript „{c['title']}“: keine Import-Quellen mehr auffindbar — übersprungen."
-                        ])
-                        set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                        continue
-                    src_desc = ", ".join(
-                        f"{s_.get('file')} (Z {s_.get('start_line') or 1}–{s_.get('end_line')})"
-                        for s_ in (c.get("sources") or [])[:20]
-                    ) or "(keine)"
-                    append_report(import_id, log=[f"Nachbessern Skript „{c['title']}“: Quellen: {src_desc}"])
-                    others = []
-                    for j, cc in enumerate(plan):
-                        if j == i or not cc.get("section_id"):
-                            continue
-                        s_ = summaries.get(j) or _plan_digest(cc, snap["file_map"])
-                        lab = labels.get(j, "")
-                        others.append(f"- {cc['title']} ({'@sec:' + lab if lab else 'noch kein Label'}): {s_}")
-                    refine_checklist = sorted(
-                        {u for u in (_resolve_image_path(r, url_map) for r in img_refs) if u}
-                    )
-                    refined, warns = await _refine_chapter_content(
-                        import_id, c["title"], content, source_text, llm_cfg, llm_sem,
-                        other_chapters="\n".join(others) or "(keine)", stage="refine",
-                        image_checklist="\n".join(refine_checklist) if refine_checklist else "(keine Bilder im Quelltext)",
-                    )
-                    for w in warns:
-                        append_report(import_id, warnings=[w])
-                    if refined != content:
-                        with Session(engine) as s:
-                            sec = s.get(ScriptSection, c["section_id"])
-                            if sec:
-                                sec.content = refined
-                                s.add(sec)
-                                s.commit()
-                        # Summary neu (Inhalt hat sich geändert; best effort)
-                        async with llm_sem:
-                            if await gate(import_id, "refine"):
-                                res = await llm_service.import_chapter_summary(
-                                    c["title"], refined[:40000], config=llm_cfg
-                                )
-                            else:
-                                res = {"success": False}
-                        if res.get("success"):
-                            summary = strip_outer_fence(res["data"]["model_solution"])[:2000]
-                            if summary:
-                                with Session(engine) as s:
-                                    sec = s.get(ScriptSection, c["section_id"])
-                                    if sec:
-                                        sec.summary = summary
-                                        s.add(sec)
-                                        s.commit()
-                        append_report(import_id, log=[f"Nachbessern Skript „{c['title']}“: Inhalt aktualisiert."])
-                    else:
-                        append_report(import_id, log=[f"Nachbessern Skript „{c['title']}“: keine Änderungen nötig."])
-                    # Abgearbeitet → Checkbox deaktivieren (erneutes Anhaken =
-                    # erneut nachbessern); Status ggf. von pending zurück auf done.
-                    update_plan_chapter(import_id, i, {
-                        "enabled": False, "script_status": "done", "script_error": None,
-                    })
-                    set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                except RuntimeError as e:
-                    if "gestoppt" in str(e):
-                        return
-                    logger.warning("Import %s: refine Skript %s: %s", import_id, c["title"], e)
-                    append_report(import_id, errors=[f"Skript „{c['title']}“: Nachbesserung fehlgeschlagen: {e}"])
-                    set_progress(import_id, stage="refine", stage_failed_delta=1)
-                except Exception as e:
-                    logger.exception("Import %s: refine Skript %s fehlgeschlagen", import_id, c["title"])
-                    append_report(import_id, errors=[f"Skript „{c['title']}“: Nachbesserung fehlgeschlagen: {e}"])
-                    set_progress(import_id, stage="refine", stage_failed_delta=1)
-        else:  # slides
-            plan = snap["slides_plan"]
-            set_progress(import_id, stage="refine", stage_total=len([d for d in plan if d.get("material_id") and d.get("enabled")]), stage_reset=True)
-            for i, dk in enumerate(plan):
-                if not dk.get("material_id") or not dk.get("enabled"):
-                    continue  # Nur per Checkbox angeklickte Decks nachbessern
-                unit_key = f"refine:slides:{i}"
-                if units_map.get(unit_key, {}).get("done"):
-                    continue  # Resume: bereits in diesem Lauf verarbeitet
-                if not await gate(import_id, "refine"):
-                    return
-                set_progress(import_id, current=f"Nachbessern (Folien): {dk['title']}", unit_key=unit_key, unit_total=1)
-                try:
-                    with Session(engine) as s:
-                        mat = s.get(CourseMaterial, dk["material_id"])
-                    if mat is None:
-                        append_report(import_id, warnings=[
-                            f"Deck „{dk['title']}“: Deck nicht mehr vorhanden — übersprungen."
-                        ])
-                        set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                        continue
-                    content = mat.content or ""
-                    # Quellen analog zur Generierung: 1:1-Quellfolien, sonst Skript-Kapitel
-                    src_slides, n_src_slides = _resolve_source_slides(import_id, dk, staging, by_path)
-                    section_parts = _deck_source_sections(snap, dk)
-                    section_content = "\n\n".join(
-                        f'=== Skript-Kapitel „{t}“ ===\n{cc}' for t, cc in section_parts if cc.strip()
-                    )
-                    refine_source = src_slides if n_src_slides else section_content
-                    if not refine_source.strip():
-                        append_report(import_id, log=[
-                            f"Nachbessern Deck „{dk['title']}“: keine Quellen mehr auffindbar — übersprungen."
-                        ])
-                        set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                        continue
-                    # Kontext: andere Decks (Summary) + deren Skript-Kapitel
-                    other_lines = []
-                    for j, dd in enumerate(plan):
-                        if j == i or not dd.get("material_id"):
-                            continue
-                        parts: list[str] = []
-                        with Session(engine) as s:
-                            dm = s.get(CourseMaterial, dd["material_id"])
-                        if dm and dm.summary:
-                            parts.append(dm.summary)
-                        for sid in dd.get("sections") or []:
-                            try:
-                                n = int(sid)
-                            except (TypeError, ValueError):
-                                continue
-                            with Session(engine) as s:
-                                sc = s.get(ScriptSection, n)
-                            if sc and sc.summary:
-                                parts.append(sc.summary)
-                        other_lines.append(f"- {dd['title']}: {'; '.join(parts) or '(noch keine Zusammenfassung)'}")
-                    max_tokens = max(SLIDES_MAX_TOKENS, 600 * n_src_slides) if n_src_slides else SLIDES_MAX_TOKENS
-                    append_report(import_id, log=[
-                        f"Nachbessern Deck „{dk['title']}“: "
-                        + (f"{n_src_slides} Quell-Folien (1:1)" if n_src_slides else "aus Skript-Kapitel")
-                    ])
-                    refined = await _refine_deck_content(
-                        import_id, dk["title"], content, refine_source, n_src_slides,
-                        max_tokens, llm_cfg, llm_sem,
-                        other_context="\n".join(other_lines) or "(keine)", stage="refine",
-                    )
-                    if refined != content:
-                        with Session(engine) as s:
-                            mat = s.get(CourseMaterial, dk["material_id"])
-                            if mat:
-                                mat.content = refined
-                                s.add(mat)
-                                s.commit()
-                        # Deck-Summary neu (best effort)
-                        async with llm_sem:
-                            if await gate(import_id, "refine"):
-                                res = await llm_service.import_deck_summary(
-                                    dk["title"], refined[:40000], config=llm_cfg
-                                )
-                            else:
-                                res = {"success": False}
-                        if res.get("success"):
-                            deck_summary = strip_outer_fence(res["data"]["model_solution"])[:2000]
-                            if deck_summary:
-                                with Session(engine) as s:
-                                    mat = s.get(CourseMaterial, dk["material_id"])
-                                    if mat:
-                                        mat.summary = deck_summary
-                                        s.add(mat)
-                                        s.commit()
-                        append_report(import_id, log=[f"Nachbessern Deck „{dk['title']}“: Inhalt aktualisiert."])
-                    else:
-                        append_report(import_id, log=[f"Nachbessern Deck „{dk['title']}“: keine Änderungen nötig."])
-                    # Abgearbeitet → Checkbox deaktivieren (erneutes Anhaken =
-                    # erneut nachbessern); Status ggf. von pending zurück auf done.
-                    update_slides_deck(import_id, i, {
-                        "enabled": False, "slides_status": "done", "slides_error": None,
-                    })
-                    set_progress(import_id, unit_key=unit_key, unit_done=1, stage="refine", stage_done_delta=1)
-                except RuntimeError as e:
-                    if "gestoppt" in str(e):
-                        return
-                    logger.warning("Import %s: refine Deck %s: %s", import_id, dk["title"], e)
-                    append_report(import_id, errors=[f"Deck „{dk['title']}“: Nachbesserung fehlgeschlagen: {e}"])
-                    set_progress(import_id, stage="refine", stage_failed_delta=1)
-                except Exception as e:
-                    logger.exception("Import %s: refine Deck %s fehlgeschlagen", import_id, dk["title"])
-                    append_report(import_id, errors=[f"Deck „{dk['title']}“: Nachbesserung fehlgeschlagen: {e}"])
-                    set_progress(import_id, stage="refine", stage_failed_delta=1)
-
-        set_stage_status(import_id, "refine", "done")
-        set_progress(import_id, current="Nachbesserung abgeschlossen.")
-        logger.info("Import %s: refine abgeschlossen", import_id)
-    except Exception as exc:
-        logger.exception("Import %s: refine Job fehlgeschlagen", import_id)
-        append_report(import_id, errors=[f"refine-Job intern fehlgeschlagen: {exc}"])
-        if stage_status(import_id, "refine") == "running":
-            set_stage_status(import_id, "refine", "error")
-
-
-# ═══════════════════════════════════════════════════════════════
 # Serialize + Lifecycle
 # ═══════════════════════════════════════════════════════════════
 
 def serialize_import(imp: CourseImport) -> dict:
     """Kompletter Import-State für die UI (GET-Endpoint, Polling)."""
-    deck_plans = ((imp.report or {}).get("existing_deck_plans") or {})
-    sec_plans = ((imp.report or {}).get("existing_section_plans") or {})
-    decks = []
-    for d in _course_decks(imp.course_id):
-        decks.append({
-            "id": d["id"], "title": d["title"],
-            "display_order": d["display_order"], "slide_count": slide_count(d["content"]),
-            "description": deck_plans.get(str(d["id"]), ""),
-        })
-    existing_sections = [
-        {"id": sc["id"], "title": sc["title"], "display_order": sc["display_order"],
-         "description": sec_plans.get(str(sc["id"]), "")}
-        for sc in _course_sections(imp.course_id)
+    decks = [
+        {"id": d["id"], "title": d["title"],
+         "display_order": d["display_order"], "slide_count": slide_count(d["content"])}
+        for d in _course_decks(imp.course_id)
     ]
     statuses = (imp.filemap_status, imp.media_status, imp.references_status,
                 imp.ref_extract_status, imp.plan_status, imp.slides_plan_status,
-                imp.script_status, imp.slides_status, imp.refine_status)
+                imp.script_status, imp.slides_status)
     return {
         "id": imp.id,
         "course_id": imp.course_id,
@@ -4953,7 +3858,6 @@ def serialize_import(imp: CourseImport) -> dict:
         "slides_plan_status": imp.slides_plan_status,
         "script_status": imp.script_status,
         "slides_status": imp.slides_status,
-        "refine_status": imp.refine_status,
         "manifest": imp.manifest or [],
         "file_map": imp.file_map or {},
         "media_map": imp.media_map or {},
@@ -4963,7 +3867,6 @@ def serialize_import(imp: CourseImport) -> dict:
         "progress": imp.progress or {},
         "report": imp.report or {},
         "decks": decks,
-        "existing_sections": existing_sections,
         "has_active": any(st in ("running", "paused") for st in statuses),
     }
 

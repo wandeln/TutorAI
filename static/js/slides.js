@@ -8,6 +8,19 @@
  *                            `children` (vertikale Unterfolien für Reveal).
  *                            Ungültige Direktiven bleiben als Text stehen (der
  *                            Server meldet bei Speichern die genaue Meldung).
+ *                            (async) Am Ende wird eine auto-Quellen-Folie
+ *                            angehängt, wenn Zitate (@cite:/@citet:/@citep:)
+ *                            vorkommen — analog options.bibliography im Skript
+ *                            (nur zitierte Quellen, nach kursweiter Nummer);
+ *                            manuell geschriebene "class: quellen"-Folien
+ *                            (altes Import-Prompt-Format) werden verworfen.
+ * - tutoraiRegisterSlideReveal(rootEl, inst) → registriert die Reveal-
+ *                            Instanz pro .reveal-Root (WeakMap), damit der
+ *                            globale Zitations-Click-Handler embeddede
+ *                            Instanzen (Kacheln, Editor-Vorschau) navigieren
+ *                            kann: @cite:-Links (data-refkey) springen zur
+ *                            auto-Quellen-Folie desselben Decks und flashen
+ *                            den jeweiligen Eintrag.
  * - countSlides(slides)    → Anzahl anzeigbarer (Blatt-)Folien: jeder Stack
  *                            zählt seine Unterfolien (wie Reveal's Zähler).
  * - renderSlideInto(slide, el) → rendert eine Folie (Markdown via
@@ -193,13 +206,135 @@ function _parseSlideBlock(block, index) {
   return slide;
 }
 
-function parseSlides(content) {
+/** Alle Zitations-Keys des Decks (@cite:/@citet:/@citep:, fence-aware,
+ *  eindeutig, in Reihenfolge des ersten Vorkommens) — Basis der
+ *  auto-Quellen-Folie. Das alte manuelle Quellen-Folie-Format "[@cite:key] …"
+ *  wird vom selben Regex erwischt (das @cite: in den Klammern). */
+function _collectCitedKeys(content) {
+  const keys = [];
+  const seen = new Set();
+  let fenceChar = "";
+  let fenceLen = 0;
+  for (const line of (content || "").split(/\r?\n/)) {
+    if (fenceChar) {
+      const lead = line.length - line.trimStart().length;
+      const rest = line.trim();
+      if (
+        lead <= 3 &&
+        rest.length >= fenceLen &&
+        rest.length > 0 &&
+        new Set(rest).size === 1 &&
+        rest[0] === fenceChar
+      ) {
+        fenceChar = "";
+      }
+      continue;
+    }
+    const m = line.match(SLIDE_FENCE_OPEN);
+    if (m) {
+      fenceChar = m[1][0];
+      fenceLen = m[1].length;
+      continue;
+    }
+    for (const cm of line.matchAll(/@(citep|citet|cite):([\p{L}0-9_-]+)/gu)) {
+      if (!seen.has(cm[2])) {
+        seen.add(cm[2]);
+        keys.push(cm[2]);
+      }
+    }
+  }
+  return keys;
+}
+
+async function parseSlides(content) {
   if (!content || !content.trim()) return [];
-  return _splitSlideBlocks(content).map((segs, i) =>
-    segs.length === 1
-      ? _parseSlideBlock(segs[0], i + 1)
-      : _parseStackBlock(segs, i + 1)
-  );
+  // Manuell geschriebene Quellen-Folien (altes Import-Prompt-Format,
+  // "class: quellen") verwerfen — die auto-Quellen-Folie unten ersetzt sie
+  // (sonst würden beide erscheinen).
+  let slides = _splitSlideBlocks(content)
+    .map((segs, i) =>
+      segs.length === 1
+        ? _parseSlideBlock(segs[0], i + 1)
+        : _parseStackBlock(segs, i + 1)
+    )
+    .map((s) => {
+      if (!s.children.length || s.css_class === "quellen") return s;
+      const kept = s.children.filter((c) => c.css_class !== "quellen");
+      return kept.length === s.children.length ? s : { ...s, children: kept };
+    })
+    .filter((s) => s.css_class !== "quellen");
+  // Auto-Quellen-Folie am Deck-Ende (analog options.bibliography im Skript):
+  // nur die tatsächlich zitierten Quellen, in kursweiter Nummernreihenfolge;
+  // die Einträge rendert @bibentry: im Design des Skript-Quellenverzeichnisses.
+  // Zitations-Links verweisen per Click-Handler (unten) auf die jeweilige
+  // Quelle auf dieser Folie — der Quellen-Tab ist für Studenten nicht erreichbar.
+  const citedKeys = _collectCitedKeys(content);
+  if (citedKeys.length) {
+    const refMap = await getCourseRefMap();
+    const refs = (refMap && refMap.references) || {};
+    citedKeys.sort(
+      (a, b) => ((refs[a] && refs[a].num) || 0) - ((refs[b] && refs[b].num) || 0)
+    );
+    slides.push({
+      layout: "topleft",
+      transition: null,
+      css_class: "quellen",
+      notes: null,
+      background: null,
+      columns: ["# Quellen\n\n" + citedKeys.map((k) => "- @bibentry:" + k).join("\n")],
+      children: [],
+    });
+  }
+  return slides;
+}
+
+// ─── Zitations-Links → auto-Quellen-Folie ─────────────────────────────────
+// Die auto-Quellen-Folie (parseSlides) trägt die Einträge mit id + data-refkey.
+// Zitations-Links (@cite: etc., data-refkey) navigieren zur jeweiligen Quelle
+// im selben Deck — der Quellen-Tab ist für Studenten nicht erreichbar und
+// ein Cross-Page-Anker unnötig. Embedded Reveal-Instanzen (Kachel-Vorschau,
+// Editor, Präsentation) haben keinen globalen Reveal-Zugriff → Instanzen pro
+// .reveal-Root im WeakMap (tutoraiRegisterSlideReveal beim Initialisieren).
+const _slideReveals = new WeakMap();
+function tutoraiRegisterSlideReveal(rootEl, inst) {
+  if (rootEl) _slideReveals.set(rootEl, inst);
+}
+
+document.addEventListener("click", (e) => {
+  // Klick auf Link-Text: e.target kann ein Text-Node sein → Element holen.
+  const t = e.target;
+  const el = t instanceof Element ? t : (t && t.parentElement) || null;
+  const a = el ? el.closest("a[data-refkey]") : null;
+  if (!a) return;
+  const revealEl = a.closest(".reveal");
+  if (!revealEl) return; // kein Reveal (z. B. Kachel-Canvas) → Default-Anker
+  e.preventDefault();
+  const slidesEl = revealEl.querySelector(".slides");
+  if (!slidesEl) return;
+  const h = Array.from(slidesEl.children)
+    .filter((el) => el.tagName === "SECTION")
+    .findIndex((el) => el.classList.contains("quellen"));
+  if (h !== -1) {
+    // Mini-Vorschau ohne Quellen-Folie (h === -1): nichts tun — das volle
+    // Deck (nach dem Upgrade) enthält sie als letzte Folie.
+    const inst = _slideReveals.get(revealEl);
+    if (inst) {
+      try { inst.slide(h, 0); } catch (err) { /* ältere Instanz */ }
+    }
+  }
+  _flashRefEntry(slidesEl, a.getAttribute("data-refkey"));
+});
+
+function _flashRefEntry(slidesEl, key) {
+  if (!key) return;
+  const entry = slidesEl.querySelector('.tutorai-bibentry[data-refkey="' + key + '"]');
+  if (!entry) return;
+  entry.classList.remove("ref-flash");
+  void entry.offsetWidth; // Reflow, damit ein erneutes Hinzufügen den Fade neu startet
+  entry.classList.add("ref-flash");
+  clearTimeout(entry._refFlashTimer);
+  entry._refFlashTimer = setTimeout(() => entry.classList.remove("ref-flash"), 1500);
+  entry.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 /** Block mit ≥2 `--`-Segmenten → Stack: reiner (leerer) Container-Eltern

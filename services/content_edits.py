@@ -2,10 +2,13 @@
 Serverseitiges Anwenden der LLM-„content_edits“ (stellenweise Edits) auf den
 Inhalt eines Skript-Kapitels (Markdown).
 
-Gemeinsamer Mechanismus für den AI-Flow (api/script.py) und das
-Import-Refinement (services/import_service.py). Wirft ContentEditError, wenn
-ein Edit ungültig oder unklar ist (Anker nicht gefunden/mehrdeutig,
-Überlappung, unbekanntes op) — dann bleibt der Inhalt unverändert.
+Verwendet vom AI-Flow (api/script.py). Anwendung ist partiell: Jedes Edit
+wird unabhängig aufgelöst; fehlgeschlagene Edits (Anker nicht
+gefunden/mehrdeutig, Überlappung, unbekanntes op) werden übersprungen und als
+Warnung gemeldet, die übrigen Edits werden trotzdem angewendet. Bei
+Überlappung gewinnt das in der Liste zuerst genannte Edit. Wirft
+ContentEditError, wenn gar kein Edit anwendbar ist — dann bleibt der Inhalt
+unverändert.
 
 Ops:
 - {"op": "replace_section", "heading": "### 3.2 Beispiel", "content": "..."}
@@ -73,6 +76,47 @@ def _section_span(content_len: int, headings: list[_Heading], idx: int) -> tuple
     start = headings[idx]["start"]
     end = headings[idx + 1]["start"] if idx + 1 < len(headings) else content_len
     return start, end
+
+
+def _resolve_single_edit(content: str, headings: list[_Heading], edit: object) -> tuple[int, int, str]:
+    """Löst ein einzelnes Edit zu (start, end, Ersetzung) auf; wirft
+    ContentEditError, wenn es nicht anwendbar ist."""
+    if not isinstance(edit, dict):
+        raise ContentEditError("LLM-Edit nicht anwendbar: Edit ist kein Objekt.")
+    op = str(edit.get("op") or "").strip()
+    if op in ("replace_section", "insert_after", "delete_section"):
+        heading = str(edit.get("heading") or "")
+        idx = _resolve_heading(heading, headings)
+        s, e = _section_span(len(content), headings, idx)
+        new_body = str(edit.get("content") or "")
+        if op == "replace_section":
+            if not new_body.strip():
+                raise ContentEditError(f"LLM-Edit nicht anwendbar: „replace_section“ („{heading}“) ohne Inhalt.")
+            # Heading bleibt erhalten, nur der Abschnittsbody wird ersetzt.
+            return headings[idx]["end"], e, "\n" + new_body.strip("\n") + "\n"
+        if op == "delete_section":
+            return s, e, ""
+        if not new_body.strip():
+            raise ContentEditError(f"LLM-Edit nicht anwendbar: „insert_after“ („{heading}“) ohne Inhalt.")
+        return e, e, "\n\n" + new_body.strip("\n") + "\n"
+    if op == "replace_span":
+        old = str(edit.get("old") or "")
+        new = str(edit.get("new") or "")
+        s, e = _resolve_span(content, old)
+        return s, e, new
+    raise ContentEditError(f"LLM-Edit nicht anwendbar: unbekanntes „op“ {op!r}.")
+
+
+def _spans_overlap(a: tuple[int, int, str], b: tuple[int, int, str]) -> bool:
+    """True, wenn sich die beiden Spans ausschließen. Einfügepunkte (0 Breite)
+    konfligieren nur, wenn sie STRENG innerhalb eines anderen Spans liegen."""
+    a1, a2, _ = a
+    b1, b2, _ = b
+    if a1 == a2 or b1 == b2:
+        p = a1 if a1 == a2 else b1
+        lo, hi = (b1, b2) if a1 == a2 else (a1, a2)
+        return lo < p < hi
+    return a1 < b2 and b1 < a2
 
 
 def _resolve_heading(heading: str, headings: list[_Heading]) -> int:
@@ -153,60 +197,37 @@ def _label_diff_warnings(old: str, new: str) -> list[str]:
     return warnings
 
 
-def apply_content_edits(content: str, edits: object) -> tuple[str, list[str]]:
+def apply_content_edits(content: str, edits: object) -> tuple[str, int, list[str]]:
     """Wendet die LLM-Edit-Liste („content_edits“) auf den bestehenden Inhalt an.
 
-    Gibt (neuer_content, warnings) zurück. Wirft ContentEditError, wenn ein Edit
-    ungültig oder unklar ist (Anker nicht gefunden/mehrdeutig, Überlappung,
-    unbekanntes op) — dann bleibt der Inhalt unverändert."""
+    Partielle Anwendung: Jedes Edit wird unabhängig aufgelöst; fehlgeschlagene
+    Edits (Anker nicht gefunden/mehrdeutig, Überlappung, unbekanntes op) werden
+    übersprungen und als Warnung gemeldet, die übrigen werden trotzdem
+    angewendet. Bei Überlappung gewinnt das in der Liste zuerst genannte Edit.
+
+    Gibt (neuer_content, applied_count, warnings) zurück. Wirft ContentEditError,
+    wenn gar kein Edit anwendbar ist — dann bleibt der Inhalt unverändert."""
     if not isinstance(edits, list) or not edits:
         raise ContentEditError("LLM-Antwort ungültig: „content_edits“ ist keine (nicht-leere) Liste von Edit-Objekten.")
     headings = _find_headings(content)
-    spans: list[tuple[int, int, str]] = []  # (start, end, Ersetzung)
+    accepted: list[tuple[int, int, str]] = []  # (start, end, Ersetzung)
+    failed: list[str] = []  # je „Edit N: <Meldung>“
     for i, edit in enumerate(edits):
-        if not isinstance(edit, dict):
-            raise ContentEditError(f"LLM-Edit nicht anwendbar: Edit {i + 1} ist kein Objekt.")
-        op = str(edit.get("op") or "").strip()
-        if op in ("replace_section", "insert_after", "delete_section"):
-            heading = str(edit.get("heading") or "")
-            idx = _resolve_heading(heading, headings)
-            s, e = _section_span(len(content), headings, idx)
-            new_body = str(edit.get("content") or "")
-            if op == "replace_section":
-                if not new_body.strip():
-                    raise ContentEditError(f"LLM-Edit nicht anwendbar: „replace_section“ („{heading}“) ohne Inhalt.")
-                # Heading bleibt erhalten, nur der Abschnittsbody wird ersetzt.
-                spans.append((headings[idx]["end"], e, "\n" + new_body.strip("\n") + "\n"))
-            elif op == "delete_section":
-                spans.append((s, e, ""))
-            else:  # insert_after
-                if not new_body.strip():
-                    raise ContentEditError(f"LLM-Edit nicht anwendbar: „insert_after“ („{heading}“) ohne Inhalt.")
-                spans.append((e, e, "\n\n" + new_body.strip("\n") + "\n"))
-        elif op == "replace_span":
-            old = str(edit.get("old") or "")
-            new = str(edit.get("new") or "")
-            s, e = _resolve_span(content, old)
-            spans.append((s, e, new))
-        else:
-            raise ContentEditError(f"LLM-Edit nicht anwendbar: unbekanntes „op“ {op!r} (Edit {i + 1}).")
-    # Überlappungs-Check: Einfügepunkte (0 Breite) konfligieren nur, wenn sie
-    # STRENG innerhalb eines anderen Spans liegen.
-    for a in range(len(spans)):
-        for b in range(a + 1, len(spans)):
-            a1, a2, _ = spans[a]
-            b1, b2, _ = spans[b]
-            if a1 == a2 or b1 == b2:
-                p = a1 if a1 == a2 else b1
-                lo, hi = (b1, b2) if a1 == a2 else (a1, a2)
-                if lo < p < hi:
-                    raise ContentEditError("LLM-Edit nicht anwendbar: Edits überschneiden sich.")
-            elif a1 < b2 and b1 < a2:
-                raise ContentEditError("LLM-Edit nicht anwendbar: Edits überschneiden sich.")
-    spans.sort(key=lambda sp: (sp[0], sp[1]))
+        try:
+            span = _resolve_single_edit(content, headings, edit)
+        except ContentEditError as e:
+            failed.append(f"Edit {i + 1}: {e}")
+            continue
+        if any(_spans_overlap(span, acc) for acc in accepted):
+            failed.append(f"Edit {i + 1}: überschneidet sich mit einem vorherigen Edit — übersprungen.")
+            continue
+        accepted.append(span)
+    if not accepted:
+        raise ContentEditError("LLM-Edits nicht anwendbar: " + "; ".join(failed))
+    accepted.sort(key=lambda sp: (sp[0], sp[1]))
     parts: list[str] = []
     pos = 0
-    for s, e, repl in spans:
+    for s, e, repl in accepted:
         parts.append(content[pos:s])
         parts.append(repl)
         pos = e
@@ -214,4 +235,10 @@ def apply_content_edits(content: str, edits: object) -> tuple[str, list[str]]:
     new_content = "".join(parts)
     # Mehrere Leerzeilen, die durch Edits entstehen können, zusammenziehen.
     new_content = re.sub(r"\n{3,}", "\n\n", new_content)
-    return new_content, _label_diff_warnings(content, new_content)
+    warnings = _label_diff_warnings(content, new_content)
+    if len(accepted) < len(edits):
+        warnings.insert(
+            0,
+            f"{len(accepted)} von {len(edits)} LLM-Edits umgesetzt — {len(edits) - len(accepted)} fehlgeschlagen: " + "; ".join(failed),
+        )
+    return new_content, len(accepted), warnings

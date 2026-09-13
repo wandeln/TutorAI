@@ -414,7 +414,7 @@
   color: #6b7280;
 }
 
-/* Nummerierte Sections (h2–h4) im Skript: dezente Nummer vor der Überschrift */
+/* Nummerierte Sections (h2–h6) im Skript: dezente Nummer vor der Überschrift */
 .markdown-preview .tutorai-sec-num {
   color: #9ca3af;
   font-weight: 600;

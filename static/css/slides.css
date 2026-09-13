@@ -371,6 +371,26 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   color: var(--slides-accent, #2563eb) !important;
 }
 
+/* Auto-Quellen-Folie (Direktive "class: quellen" + @bibentry:-Bullets): Design wie
+   das Quellenverzeichnis am Kapitelende im Skript — ohne Listendiscs (die [N]-Nummer
+   übernimmt die Einordnung), etwas kompakter als der normale Folientext. */
+:is(.reveal .slides, .slides-canvas) section.quellen .markdown-preview ul {
+  list-style: none !important;
+  padding-left: 0.15em !important;
+}
+:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-bibentry {
+  font-size: 0.78em;
+  line-height: 1.5;
+  border-radius: 4px;
+  /* Fade-out des Zitations-Flash: Klasse wird nach 1.5 s vom slides.js-
+     Click-Handler entfernt, der Übergang läuft hier. */
+  transition: background-color 1s ease;
+}
+:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-bibentry.ref-flash {
+  background-color: color-mix(in srgb, var(--slides-accent, #2563eb) 20%, transparent);
+  transition: none; /* sofort ein, langsam aus (siehe oben) */
+}
+
 /* Formel-Nummern-Links (.tutorai-eq-num) ausgenommen — die sehen wie
    normale (nicht verlinkte) Formel-Nummern aus, s. u. */
 :is(.reveal .slides, .slides-canvas) .markdown-preview a:not(.tutorai-eq-num) {

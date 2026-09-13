@@ -24,7 +24,11 @@ MARKDOWN_MANUAL = """\
   NUR STANDARD-KATEX: keine LaTeX-Pakete, keine \\newcommand/\\def oder sonstigen eigenen Makros —
   im Quelltext definierte Makros müssen an JEDEM Vorkommen durch ihre Definition ersetzt/ausexpandiert
   werden (z. B. \\newcommand{\\R}{\\mathbb{R}} → \\mathbb{R}). Nicht von KaTeX unterstützte Kommandos
-  durch unterstützte Äquivalente umschreiben.
+  durch unterstützte Äquivalente umschreiben (häufig: \\hdots → \\cdots, \\bm{…} → \\boldsymbol{…}).
+  Mehrzeilige Gleichungen (aligned/gathered): Ausrichtungsstelle = &= (NICHT &=& — das würde
+  die rechte Seite rechtsbündig ausrichten).
+- Zeilenumbruch im Fließtext: zwei Leerzeichen am Zeilenende ODER ein einzelner Backslash \\ — NIE doppelter Backslash \\\\ (rendert als sichtbarer Backslash; \\\\ bzw. \\newline der Quelle →
+  einzelner Backslash oder zwei Leerzeichen); in $$…$$-Formeln bleibt \\\\ der Formel-Zeilenumbruch.
 - Medien: ![Caption](/media/…) — der Alt-Text ist die Caption (wird unter dem Medium angezeigt).
   Größe steuern direkt nach dem Snippet: {height=X} = Max-Höhe in Pixeln (Suffix `px` optional) —
   Bilder nutzen die verfügbare Breite aus, bis die Max-Höhe erreicht ist (Aspektverhältnis bleibt erhalten);
@@ -44,7 +48,9 @@ MARKDOWN_MANUAL = """\
   (z. B. Pseudo-Code) werden $...$-Paare als Formel gerendert.
 - Labels (snake_case, klein, eindeutig im gesamten Kurs):
   - Abbildung: ![Caption](/media/…){#fig:label}  →  wird als „Abb. N: Caption“ gerendert.
-  - Display-Math: $$…$$ {#eq:label}  →  wird als „(N)“ neben der Formel gerendert.
+  - Display-Math: $$…$$ {#eq:label}  →  wird als „(N)“ neben der Formel gerendert — die Nummer wird AUTOMATISCH
+    erzeugt, NIE manuell hinschreiben oder als Text nachstellen (z. B. \\text{(Gl. @eq:…)} = FALSCH);
+    Bezüge im Fließtext: @eq:label als normaler Text.
   - Code-Block: Label auf der öffnenden Fence-Zeile: ```python {#code:label}[Caption]  →  wird als „Code N: Caption“ gerendert.
   - Box: Label UND/ODER [Caption] auf der @startbox:-Zeile direkt nach dem Typ (beliebige Reihenfolge), s. u.
   - Tabelle: {#tab:label}[Caption] als Zeile direkt unter der Pipe-Tabelle  →  wird als „Tab. N“ gerendert
@@ -72,6 +78,13 @@ MARKDOWN_MANUAL = """\
 - Wenn Graphen zur Beschreibung benötigt werden: Verwende Mermaid (```mermaid … ```).
   Wichtig: Knotentexte mit Sonderzeichen (z. B. runde Klammern oder <, > in Formeln) MÜSSEN in doppelte
   Anführungszeichen gesetzt werden: z. B. C["H(X) = log2(n)"] (NICHT C[H(X) = log2(n)]).
+  Mathematik in Knoten-/Kanten-Texten mit $$…$$ (KaTeX, wird nativ gerendert), z. B. A["$$x^2 - 2x + 1$$"].
+  Pro Text NUR EIN $$…$$-Block — mehrere $$…$$-Blöcke in einem Text brechen das Diagramm. Mix aus
+  Formel UND normalem Text: alles in EINEN $$…$$-Block, normaler Text mit \\text{…}, z. B.
+  A["$$b\\text{: Koeffizienten von } b \\text{ in der Basis } \\{e_1,\\ldots,e_m\\}$$"].
+  Label/Caption wie bei Code-Blöcken auf der öffnenden Zeile: ```mermaid {#code:label}[Caption]
+  → wird als „Code N: Caption“ unter dem Diagramm gerendert (beschrifte wichtige Diagramme,
+  auf die im Text Bezug genommen wird).
 """
 
 SCRIPT_MARKDOWN_MANUAL = MARKDOWN_MANUAL + """\
@@ -81,7 +94,7 @@ SCRIPT_MARKDOWN_MANUAL = MARKDOWN_MANUAL + """\
 - Beschrifte alle Objekte, auf die du im Text Bezug nimmst, UND wichtige Definitionen, Sätze und Formeln (wichtige Definitionen/Sätze als Boxen, z. B. @startbox:definition {#box:…} bzw. @startbox:satz {#box:…}) — auch ohne unmittelbare Bezugnahme im Text, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können. Benutze bereits vorhandene Labels (s. o. „andere Kapitel“) nicht neu und erfinde keine Labels, die dort bereits vergeben sind.
 - WICHTIGE GLEICHUNGEN IMMER mit {#eq:label} labeln (direkt nach der $$…$$-Zeile) — auch solche, auf die im Text kein Bezug genommen wird: zentrale Formeln (Hauptformeln, wichtige Definitionen/Identitäten, zentrale Gleichungen aus Sätzen) bekommen ein Label, damit sie in späteren Kapiteln und Übungsaufgaben referenziert werden können.
 - Querverweise auf Abbildungen/Gleichungen/Code/Boxen/Tabellen/Sections/Kapitel in ANDEREN Kapiteln funktionieren genauso: Verwende dafür die dort gelisteten Labels (z. B. @fig:entropie, @eq:shannon, @code:sort, @box:pythagoras, @tab:wahrscheinlichkeiten, @sec:statistik).
-- Setze Boxen SPARSAM ein (max. 3-4 pro Kapitel) — nur für wirklich besonders hervorzuhebende Stellen (Definitionen, Sätze, Merksätze, typische Fehler, kurze Beispiele), nicht für normalen Fließtext.
+- Setze Boxen KONSEQUENT ein: JEDER als Definition/Satz/Theorem/Lemma/Proposition/Korollar/Beweis/Beispiel abgesetzte Absatz wird zur Box (nicht zum normalen Fließtext); Hinweis-Boxen (merksatz, hinweis, bemerkung, warnung, frage) für zentrale Merksätze, typische Fehler, wichtige Nebenbemerkungen — nicht für normalen Fließtext.
 """
 
 SLIDES_MARKDOWN_MANUAL = MARKDOWN_MANUAL + """\

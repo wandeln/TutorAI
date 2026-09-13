@@ -18,7 +18,6 @@ Diese Module stellt nur die REST-Endpunkte bereit:
   PUT    /api/courses/{course_id}/import/plan                 (Pläne manuell speichern)
   POST   /api/courses/{course_id}/import/script               (generieren/skip)
   POST   /api/courses/{course_id}/import/slides               (generieren/skip)
-  POST   /api/courses/{course_id}/import/refine               (nachbessern: {scope})
   POST   /api/courses/{course_id}/import/pause|resume|cancel  ({stage})
   GET    /api/courses/{course_id}/import/preview?path=        (Bild/PDF-Vorschau)
   DELETE /api/courses/{course_id}/import/files                (gestagte Dateien entfernen)
@@ -76,11 +75,6 @@ class SlidesStartBody(BaseModel):
     skip: bool = False
 
 
-class RefineStartBody(BaseModel):
-    scope: str  # "script" | "slides"
-    skip: bool = False
-
-
 class StageControlBody(BaseModel):
     stage: str
 
@@ -119,7 +113,6 @@ _STAGE_JOBS = {
     "slides_plan": import_service.run_slides_planner_job,
     "script": import_service.run_script_job,
     "slides": import_service.run_slides_job,
-    "refine": import_service.run_refine_job,
 }
 
 
@@ -256,13 +249,6 @@ async def get_import(
             session.add(imp)
             session.commit()
             session.refresh(imp)
-    if imp and import_service.prune_stale_plan_refs(course_id, imp):
-        # Gelöschte Kurs-Kapitel/Decks → verwaiste Plan-Einträge entfernen,
-        # damit sie im UI verschwinden und nicht neu generiert werden.
-        imp.updated_at = datetime.now()
-        session.add(imp)
-        session.commit()
-        session.refresh(imp)
     return {"import": import_service.serialize_import(imp) if imp else None}
 
 
@@ -458,7 +444,7 @@ async def save_plan(
 
     message = ""
     if body.chapters is not None:
-        normalized = import_service.normalize_plan(body.chapters, imp.manifest or [])
+        normalized = import_service.normalize_plan(body.chapters)
         for i, ch in enumerate(normalized):
             if i < len(body.chapters) and isinstance(body.chapters[i], dict):
                 raw = body.chapters[i]
@@ -477,8 +463,7 @@ async def save_plan(
             imp.plan_status = "done"  # manuell erstellter Plan zählt als fertig
         message = f"Plan gespeichert ({len(normalized)} Kapitel)."
     if body.decks is not None:
-        n_script = len(imp.chapter_plan or [])
-        decks = import_service.normalize_slides_plan(body.decks, imp.manifest or [], n_script)
+        decks = import_service.normalize_slides_plan(body.decks)
         for i, d in enumerate(decks):
             if i < len(body.decks) and isinstance(body.decks[i], dict):
                 raw = body.decks[i]
@@ -490,9 +475,6 @@ async def save_plan(
                     d["slides_error"] = raw["slides_error"][:500]
         imp.slides_plan = decks
         message += f" Folien-Plan: {len(decks)} Decks."
-    # Client kann (mit veraltetem Zustand) verwaiste section_id/material_id
-    # zurücksenden → bereinigen, bevor der Plan persistiert wird.
-    import_service.prune_stale_plan_refs(course_id, imp)
     imp.updated_at = datetime.now()
     session.add(imp)
     session.commit()
@@ -560,59 +542,6 @@ async def start_slides(
     import_service.set_stage_status(imp.id, "slides", "running")
     import_service.spawn_job(import_service.run_slides_job(course_id, imp.id))
     return {"message": "Folien-Generierung gestartet."}
-
-
-# ─── Stufe 7: Nachbesserung (Refinement) ──────────────────────────
-
-@router.post("/courses/{course_id}/import/refine")
-async def start_refine(
-    body: RefineStartBody,
-    session: Session = Depends(get_session),
-    auth: tuple = Depends(require_prof_or_admin()),
-):
-    """Bereits generierte Skript-Kapitel / Slide-Decks nachbessern (Refinement).
-
-    scope: "script" | "slides" — wird im Report persistiert (stateless für
-    Pause/Resume/Cancel; derselbe Job-Code-Pfad wie die anderen Stufen).
-    Nur Einträge, deren Checkbox im Plan gesetzt ist (enabled), werden
-    nachbearbeitet; danach wird die Checkbox automatisch deaktiviert.
-    """
-    _, course_id, _ = auth
-    imp = _require_import(session, course_id)
-
-    if imp.filemap_status != "done":
-        raise HTTPException(400, "Die Dateianalyse muss zuerst abgeschlossen sein.")
-    if _status(imp, "refine") in ("running", "paused"):
-        raise HTTPException(409, "Die Nachbesserung läuft bereits.")
-    if body.scope not in ("script", "slides"):
-        raise HTTPException(400, "Ungültiger Scope: 'script' oder 'slides' ist erforderlich.")
-
-    if body.skip:
-        import_service.set_stage_status(imp.id, "refine", "skipped")
-        return {"message": "Nachbesserung übersprungen."}
-
-    # Nur per Checkbox angeklickte Einträge werden nachgebessert (enabled +
-    # bereits generiert: section_id bzw. material_id vorhanden).
-    if body.scope == "script":
-        has_content = any(c.get("section_id") and c.get("enabled") for c in (imp.chapter_plan or []))
-    else:
-        has_content = any(d.get("material_id") and d.get("enabled") for d in import_service.get_slides_plan(imp))
-    if not has_content:
-        raise HTTPException(400, "Es sind keine Kapitel/Decks zum Nachbessern angeklickt — bitte in der Liste die Checkboxen der gewünschten Einträge setzen.")
-
-    # Neues run_id → der Job setzt die Unit-Counter zurück; Resume (ohne neuen
-    # Start) behält sie (Idempotenz).
-    imp.report = {**(imp.report or {}), "refine_options": {
-        "scope": body.scope,
-        "run_id": str(uuid.uuid4()),
-    }}
-    imp.updated_at = datetime.now()
-    session.add(imp)
-    session.commit()
-
-    import_service.set_stage_status(imp.id, "refine", "running")
-    import_service.spawn_job(import_service.run_refine_job(course_id, imp.id))
-    return {"message": "Nachbesserung gestartet."}
 
 
 # ─── Pause / Resume / Cancel ──────────────────────────────────────

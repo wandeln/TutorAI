@@ -370,7 +370,7 @@
     // Footer am Canvas-Element (wandert nicht mit den Slide-Transitions)
     if (FOOTER_ENABLED && FOOTER_TEXT) previewSlidesEl.setAttribute("data-footer", FOOTER_TEXT);
     else previewSlidesEl.removeAttribute("data-footer");
-    const slides = parseSlides(content || "");
+    const slides = await parseSlides(content || "");
     // Blatt-Folien zählen (Stack zählt seine Unterfolien, wie Reveal's Zähler).
     const total = countSlides(slides);
     countEl.textContent = total ? `${total} Folie${total === 1 ? "" : "n"}` : "";
@@ -418,6 +418,8 @@
     tutoraiWireCodeMath(inst);
     previewReveal = inst;
     await inst.initialize();
+    // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js)
+    tutoraiRegisterSlideReveal(revealRootEl, inst);
     if (seq !== previewSeq) {
       // Nur zurückbauen, wenn sie noch die aktuelle Instanz ist
       if (previewReveal === inst) {

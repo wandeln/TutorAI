@@ -24,7 +24,8 @@ from sqlmodel import Session, select
 
 from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIMEOUT
 from database.base import engine
-from database.models import LLMDebugEntry
+from database.models import LLMDebugEntry, User
+from services.auth_service import get_current_user_id
 from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
 from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
 from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
@@ -48,13 +49,12 @@ from prompts.import_prompt import (
     CHAPTER_SUMMARY_PROMPT_TEMPLATE,
     SLIDE_DECK_PROMPT_TEMPLATE,
     GATHER_PROMPT_TEMPLATE,
-    EXISTING_DESC_PROMPT_TEMPLATE,
     REF_EXTRACT_PROMPT_TEMPLATE,
-    REFINE_CHAPTER_PROMPT_TEMPLATE,
-    REFINE_SLIDE_DECK_PROMPT_TEMPLATE,
     DECK_SUMMARY_PROMPT_TEMPLATE,
     SCRIPT_FORMAT_SPEC,
     SLIDE_FORMAT_SPEC,
+    LABEL_RULES_SCRIPT,
+    LABEL_RULES_SLIDES,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,8 @@ APPLET_TIMEOUT = int(os.getenv("APPLET_TIMEOUT", "240"))
 APPLET_MAX_TOKENS = int(os.getenv("APPLET_MAX_TOKENS", "16384"))
 # Slide-Deck-Generierung: Decks können lang sein (viele Folien + Sprechernotizen)
 SLIDES_MAX_TOKENS = int(os.getenv("SLIDES_MAX_TOKENS", "16384"))
+# Fortsetzen abgeschnittener Antworten (finish_reason=length): max. Folge-Queries
+LLM_MAX_CONTINUATIONS = int(os.getenv("LLM_MAX_CONTINUATIONS", "4"))
 
 
 # ── LLM Debug Log (persistent, letzte 7 Tage) ────────────────────
@@ -74,10 +76,9 @@ SLIDES_MAX_TOKENS = int(os.getenv("SLIDES_MAX_TOKENS", "16384"))
 # Server-Restarts); alte Einträge werden automatisch purgt
 # (TTL + Größen-/Eintragslimits).
 _LLM_DEBUG_TTL = timedelta(days=7)
-_LLM_DEBUG_MAX_FIELD = 100_000        # max. Zeichen je Textfeld
+_LLM_DEBUG_MAX_FIELD = 200_000        # max. Zeichen je Textfeld
 _LLM_DEBUG_MAX_TOTAL_CHARS = 5_000_000  # max. Gesamtgröße aller Einträge
 _LLM_DEBUG_MAX_DB_ENTRIES = 500       # max. Einträge, die in der DB gespeichert werden
-_LLM_DEBUG_MAX_ENTRIES = 200          # max. Einträge, die an die UI geliefert werden
 _LLM_DEBUG_PURGE_INTERVAL = 3600      # Purge-Intervall in Sekunden
 
 _llm_debug_lock = threading.Lock()
@@ -97,8 +98,8 @@ def _debug_caller_label() -> str:
     """Bestimmt das Label aus dem Namen der aufrufenden Service-Methode.
 
     Geht die Call-Stack um die internen Helper (_call_plain/_call_with_json)
-    herum, z. B. grade_text_task → GRADE_TEXT_TASK, import_refine_chapter →
-    IMPORT_REFINE_CHAPTER. Damit alle Aufrufer automatisch geloggt werden.
+    herum, z. B. grade_text_task → GRADE_TEXT_TASK, import_convert_chapter →
+    IMPORT_CONVERT_CHAPTER. Damit alle Aufrufer automatisch geloggt werden.
     """
     internal = {"_debug_caller_label", "_call_plain", "_call_with_json"}
     try:
@@ -178,7 +179,12 @@ def record_llm_debug_entry(
     latency_ms: int = 0,
     attempts: int = 1,
 ) -> None:
-    """Hängt einen LLM-Call an das persistente Debug-Log an (lässt Aufrufer nie scheitern)."""
+    """Hängt einen LLM-Call an das persistente Debug-Log an (lässt Aufrufer nie scheitern).
+
+    Der auslösende User wird aus dem Request-Context (ContextVar, gesetzt von
+    den Auth-Dependencies) übernommen — auch in Hintergrund-Tasks, die vom
+    auslösenden Request geerbt haben.
+    """
     try:
         with _llm_debug_lock:
             _maybe_purge_llm_debug()
@@ -189,6 +195,7 @@ def record_llm_debug_entry(
                     model=model or "",
                     url=url or "",
                     is_public=bool(is_public),
+                    user_id=get_current_user_id(),
                     system_prompt=_debug_truncate(system_prompt),
                     prompt=_debug_truncate(prompt),
                     response=_debug_truncate(response),
@@ -203,21 +210,104 @@ def record_llm_debug_entry(
         logger.warning(f"LLM-Debug-Log: Eintrag konnte nicht gespeichert werden: {e}")
 
 
-def get_llm_debug_log() -> list[dict]:
-    """Gibt das Debug-Log (neueste zuerst, max. _LLM_DEBUG_MAX_ENTRIES Einträge) zurück."""
+def _llm_debug_user_names(session: Session, user_ids: set[int]) -> dict[int, str]:
+    """user_id → Anzeigename (name, Fallback username)."""
+    if not user_ids:
+        return {}
+    return {
+        u.id: (u.name or u.username)
+        for u in session.exec(select(User).where(User.id.in_(user_ids))).all()
+    }
+
+
+def get_llm_debug_log(offset: int = 0, limit: int = 20, user_id: Optional[int] = None) -> dict:
+    """Paginiertes Debug-Log (neueste zuerst) — NUR Metadaten, keine Volltexte.
+
+    Die Volltexte (System-Prompt/Prompt/Antwort/Thinking) werden erst auf
+    Anfrage via get_llm_debug_entry() geladen (Lazy-Loading in der UI).
+    Returns: entries (Metadaten), total, users (distinct für den Filter), offset, limit.
+    """
+    offset = max(0, int(offset or 0))
+    limit = max(1, min(int(limit or 20), 100))
     try:
         cutoff = datetime.now() - _LLM_DEBUG_TTL
         with Session(engine) as session:
+            base = select(LLMDebugEntry).where(LLMDebugEntry.ts >= cutoff)
+            if user_id is not None:
+                base = base.where(LLMDebugEntry.user_id == user_id)
             rows = session.exec(
-                select(LLMDebugEntry)
-                .where(LLMDebugEntry.ts >= cutoff)
-                .order_by(LLMDebugEntry.ts.desc(), LLMDebugEntry.id.desc())
-                .limit(_LLM_DEBUG_MAX_ENTRIES)
+                base.order_by(LLMDebugEntry.ts.desc(), LLMDebugEntry.id.desc())
+                .offset(offset).limit(limit)
             ).all()
-        return [
-            {
+            total = len(
+                session.exec(
+                    select(LLMDebugEntry.id).where(LLMDebugEntry.ts >= cutoff)
+                ).all()
+            )
+            # Alle distinct Users im Retention-Fenster (für den Filter-Dropdown,
+            # unabhängig vom aktuell gesetzten User-Filter)
+            distinct_user_ids = {
+                u for u in session.exec(
+                    select(LLMDebugEntry.user_id)
+                    .where(LLMDebugEntry.ts >= cutoff)
+                    .where(LLMDebugEntry.user_id.isnot(None))
+                    .distinct()
+                ).all()
+                if u is not None
+            }
+        user_names: dict[int, str] = {}
+        if distinct_user_ids:
+            with Session(engine) as session:
+                user_names = _llm_debug_user_names(session, distinct_user_ids)
+        return {
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "users": [
+                {"id": uid, "name": name}
+                for uid, name in sorted(user_names.items(), key=lambda kv: kv[1].lower())
+            ],
+            "entries": [
+                {
+                    "id": row.id,
+                    "ts": row.ts.isoformat(),
+                    "label": row.label,
+                    "user_id": row.user_id,
+                    "user": user_names.get(row.user_id),
+                    "model": row.model,
+                    "url": row.url,
+                    "is_public": row.is_public,
+                    "success": row.success,
+                    "error": (row.error or "")[:300],  # Exzerpt (Volltext via Detail-Endpoint)
+                    "latency_ms": row.latency_ms,
+                    "attempts": row.attempts,
+                }
+                for row in rows
+            ],
+        }
+    except Exception as e:
+        logger.warning(f"LLM-Debug-Log: Log konnte nicht geladen werden: {e}")
+        return {"total": 0, "offset": offset, "limit": limit, "users": [], "entries": []}
+
+
+def get_llm_debug_entry(entry_id: int) -> Optional[dict]:
+    """Einzelnes Debug-Log-Eintrag MIT Volltexten — nur auf Anfrage (Lazy-Loading)."""
+    try:
+        cutoff = datetime.now() - _LLM_DEBUG_TTL
+        with Session(engine) as session:
+            row = session.get(LLMDebugEntry, entry_id)
+            if row is None or row.ts < cutoff:
+                return None
+            user_name = None
+            if row.user_id is not None:
+                u = session.get(User, row.user_id)
+                user_name = (u.name or u.username) if u else None
+            return {
+                "id": row.id,
                 "ts": row.ts.isoformat(),
                 "label": row.label,
+                "user_id": row.user_id,
+                "user": user_name,
                 "model": row.model,
                 "url": row.url,
                 "is_public": row.is_public,
@@ -230,11 +320,28 @@ def get_llm_debug_log() -> list[dict]:
                 "latency_ms": row.latency_ms,
                 "attempts": row.attempts,
             }
-            for row in rows
-        ]
     except Exception as e:
-        logger.warning(f"LLM-Debug-Log: Log konnte nicht geladen werden: {e}")
-        return []
+        logger.warning(f"LLM-Debug-Log: Eintrag {entry_id} konnte nicht geladen werden: {e}")
+        return None
+
+
+_CONTINUE_INSTRUCTION = (
+    "Deine vorherige Antwort wurde wegen des Output-Limits abgeschnitten. Setze sie EXAKT an "
+    "der Stelle fort, an der sie abbrach: gib NUR die fehlende Fortsetzung aus und beginne mit "
+    "dem nächsten Zeichen — ohne Wiederholung der bereits geschriebenen Zeilen, ohne "
+    "Einleitung, ohne Kommentare."
+)
+
+
+def _overlap_len(prev: str, nxt: str, max_check: int = 2000) -> int:
+    """Länge des längsten Präfixes von `nxt`, der zugleich Suffix von `prev` ist
+    (Overlap bei Antwort-Fortsetzungen, die das Modell manchmal wiederholt)."""
+    if not nxt:
+        return 0
+    for n in range(min(max_check, len(nxt)), 0, -1):
+        if prev.endswith(nxt[:n]):
+            return n
+    return 0
 
 
 class LLMService:
@@ -1012,17 +1119,21 @@ class LLMService:
         file_tree: str,
         digests: str,
         main_tex: str,
-        course_sections: str,
+        previous_plan: str,
         steps: str,
         config: Optional[dict] = None,
     ):
-        """Ein Schritt des agentic Skript-Kapitel-Planners (JSON-Action)."""
+        """Ein Schritt des agentic Skript-Kapitel-Planners (JSON-Action).
+
+        previous_plan: frühere Vorschläge (Titel + Beschreibung) oder "(keine)";
+        der neue Plan ERSETZT die alte Liste.
+        """
         prompt = self._render_prompt(
             SCRIPT_PLANNER_PROMPT_TEMPLATE,
             file_tree=file_tree,
             digests=digests,
             main_tex=main_tex,
-            course_sections=course_sections,
+            previous_plan=previous_plan,
             steps=steps,
         )
         return await self._call_with_json(
@@ -1034,39 +1145,22 @@ class LLMService:
         file_tree: str,
         digests: str,
         zip_decks: str,
-        course_decks: str,
-        course_sections: str,
+        previous_plan: str,
         steps: str,
         config: Optional[dict] = None,
     ):
-        """Ein Schritt des agentic Folien-Planners (JSON-Action)."""
+        """Ein Schritt des agentic Folien-Planners (JSON-Action).
+
+        previous_plan: frühere Vorschläge (Titel + Beschreibung) oder "(keine)";
+        der neue Plan ERSETZT die alte Liste.
+        """
         prompt = self._render_prompt(
             SLIDES_PLANNER_PROMPT_TEMPLATE,
             file_tree=file_tree,
             digests=digests,
             zip_decks=zip_decks,
-            course_decks=course_decks,
-            course_sections=course_sections,
+            previous_plan=previous_plan,
             steps=steps,
-        )
-        return await self._call_with_json(
-            prompt, response_format={"type": "json_object"}, config=config
-        )
-
-    async def import_existing_desc_step(
-        self,
-        items: str,
-        file_tree: str,
-        digests: str,
-        config: Optional[dict] = None,
-    ):
-        """Beschreibungen für bestehende Kurs-Materialien, die von den
-        Import-Materialien betroffen sind (JSON: {"plans": [{"id", "description"}]})."""
-        prompt = self._render_prompt(
-            EXISTING_DESC_PROMPT_TEMPLATE,
-            items=items,
-            file_tree=file_tree,
-            digests=digests,
         )
         return await self._call_with_json(
             prompt, response_format={"type": "json_object"}, config=config
@@ -1078,11 +1172,8 @@ class LLMService:
         kind_rules: str,
         title: str,
         description: str,
-        draft_sources: str,
         file_tree: str,
         digests: str,
-        sections: str,
-        decks: str,
         media: str,
         references: str,
         steps: str,
@@ -1095,11 +1186,8 @@ class LLMService:
             kind_rules=kind_rules,
             title=title,
             description=description,
-            draft_sources=draft_sources,
             file_tree=file_tree,
             digests=digests,
-            sections=sections,
-            decks=decks,
             media=media,
             references=references,
             steps=steps,
@@ -1131,39 +1219,28 @@ class LLMService:
     async def import_convert_chapter(
         self,
         chapter_title: str,
-        chapter_position: str,
-        part_info: str,
         other_chapters: str,
-        label_map: str,
-        macro_map: str,
         image_map: str,
         source_text: str,
-        edit_note: str = "",
         references: str = "",
         config: Optional[dict] = None,
+        max_tokens: Optional[int] = None,
     ):
-        """Wortgetreue Konvertierung eines Quelltext-Ausschnitts in Skript-Markdown.
+        """Wortgetreue Konvertierung eines Kapitels in Skript-Markdown (ein Call).
 
-        edit_note: leer für normale Konvertierung; im Edit-Modus (bestehendes
-        Kapitel wird aus Import-Materialien (neu)generiert) Anweisung zum
-        Mergen von Bestand und neuem Inhalt.
         references: Kurs-Quellenverzeichnis (Zitations-Keys) als Kontext.
         """
         prompt = self._render_prompt(
             CONVERT_CHAPTER_PROMPT_TEMPLATE,
             chapter_title=chapter_title,
-            chapter_position=chapter_position,
-            part_info=part_info,
-            edit_note=edit_note,
             other_chapters=other_chapters,
-            label_map=label_map,
-            macro_map=macro_map,
+            label_rules=LABEL_RULES_SCRIPT,
             image_map=image_map,
             references=references,
             script_format=SCRIPT_FORMAT_SPEC,
             source_text=source_text,
         )
-        return await self._call_plain(prompt, config=config)
+        return await self._call_plain(prompt, config=config, max_tokens=max_tokens)
 
     async def import_chapter_summary(
         self,
@@ -1205,8 +1282,11 @@ class LLMService:
     async def import_generate_slide_deck(
         self,
         chapter_title: str,
-        max_slides: int,
-        context: str,
+        max_slides: str,
+        other_context: str,
+        script_labels: str,
+        image_map: str,
+        references: str,
         source_slides: str,
         source: str,
         config: Optional[dict] = None,
@@ -1214,82 +1294,28 @@ class LLMService:
     ):
         """Slide-Deck für ein Kapitel (plain Text im Slide-Format).
 
+        max_slides: Foliengrenze-Zeile für den Prompt (1:1: "EXAKT N — ...",
+        sonst "keine feste Obergrenze — ...").
+        other_context: Summaries der andern Kapitel/Folien-Decks (Konsistenz/Querverweise).
+        script_labels: Labels der Skript-Quell-Kapitel (gemeinsame Objekte wiederverwenden).
+        image_map: importierte Medien (Original-Pfad → URL, mit Kurzbeschreibung).
+        references: Kurs-Quellenverzeichnis (Zitations-Keys für @cite: etc.).
         max_tokens: optional höheres Output-Budget (z. B. 1:1-Decks mit vielen Folien).
         """
         prompt = self._render_prompt(
             SLIDE_DECK_PROMPT_TEMPLATE,
             chapter_title=chapter_title,
             max_slides=max_slides,
-            context=context,
+            other_context=other_context,
+            label_rules=LABEL_RULES_SLIDES,
+            script_labels=script_labels,
+            image_map=image_map,
+            references=references,
             source_slides=source_slides,
             slide_format=SLIDE_FORMAT_SPEC,
             source=source,
         )
         return await self._call_plain(prompt, config=config, max_tokens=max_tokens or SLIDES_MAX_TOKENS)
-
-    async def import_refine_chapter(
-        self,
-        chapter_title: str,
-        generated: str,
-        source_text: str,
-        image_checklist: str = "",
-        other_chapters: str = "",
-        config: Optional[dict] = None,
-    ):
-        """Verifikations-Refinement eines generierten Kapitels (Vollständigkeits-Check).
-
-        Das LLM vergleicht den Entwurf mit dem Quelltext und liefert JSON:
-        entweder {"content_edits": [...]} (lokal, bevorzugt) oder
-        {"content": "..."} (Volltext-Fallback) bzw. {} (nichts zu korrigieren).
-        image_checklist: Medien-URLs aus dem Quelltext, die alle im Ergebnis
-        vorkommen müssen.
-        other_chapters: Summaries der anderen Kapitel (Querverweise/Notation).
-        """
-        prompt = self._render_prompt(
-            REFINE_CHAPTER_PROMPT_TEMPLATE,
-            chapter_title=chapter_title,
-            other_chapters=other_chapters or "(keine)",
-            generated=generated,
-            source_text=source_text,
-            image_checklist=image_checklist,
-            edits_spec=SCRIPT_CONTENT_EDITS_SPEC,
-        )
-        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
-
-    async def import_refine_slide_deck(
-        self,
-        deck_title: str,
-        generated: str,
-        source: str,
-        count_note: str = "",
-        count_check: str = "",
-        other_context: str = "",
-        config: Optional[dict] = None,
-        max_tokens: Optional[int] = None,
-    ):
-        """Verifikations-Refinement eines generierten Slide-Decks (Vollständigkeits-Check).
-
-        Das LLM vergleicht das Deck mit den Quellen und liefert JSON:
-        entweder {"content_edits": [...]} (lokal, bevorzugt) oder
-        {"content": "..."} (Volltext-Fallback) bzw. {} (nichts zu korrigieren).
-        generated: Deck INKLUSIVE „%% Folie N %%“-Marker (s. numbered_slide_content)
-        — die Marker sind KEIN Deck-Inhalt und werden nicht zurückgeliefert.
-        other_context: Summaries der anderen Decks + Skript-Kapitel
-        (Querverweise/Notation).
-        count_note/count_check: Anweisungen zur erwarteten Foliengenzahl
-        (1:1-Modus: exakt so viele wie Quell-Folien).
-        """
-        prompt = self._render_prompt(
-            REFINE_SLIDE_DECK_PROMPT_TEMPLATE,
-            deck_title=deck_title,
-            generated=generated,
-            source=source,
-            count_note=count_note,
-            count_check=count_check,
-            other_context=other_context or "(keine)",
-            edits_spec=SLIDES_CONTENT_EDITS_SPEC,
-        )
-        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config, max_tokens=max_tokens or SLIDES_MAX_TOKENS)
 
     async def import_deck_summary(
         self,
@@ -1338,12 +1364,13 @@ class LLMService:
             try:
                 start = time.time()
 
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ]
                 create_kwargs = {
                     "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt},
-                    ],
+                    "messages": messages,
                     "temperature": self.temperature,
                 }
                 if max_tokens is not None:
@@ -1353,12 +1380,49 @@ class LLMService:
                     client.chat.completions.create(**create_kwargs),
                     timeout=remaining,
                 )
-
-                elapsed = time.time() - start
-                total_ms += round(elapsed * 1000)
-                content = response.choices[0].message.content or "(keine Antwort)"
-                last_content = content
+                content = response.choices[0].message.content or ""
                 last_thinking = self._extract_thinking(response)
+                finish = response.choices[0].finish_reason
+
+                # Output-Limit erreicht → an der Bruchstelle fortsetzen (max.
+                # LLM_MAX_CONTINUATIONS Mal): ein Prompt, Output in Teilstücken.
+                n_cont = 0
+                while finish == "length" and n_cont < LLM_MAX_CONTINUATIONS:
+                    n_cont += 1
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
+                    cont_kwargs = {
+                        "model": model,
+                        "messages": messages + [
+                            {"role": "assistant", "content": content or " "},
+                            {"role": "user", "content": _CONTINUE_INSTRUCTION},
+                        ],
+                        "temperature": self.temperature,
+                    }
+                    if max_tokens is not None:
+                        cont_kwargs["max_tokens"] = max_tokens
+                    c_resp = await asyncio.wait_for(
+                        client.chat.completions.create(**cont_kwargs), timeout=remaining
+                    )
+                    chunk = c_resp.choices[0].message.content or ""
+                    # Overlap an der Naht: das Modell wiederholt teils den
+                    # vorherigen Endabschnitt — Trimmen.
+                    content += chunk[_overlap_len(content, chunk):]
+                    finish = c_resp.choices[0].finish_reason
+                    logger.info(f"_call_plain: Fortsetzung {n_cont} (+{len(chunk)} Zeichen)")
+
+                total_ms += round((time.time() - start) * 1000)
+                content = content or "(keine Antwort)"
+                last_content = content
+
+                if finish == "length":
+                    last_error = (
+                        f"LLM-Antwort nach {n_cont} Fortsetzungen noch abgeschnitten "
+                        f"(Output-Limit des Modells erreicht)."
+                    )
+                    logger.warning("_call_plain: Antwort auch nach Fortsetzungen abgeschnitten")
+                    break
 
                 if config:
                     await client.close()
@@ -1372,7 +1436,7 @@ class LLMService:
                 return {
                     "success": True,
                     "data": {"model_solution": content.strip()},
-                    "latency_ms": round(elapsed * 1000),
+                    "latency_ms": total_ms,
                     "raw_response": content,
                 }
 

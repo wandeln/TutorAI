@@ -303,14 +303,19 @@
           Alle LLM-Calls der letzten 7 Tage (persistent in der Datenbank gespeichert).
         </p>
 
-        <input type="text" id="llm-debug-search" placeholder="Suchen (Label, Modell, URL, Fehler, Datum/Uhrzeit …)"
+        <input type="text" id="llm-debug-search" placeholder="Suchen (Label, Nutzer, Modell, URL, Fehler, Datum/Uhrzeit …)"
                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2"
                oninput="renderLlmDebugLog()">
+        <select id="llm-debug-user-filter" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2 bg-white"
+                onchange="loadLlmDebugLog()">
+          <option value="">Nutzer: alle</option>
+        </select>
         <div id="llm-debug-count" class="text-xs text-gray-400 mb-3"></div>
 
         <div id="llm-debug-list" class="space-y-2">
           <div class="text-center py-8 text-gray-400">Log wird geladen …</div>
         </div>
+        <div id="llm-debug-sentinel" class="text-center py-2 text-xs text-gray-400"></div>
       </div>
 
     </div>
@@ -920,8 +925,14 @@
     }
   }
 
-  // ─── LLM Debug Log ──────────────────────────────────────────
+  // ─── LLM Debug Log (paginiert + Lazy-Loading der Volltexte) ──
   let llmDebugEntries = null;
+  let llmDebugTotal = 0;
+  let llmDebugUsers = [];
+  let llmDebugLoading = false;
+  let llmDebugDone = false;
+  let llmDebugDetails = {};
+  const LLM_DEBUG_PAGE = 20;
 
   function llmDebugEsc(text) {
     if (text === null || text === undefined) return '';
@@ -932,17 +943,102 @@
       .replace(/"/g, '&quot;');
   }
 
-  async function loadLlmDebugLog() {
+  async function loadLlmDebugLog(reset) {
+    if (llmDebugLoading) return;
     const list = document.getElementById('llm-debug-list');
+    if (reset !== false) {
+      llmDebugEntries = [];
+      llmDebugDetails = {};
+      llmDebugDone = false;
+      llmDebugTotal = 0;
+      list.innerHTML = '<div class="text-center py-8 text-gray-400">Log wird geladen …</div>';
+    }
+    llmDebugLoading = true;
+    updateLlmDebugSentinel();
     try {
-      const res = await fetch('/api/admin/llm-debug-log');
+      const userSel = document.getElementById('llm-debug-user-filter');
+      const userId = userSel ? userSel.value : '';
+      const url = '/api/admin/llm-debug-log?offset=' + llmDebugEntries.length
+        + '&limit=' + LLM_DEBUG_PAGE
+        + (userId ? '&user_id=' + encodeURIComponent(userId) : '');
+      const res = await fetch(url);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      llmDebugEntries = data.entries || [];
+      llmDebugTotal = data.total || 0;
+      llmDebugEntries = llmDebugEntries.concat(data.entries || []);
+      llmDebugUsers = data.users || [];
+      llmDebugDone = llmDebugEntries.length >= llmDebugTotal;
+      updateLlmDebugUserFilter();
       renderLlmDebugLog();
     } catch (err) {
-      list.innerHTML = '<div class="text-center py-8 text-red-500">Fehler beim Laden: ' + llmDebugEsc(err.message) + '</div>';
+      if (reset !== false) {
+        list.innerHTML = '<div class="text-center py-8 text-red-500">Fehler beim Laden: ' + llmDebugEsc(err.message) + '</div>';
+      } else {
+        const sentinel = document.getElementById('llm-debug-sentinel');
+        if (sentinel) {
+          sentinel.innerHTML = '<div class="text-center py-2 text-xs text-red-400">Fehler beim Laden weiterer Einträge: ' + llmDebugEsc(err.message) + '</div>';
+        }
+      }
+    } finally {
+      llmDebugLoading = false;
+      updateLlmDebugSentinel();
+      maybeLoadMoreLlmDebug();
     }
+  }
+
+  function updateLlmDebugUserFilter() {
+    const sel = document.getElementById('llm-debug-user-filter');
+    if (!sel) return;
+    const prev = sel.value;
+    // Distinct Nutzer server-seitig (kompletttes Retention-Fenster)
+    sel.innerHTML = '<option value="">Nutzer: alle</option>'
+      + llmDebugUsers.map(u =>
+          '<option value="' + u.id + '">' + llmDebugEsc(u.name) + '</option>').join('');
+    if (prev && llmDebugUsers.some(u => String(u.id) === prev)) sel.value = prev;
+  }
+
+  function updateLlmDebugSentinel() {
+    const sentinel = document.getElementById('llm-debug-sentinel');
+    if (!sentinel) return;
+    if (llmDebugLoading) {
+      sentinel.innerHTML = '<div class="text-center py-2 text-xs text-gray-400">Lade weitere Einträge …</div>';
+    } else if (llmDebugDone && llmDebugTotal > 0) {
+      sentinel.innerHTML = '<div class="text-center py-2 text-xs text-gray-400">Alle ' + llmDebugTotal + ' Einträge geladen</div>';
+    } else {
+      sentinel.innerHTML = '';
+    }
+  }
+
+  function maybeLoadMoreLlmDebug() {
+    if (llmDebugLoading || llmDebugDone) return;
+    const section = document.getElementById('section-llm-debug');
+    if (section && section.classList.contains('hidden')) return;
+    const sentinel = document.getElementById('llm-debug-sentinel');
+    if (!sentinel) return;
+    const rect = sentinel.getBoundingClientRect();
+    if (rect.top <= window.innerHeight + 600) loadLlmDebugLog(false);
+  }
+
+  window.addEventListener('scroll', maybeLoadMoreLlmDebug, { passive: true });
+
+  // Volltexte (System-Prompt/Prompt/Antwort/Thinking) — erst nach Lazy-Load verfügbar
+  function llmDebugBodyHTML(d) {
+    let html = '';
+    if (d.error) {
+      html += '<div class="mb-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"><strong>Fehler:</strong> ' + llmDebugEsc(d.error) + '</div>';
+    }
+    html += '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">System-Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(d.system_prompt) + '</pre></details>';
+    html += '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(d.prompt) + '</pre></details>';
+    const thinkingBlock = d.thinking
+      ? '<details class="mb-2"><summary class="cursor-pointer text-xs font-semibold text-purple-600 hover:text-purple-800">💭 Thinking anzeigen</summary><pre class="mt-2 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(d.thinking) + '</pre></details>'
+      : '';
+    if (d.response || d.thinking) {
+      html += '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Antwort</summary><div class="mt-2 p-3 bg-gray-50 border rounded-lg max-h-96 overflow-y-auto">'
+        + thinkingBlock
+        + (d.response ? '<pre class="text-xs whitespace-pre-wrap break-words">' + llmDebugEsc(d.response) + '</pre>' : '')
+        + '</div></details>';
+    }
+    return html;
   }
 
   function llmDebugEntryHTML(e) {
@@ -953,22 +1049,16 @@
       ? '<span class="text-green-600 font-semibold" title="Erfolgreich">✓</span>'
       : '<span class="text-red-600 font-semibold" title="' + llmDebugEsc(e.error || 'Fehler') + '">✕</span>';
     const time = new Date(e.ts).toLocaleString('de-DE');
-
-    const thinkingBlock = e.thinking
-      ? '<details class="mb-2"><summary class="cursor-pointer text-xs font-semibold text-purple-600 hover:text-purple-800">💭 Thinking anzeigen</summary><pre class="mt-2 p-3 bg-purple-50 border border-purple-200 rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.thinking) + '</pre></details>'
-      : '';
-
-    const answerBlock = (e.response || e.thinking)
-      ? '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Antwort</summary><div class="mt-2 p-3 bg-gray-50 border rounded-lg max-h-96 overflow-y-auto">'
-        + thinkingBlock
-        + (e.response ? '<pre class="text-xs whitespace-pre-wrap break-words">' + llmDebugEsc(e.response) + '</pre>' : '')
-        + '</div></details>'
-      : '';
+    const cached = llmDebugDetails[e.id];
+    const bodyContent = cached
+      ? llmDebugBodyHTML(cached)
+      : '<div class="text-xs text-gray-400">Inhalt (Prompts, Antwort, …) wird beim Aufklappen geladen.</div>';
 
     return '<div class="border rounded-lg bg-white overflow-clip">'
-      + '<details>'
+      + '<details data-entry-id="' + e.id + '">'
       + '<summary class="cursor-pointer px-4 py-3 flex items-center gap-2 flex-wrap hover:bg-gray-50">'
       + badge
+      + (e.user ? '<span class="text-xs text-gray-500">👤 ' + llmDebugEsc(e.user) + '</span>' : '')
       + '<span class="font-mono text-sm font-semibold text-gray-800">' + llmDebugEsc(e.label) + '</span>'
       + '<span class="text-xs text-gray-400">' + llmDebugEsc(e.model) + '</span>'
       + '<span class="text-xs text-gray-400 ml-auto">' + time + '</span>'
@@ -976,14 +1066,36 @@
       + '</summary>'
       + '<div class="px-4 pb-4 pt-2 border-t">'
       + '<div class="text-xs text-gray-500 mb-1">Modell: <span class="font-mono">' + llmDebugEsc(e.model) + '</span> · URL: <span class="font-mono break-all">' + llmDebugEsc(e.url) + '</span> · Latenz: ' + e.latency_ms + ' ms · Versuche: ' + e.attempts + '</div>'
-      + (e.error ? '<div class="mt-2 mb-1 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700"><strong>Fehler:</strong> ' + llmDebugEsc(e.error) + '</div>' : '')
-      + '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">System-Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.system_prompt) + '</pre></details>'
-      + '<details class="mt-2"><summary class="cursor-pointer text-xs font-semibold text-gray-500 hover:text-gray-700">Prompt</summary><pre class="mt-2 p-3 bg-gray-50 border rounded-lg text-xs whitespace-pre-wrap break-words max-h-96 overflow-y-auto">' + llmDebugEsc(e.prompt) + '</pre></details>'
-      + answerBlock
+      + '<div class="llm-debug-body mt-2">' + bodyContent + '</div>'
       + '</div>'
       + '</details>'
       + '</div>';
   }
+
+  // Lazy-Loading: Volltexte erst beim ersten Aufklappen eines Eintrags laden
+  // (toggle-Event bubblert nicht → Capture auf dem List-Container)
+  async function onLlmDebugToggle(ev) {
+    const det = ev.target.closest ? ev.target.closest('details[data-entry-id]') : null;
+    if (!det || !det.open) return;
+    const id = det.getAttribute('data-entry-id');
+    if (!id || llmDebugDetails[id]) return;
+    const body = det.querySelector('.llm-debug-body');
+    if (!body) return;
+    body.innerHTML = '<div class="text-xs text-gray-400">Lade Inhalt …</div>';
+    try {
+      const res = await fetch('/api/admin/llm-debug-log/' + id);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+      llmDebugDetails[id] = d;
+      if (body.isConnected) body.innerHTML = llmDebugBodyHTML(d);
+    } catch (err) {
+      if (body.isConnected) {
+        body.innerHTML = '<div class="text-xs text-red-500">Inhalt konnte nicht geladen werden: ' + llmDebugEsc(err.message) + '</div>';
+      }
+    }
+  }
+
+  document.getElementById('llm-debug-list').addEventListener('toggle', onLlmDebugToggle, true);
 
   function renderLlmDebugLog() {
     const list = document.getElementById('llm-debug-list');
@@ -992,27 +1104,27 @@
 
     const searchEl = document.getElementById('llm-debug-search');
     const q = (searchEl ? searchEl.value : '').trim().toLowerCase();
-    // NUR Metadaten filtern (Prompt/Antwort/Thinking bewusst ausgeschlossen —
-    // dort ist zu viel Text, der matchen könnte); Timestamp als de-DE-String + roh.
+    // NUR Metadaten filtern (Prompt/Antwort/Thinking werden erst lazy geladen
+    // und sind deshalb nicht durchsuchbar); Timestamp als de-DE-String + roh.
     const tsStr = e => { try { return new Date(e.ts).toLocaleString('de-DE'); } catch { return ''; } };
-    const filtered = q
-      ? llmDebugEntries.filter(e =>
-          [e.label, e.model, e.url, e.error, tsStr(e), e.ts]
-            .some(v => v && String(v).toLowerCase().includes(q)))
-      : llmDebugEntries;
+    const filtered = llmDebugEntries.filter(e =>
+      !q || [e.label, e.user, e.model, e.url, e.error, tsStr(e), e.ts]
+            .some(v => v && String(v).toLowerCase().includes(q)));
 
-    countEl.textContent = filtered.length + ' von ' + llmDebugEntries.length + ' Einträgen';
+    countEl.textContent = filtered.length + ' von ' + llmDebugTotal + ' Einträgen'
+      + (llmDebugDone ? '' : ' (' + llmDebugEntries.length + ' geladen)');
     if (filtered.length === 0) {
-      list.innerHTML = '<div class="text-center py-8 text-gray-400">Keine Einträge' + (q ? ' für diese Suche' : ' (noch keine LLM-Calls getätigt)') + '</div>';
+      const hint = q
+        ? ' für diese Suche'
+        : (llmDebugDone && llmDebugTotal === 0 ? ' (noch keine LLM-Calls getätigt)' : '');
+      list.innerHTML = '<div class="text-center py-8 text-gray-400">Keine Einträge' + hint + '</div>';
+      updateLlmDebugSentinel();
       return;
     }
 
-    const MAX_RENDER = 100;
-    const shown = filtered.slice(0, MAX_RENDER);
-    list.innerHTML = shown.map(llmDebugEntryHTML).join('')
-      + (filtered.length > MAX_RENDER
-        ? '<div class="text-center py-2 text-xs text-gray-400">… nur die ersten ' + MAX_RENDER + ' Einträge werden angezeigt (Suche eingrenzen)</div>'
-        : '');
+    list.innerHTML = filtered.map(llmDebugEntryHTML).join('');
+    updateLlmDebugSentinel();
+    maybeLoadMoreLlmDebug();
   }
 </script>
 {% endblock %}

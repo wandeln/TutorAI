@@ -127,14 +127,17 @@ def migrate_schema():
             "reference_map": "JSON NOT NULL DEFAULT '{}'",  # detektierte Quellen (BibTeX-Keys)
             "ref_extract_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: LLM-Quellen-Extraktion
             "slides_plan_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: Folien-Planner
-            "refine_status": "VARCHAR(20) DEFAULT 'pending'",  # Stufe: Nachbesserung (Refinement)
         },
         "course_media": {
             "content_hash": "VARCHAR(64)",  # SHA256 der Quelldatei (Medien-Import-Dedup)
         },
+        "llm_debug_entries": {
+            "user_id": "INTEGER",  # auslösender User (NULL = kein User-Kontext)
+        },
     }
     column_drops = {
         "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt
+        "course_imports": ["refine_status"],  # Stufe „Nachbesserung“ entfallen
     }
     is_sqlite = "sqlite" in DATABASE_URL
 

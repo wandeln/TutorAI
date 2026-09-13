@@ -154,10 +154,6 @@
     let dragList = null;         // 'chapters' | 'decks'
     let chaptersDescOpen = new Set();  // offene Beschreibung-Details (Skript-Plan, per Index)
     let decksDescOpen = new Set();     // dito für Folien-Plan
-    let ghostSectionEdits = {};        // id → editierte LLM-Beschreibung (bestehende Kapitel, Ghost-Zeilen)
-    let ghostDeckEdits = {};           // dito für bestehende Decks
-    let ghostSectionDescOpen = new Set();  // offene Ghost-Beschreibungen (per id)
-    let ghostDeckDescOpen = new Set();
     let openSec = { filemap: false, media: false, references: false, script: false, slides: false, report: false };
     let forceOpenSec = null;   // Abschnitt, der beim nächsten Render erzwungen geöffnet wird
     let prevReportCount = 0;   // Bericht: auto-öffnen, wenn neue Meldungen eintreffen
@@ -225,9 +221,8 @@
               //  gelesene Zustand nicht wieder überschrieben wird)
               const secFor = {
                 plan: 'script', slides_plan: 'slides', ref_extract: 'references',
-                refine: (((ns.report || {}).refine_options || {}).scope === 'slides') ? 'slides' : 'script',
               };
-              for (const k of ['filemap', 'media', 'references', 'ref_extract', 'plan', 'slides_plan', 'script', 'slides', 'refine']) {
+              for (const k of ['filemap', 'media', 'references', 'ref_extract', 'plan', 'slides_plan', 'script', 'slides']) {
                 if (ns[k + '_status'] === 'running' && prev[k + '_status'] !== 'running') {
                   forceOpenSec = secFor[k] || k;
                 }
@@ -248,11 +243,6 @@
 
     function prog(st, stage) {
       return (st.progress && st.progress.stages && st.progress.stages[stage]) || {};
-    }
-
-    function refineScope() {
-      const ro = (state && state.report) ? (state.report.refine_options || {}) : {};
-      return ro.scope || null;
     }
 
     // ─── Render: kein Import → Upload ───────────────────────────────
@@ -429,20 +419,10 @@
     }
 
     function section(s, st) {
-      // Nachbesserung (refine) zeigt auf der Karte ihres Scopes (script/slides)
-      const refineSt = st.refine_status || 'pending';
-      const refineHere = refineScope() === s.key &&
-        (refineSt === 'running' || refineSt === 'paused' || refineSt === 'interrupted');
-      const status = refineHere ? refineSt : st[s.key + '_status'];
-      let label, cls;
-      if (refineHere) {
-        const base = STATUS[status] || ['?', 'bg-gray-100 text-gray-600'];
-        label = '🔧 ' + base[0]; cls = base[1];
-      } else {
-        [label, cls] = STATUS[status] || ['?', 'bg-gray-100 text-gray-600'];
-      }
+      const status = st[s.key + '_status'];
+      const [label, cls] = STATUS[status] || ['?', 'bg-gray-100 text-gray-600'];
       const isOpen = !!openSec[s.key];
-      const p = refineHere ? prog(st, 'refine') : prog(st, s.key);
+      const p = prog(st, s.key);
       const total = p.total || 0;
       const done = Math.min(p.done || 0, total);
       const failed = Math.min(p.failed || 0, total);
@@ -466,7 +446,6 @@
         script: ['plan', 'script'],
         slides: ['slides_plan', 'slides'],
       }[s.key] || [s.key];
-      if (refineHere) keys.push('refine');
       const body = {
         filemap: filemapPanel,
         media: mediaPanel,
@@ -922,7 +901,7 @@
         <button data-act="chapter-add" class="text-xs text-blue-600 hover:underline">+ Kapitel</button>
       </div>
       <div id="chapter-list" class="space-y-1.5 max-h-80 overflow-y-auto pr-1"></div>
-      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Kapitel anhaken = zum Neu-Generieren oder Nachbessern auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Kapitel ohne Quellen („auto“): Quellen werden beim Generieren automatisch aus den Materialien ermittelt · Bestehende Kurs-Kapitel (gestrichelte Zeilen unten): anhaken = aus den Import-Materialien (neu)generieren, bestehender Inhalt als Basis.</p>
+      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Kapitel anhaken = zum Neu-Generieren auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Kapitel ohne Quellen („auto“): Quellen werden beim Generieren automatisch aus den Materialien ermittelt · </p>
       <div id="script-actions" class="mt-3 border-t border-gray-100 pt-3">${scriptActionsHTML(st.chapter_plan || [])}</div>`;
     }
 
@@ -933,16 +912,11 @@
       const p = state.script_status;
       const doneN = plan.filter((c) => c.script_status === 'done').length;
       const todo = plan.filter((c) => c.enabled && c.script_status !== 'done').length;
-      const refineN = plan.filter((c) => c.section_id && c.enabled).length;
-      const r = state.refine_status || 'pending';
-      const refineHere = (r === 'running' || r === 'paused' || r === 'interrupted') && refineScope() === 'script';
       if (p === 'running' || p === 'paused' || p === 'interrupted') {
         html += `<p class="text-xs text-gray-500">${esc((state.progress && state.progress.current) || '…')}</p>`;
-      } else if (refineHere) {
-        html += `<p class="text-xs text-blue-600">🔧 Nachbesserung der Skript-Kapitel ${r === 'running' ? 'läuft' : 'angehalten'}: ${esc((state.progress && state.progress.current) || '…')}</p>`;
       } else {
         if (p === 'skipped') html += `<p class="text-sm text-gray-500">Skript-Generierung übersprungen.</p>`;
-        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Kapitel im Plan — per „+ Kapitel“ anlegen, bestehende Kurs-Kapitel (gestrichelte Zeilen) anhaken oder Vorschläge generieren.</p>`;
+        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Kapitel im Plan — per „+ Kapitel“ anlegen oder Vorschläge generieren.</p>`;
         if (todo > 0) {
           html += `<div class="flex gap-2 mt-2">
             <button data-act="script-start" class="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-blue-700 font-semibold">Skript generieren (${todo})</button>
@@ -950,11 +924,6 @@
         }
         if (doneN > 0) {
           html += `<p class="mt-2 text-sm ${todo === 0 ? 'text-green-700' : 'text-gray-500'}">${todo === 0 ? '✓ ' : ''}${doneN}/${plan.length} Kapitel generiert${todo === 0 ? '.' : ' — Rest per „Skript generieren“.'}</p>`;
-        }
-        if (refineN > 0) {
-          html += `<div class="flex gap-2 mt-2">
-            <button data-act="refine-start" data-scope="script" title="Nur die per Checkbox angeklickten Kapitel werden gegen die Import-Materialien geprüft und lokal nachbessert (LLM); danach werden ihre Checkboxen automatisch deaktiviert" class="border border-blue-300 text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg text-sm hover:bg-blue-100">🔧 Nachbessern (${refineN} Kapitel)</button>
-          </div>`;
         }
       }
       return html;
@@ -971,7 +940,7 @@
         <button data-act="deck-add" class="text-xs text-blue-600 hover:underline">+ Deck</button>
       </div>
       <div id="deck-list" class="space-y-1.5 max-h-80 overflow-y-auto pr-1"></div>
-      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Deck anhaken = zum Neu-Generieren oder Nachbessern auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Deck ohne Quellen: Quellen werden beim Generieren automatisch aus den Materialien ermittelt · Bestehende Slide-Decks (gestrichelte Zeilen unten): anhaken = aus den Import-Materialien (neu)generieren, bestehendes Deck als Basis.</p>
+      <p class="text-[11px] text-gray-400 mt-2">Änderungen werden automatisch gespeichert · Reihenfolge per Ziehen (⠿) ändern · Checkbox: Auswahl (fertiges Deck anhaken = zum Neu-Generieren auswählen) · „Beschreibung“ (zeilenweise aufklappbar): LLM-Beschreibung einsehen/bearbeiten · Deck ohne Quellen: Quellen werden beim Generieren automatisch aus den Materialien ermittelt · </p>
       <div id="slides-actions" class="mt-3 border-t border-gray-100 pt-3">${slidesActionsHTML(st.slides_plan || [])}</div>`;
     }
 
@@ -982,16 +951,11 @@
       const p = state.slides_status;
       const doneN = plan.filter((d) => d.slides_status === 'done').length;
       const todo = plan.filter((d) => d.enabled && d.slides_status !== 'done').length;
-      const refineN = plan.filter((d) => d.material_id && d.enabled).length;
-      const r = state.refine_status || 'pending';
-      const refineHere = (r === 'running' || r === 'paused' || r === 'interrupted') && refineScope() === 'slides';
       if (p === 'running' || p === 'paused' || p === 'interrupted') {
         html += `<p class="text-xs text-gray-500">${esc((state.progress && state.progress.current) || '…')}</p>`;
-      } else if (refineHere) {
-        html += `<p class="text-xs text-blue-600">🔧 Nachbesserung der Slide-Decks ${r === 'running' ? 'läuft' : 'angehalten'}: ${esc((state.progress && state.progress.current) || '…')}</p>`;
       } else {
         if (p === 'skipped') html += `<p class="text-sm text-gray-500">Folien-Generierung übersprungen.</p>`;
-        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Decks im Plan — per „+ Deck“ anlegen, bestehende Slide-Decks (gestrichelte Zeilen) anhaken oder Vorschläge generieren.</p>`;
+        if (plan.length === 0) html += `<p class="text-xs text-gray-400 mt-2">Keine Decks im Plan — per „+ Deck“ anlegen oder Vorschläge generieren.</p>`;
         if (todo > 0) {
           const curDecks = state.decks || [];
           let mode;
@@ -1016,11 +980,6 @@
         }
         if (doneN > 0) {
           html += `<p class="mt-2 text-sm ${todo === 0 ? 'text-green-700' : 'text-gray-500'}">${todo === 0 ? '✓ ' : ''}${doneN}/${plan.length} Slide-Decks generiert${todo === 0 ? '.' : ' — Rest per „Folien generieren“.'}</p>`;
-        }
-        if (refineN > 0) {
-          html += `<div class="flex gap-2 mt-2">
-            <button data-act="refine-start" data-scope="slides" title="Nur die per Checkbox angeklickten Decks werden gegen die Import-Materialien geprüft und lokal nachbessert (LLM); danach werden ihre Checkboxen automatisch deaktiviert" class="border border-blue-300 text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg text-sm hover:bg-blue-100">🔧 Nachbessern (${refineN} Decks)</button>
-          </div>`;
         }
       }
       return html;
@@ -1047,7 +1006,7 @@
       return `<div class="plan-row border border-gray-200 rounded-lg px-2 py-1.5 bg-white" data-list="chapters" data-idx="${i}"${c.regen ? ' data-regen="1"' : ''}>
         <div class="flex items-center gap-2">
           <span class="plan-drag cursor-grab text-gray-300 select-none" title="Ziehen zum Sortieren">⠿</span>
-          <input type="checkbox" data-ch="enabled" ${c.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Kapitel auswählen (neu generieren / nachbessern)' : 'Kapitel aktivieren'}">
+          <input type="checkbox" data-ch="enabled" ${c.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Kapitel auswählen (neu generieren)' : 'Kapitel aktivieren'}">
           <input type="text" data-ch="title" value="${esc(c.title)}" maxlength="300"
                  class="flex-1 min-w-0 text-sm border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1.5 py-0.5 focus:outline-none"
                  placeholder="Kapitel-Titel">
@@ -1074,7 +1033,7 @@
       return `<div class="plan-row border border-blue-100 rounded-lg px-2 py-1.5 bg-white" data-list="decks" data-idx="${i}"${d.regen ? ' data-regen="1"' : ''}>
         <div class="flex items-center gap-2">
           <span class="plan-drag cursor-grab text-gray-300 select-none" title="Ziehen zum Sortieren">⠿</span>
-          <input type="checkbox" data-deck="enabled" ${d.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Deck auswählen (neu generieren / nachbessern)' : 'Deck aktivieren'}">
+          <input type="checkbox" data-deck="enabled" ${d.enabled ? 'checked' : ''} class="accent-blue-600" title="${isDone ? 'Deck auswählen (neu generieren)' : 'Deck aktivieren'}">
           <input type="text" data-deck="title" value="${esc(d.title)}" maxlength="300"
                  class="flex-1 min-w-0 text-sm border border-transparent hover:border-gray-200 focus:border-blue-400 rounded px-1.5 py-0.5 focus:outline-none"
                  placeholder="Deck-Titel">
@@ -1093,97 +1052,15 @@
       </div>`;
     }
 
-    // ─── Ghost-Zeilen: bestehende Kurs-Kapitel/-Decks in derselben Liste ────
-    // Gestrichelte Zeilen unter den Plan-Einträgen (bewusst NICHT .plan-row:
-    // Drag&Drop und der Keep-Merge von syncPlanList bleiben davon unberührt).
-    // Anhaken → wird zu einer normalen Plan-Zeile (mit LLM-Beschreibung).
-
-    function ghostSectionRowsHTML() {
-      const inPlan = new Set(chapters.filter((c) => c.section_id).map((c) => c.section_id));
-      const secs = state ? (state.existing_sections || []).filter((sc) => !inPlan.has(sc.id)) : [];
-      return secs.map(ghostSectionRow).join('');
-    }
-
-    function ghostSectionRow(sc) {
-      const descOpen = ghostSectionDescOpen.has(sc.id);
-      const desc = ghostSectionEdits[sc.id] != null ? ghostSectionEdits[sc.id] : (sc.description || '');
-      return `<div class="ghost-row border border-dashed border-gray-300 rounded-lg px-2 py-1.5 bg-gray-50" data-ghost-section="${sc.id}">
-        <div class="flex items-center gap-2">
-          <span class="w-[14px] shrink-0"></span>
-          <input type="checkbox" data-existing-section="${sc.id}" class="accent-blue-600"
-            title="Anhaken: aus den Import-Materialien (neu)generieren (bestehender Inhalt als Basis)">
-          <span class="flex-1 min-w-0 text-sm text-gray-600 truncate" title="${esc(sc.title)}">${esc(sc.title)}</span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500 whitespace-nowrap">Kurs-Kapitel</span>
-          <button data-act="ghost-section-desc" data-idx="${sc.id}" class="text-gray-400 hover:text-blue-600" title="LLM-Beschreibung einsehen/bearbeiten">📝</button>
-          <span class="w-[26px] shrink-0"></span>
-          <span class="w-[18px] shrink-0"></span>
-        </div>
-        <details class="ghost-desc mt-1.5"${descOpen ? ' open' : ''}>
-          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
-          <div class="pt-1.5">
-            <textarea data-ghost-section-desc="${sc.id}" rows="3"
-              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
-              placeholder="Beschreibung für das LLM (so würde das Kapitel aus den Import-Materialien (neu)generiert/editiert)">${esc(desc)}</textarea>
-          </div>
-        </details>
-      </div>`;
-    }
-
-    function ghostDeckRowsHTML() {
-      const inPlan = new Set(decks.filter((d) => d.material_id).map((d) => d.material_id));
-      const ds = state ? (state.decks || []).filter((d0) => !inPlan.has(d0.id)) : [];
-      return ds.map(ghostDeckRow).join('');
-    }
-
-    function ghostDeckRow(d0) {
-      const descOpen = ghostDeckDescOpen.has(d0.id);
-      const desc = ghostDeckEdits[d0.id] != null ? ghostDeckEdits[d0.id] : (d0.description || '');
-      return `<div class="ghost-row border border-dashed border-blue-200 rounded-lg px-2 py-1.5 bg-gray-50" data-ghost-deck="${d0.id}">
-        <div class="flex items-center gap-2">
-          <span class="w-[14px] shrink-0"></span>
-          <input type="checkbox" data-existing-deck="${d0.id}" class="accent-blue-600"
-            title="Anhaken: aus den Import-Materialien (neu)generieren (bestehendes Deck als Basis)">
-          <span class="flex-1 min-w-0 text-sm text-gray-600 truncate" title="${esc(d0.title)}">${esc(d0.title)} <span class="text-gray-400">(${d0.slide_count} Folien)</span></span>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 whitespace-nowrap">Kurs-Deck</span>
-          <button data-act="ghost-deck-desc" data-idx="${d0.id}" class="text-gray-400 hover:text-blue-600" title="LLM-Beschreibung einsehen/bearbeiten">📝</button>
-          <span class="w-[26px] shrink-0"></span>
-          <span class="w-[18px] shrink-0"></span>
-        </div>
-        <details class="ghost-desc mt-1.5"${descOpen ? ' open' : ''}>
-          <summary class="text-[11px] text-gray-400 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">Beschreibung ${descOpen ? '▾' : '▸'}</summary>
-          <div class="pt-1.5">
-            <textarea data-ghost-deck-desc="${d0.id}" rows="3"
-              class="w-full text-xs border border-gray-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none resize-y"
-              placeholder="Beschreibung für das LLM (so würde das Deck aus den Import-Materialien (neu)generiert/editiert)">${esc(desc)}</textarea>
-          </div>
-        </details>
-      </div>`;
-    }
-
-    // Kompletter Listeninhalt: Plan-Zeilen + Ghost-Zeilen (bestehende Kapitel/
-    // Decks, die noch nicht im Plan stehen). Wird von syncPlanList UND
+    // Kompletter Listeninhalt: Plan-Zeilen. Wird von syncPlanList UND
     // rerenderList gemeinsam verwendet (beide Listen bleiben so identisch).
     function listRowsHTML(kind) {
       const isChap = kind === 'chapters';
       const arr = isChap ? chapters : decks;
       const rowFn = isChap ? chapterRow : deckRow;
       let html = arr.map(rowFn).join('');
-      html += isChap ? ghostSectionRowsHTML() : ghostDeckRowsHTML();
       if (!html) html = `<p class="text-xs text-gray-400 py-2">Keine Einträge — „+ ${isChap ? 'Kapitel' : 'Deck'}“.</p>`;
       return html;
-    }
-
-    // Offen-Zustand der Ghost-Beschreibungen aus dem Live-DOM übernehmen
-    // (selbstheilend wie bei den Plan-Zeilen — auch per Summary-Klick geöffnete
-    // Details überleben so den nächsten Re-Render).
-    function snapshotGhostDesc(kind, el) {
-      const attr = kind === 'chapters' ? 'data-ghost-section' : 'data-ghost-deck';
-      const set = kind === 'chapters' ? ghostSectionDescOpen : ghostDeckDescOpen;
-      set.clear();
-      el.querySelectorAll('.ghost-row[' + attr + ']').forEach((r) => {
-        const dEl = r.querySelector('details.ghost-desc');
-        if (dEl && dEl.open) set.add(parseInt(r.getAttribute(attr), 10));
-      });
     }
 
     // Baue/erfrische eine Plan-Liste. Unge­speicherte Titel-/Beschreibungs-Edits
@@ -1194,43 +1071,25 @@
       const isChap = kind === 'chapters';
       const el = document.getElementById(isChap ? 'chapter-list' : 'deck-list');
       if (!el) return;
-      let server = isChap ? (state.chapter_plan || []) : (state.slides_plan || []);
-      // Defensive Aufräumen: Plan-Einträge, die auf gelöschte Kurs-Kapitel/Decks zeigen
-      // (section_id/material_id), dürfen nicht mehr stehen. Der Server pruned sie ebenfalls;
-      // hier fängt es auch einen veralteten Server-Zustand ab. markDirty persistiert das
-      // Aufräumen per Auto-Save (PUT /plan ersetzt den Plan durch die lokale Liste).
-      const idField = isChap ? 'section_id' : 'material_id';
-      let pruned = false;
-      if (state) {
-        const alive = new Set(
-          (isChap ? (state.existing_sections || []) : (state.decks || [])).map((x) => x.id)
-        );
-        const filtered = server.filter((c) => !c[idField] || alive.has(c[idField]));
-        if (filtered.length !== server.length) { server = filtered; pruned = true; }
-      }
+      const server = isChap ? (state.chapter_plan || []) : (state.slides_plan || []);
       const key = JSON.stringify(server);
       const builtFor = isChap ? chaptersBuiltFor : decksBuiltFor;
       const dirty = isChap ? chaptersDirty : decksDirty;
       if (key === builtFor && dirty) return; // User tippt, Server unverändert
 
       const descOpenSet = isChap ? chaptersDescOpen : decksDescOpen;
-      snapshotGhostDesc(kind, el);
       const snap = new Set();
       const keep = [];
-      if (!pruned) {
-        // Bei Prune wird die Liste bewusst OHNE DOM-Merge neu gebaut (seltenes
-        // Aufräum-Ereignis — unbeabsichtigtes Verschieben von Edits wäre schlimmer).
-        el.querySelectorAll(isChap ? '.plan-row[data-list="chapters"]' : '.plan-row[data-list="decks"]').forEach((r) => {
-          const i = parseInt(r.dataset.idx, 10);
-          const descEl = r.querySelector('details.plan-desc');
-          const ta = descEl ? descEl.querySelector('textarea') : null;
-          const desc = ta ? ta.value : null;
-          if (descEl && descEl.classList.contains('plan-desc') && descEl.open) snap.add(i);
-          const ti = r.querySelector(isChap ? 'input[data-ch="title"]' : 'input[data-deck="title"]').value;
-          const en = r.querySelector(isChap ? 'input[data-ch="enabled"]' : 'input[data-deck="enabled"]').checked;
-          keep.push({ title: ti, enabled: en, desc, regen: !!r.getAttribute('data-regen') });
-        });
-      }
+      el.querySelectorAll(isChap ? '.plan-row[data-list="chapters"]' : '.plan-row[data-list="decks"]').forEach((r) => {
+        const i = parseInt(r.dataset.idx, 10);
+        const descEl = r.querySelector('details.plan-desc');
+        const ta = descEl ? descEl.querySelector('textarea') : null;
+        const desc = ta ? ta.value : null;
+        if (descEl && descEl.classList.contains('plan-desc') && descEl.open) snap.add(i);
+        const ti = r.querySelector(isChap ? 'input[data-ch="title"]' : 'input[data-deck="title"]').value;
+        const en = r.querySelector(isChap ? 'input[data-ch="enabled"]' : 'input[data-deck="enabled"]').checked;
+        keep.push({ title: ti, enabled: en, desc, regen: !!r.getAttribute('data-regen') });
+      });
       descOpenSet.clear();
       snap.forEach((i) => descOpenSet.add(i));
 
@@ -1263,11 +1122,10 @@
         (k.regen && (server[i] || {})[statusKey] === 'done')
       ));
       if (isChap) chaptersDirty = isNowDirty; else decksDirty = isNowDirty;
-      if (pruned) markDirty(kind); // Aufräumen persistieren (Re-Build resetet das Flag)
 
       el.innerHTML = listRowsHTML(kind);
       // Plan-Änderungen aus dem Poll-Merge (z. B. Regen-Checkbox) sofort in
-      // Count/Button spiegeln (Ghost-Zeilen entstehen im Re-Render automatisch)
+      // Count/Button spiegeln
       if (isChap) updateScriptActions();
       else updateSlidesActions();
     }
@@ -1318,7 +1176,6 @@
       const el = document.getElementById(kind === 'chapters' ? 'chapter-list' : 'deck-list');
       if (!el) return;
       const top = el.scrollTop;
-      snapshotGhostDesc(kind, el);
       // Offene Beschreibung-Details vor dem Re-Render aus dem DOM snapshoten
       const descOpenSet = kind === 'chapters' ? chaptersDescOpen : decksDescOpen;
       const snap = new Set();
@@ -1403,26 +1260,6 @@
             showToast('Folien-Planner gestartet.', 'success');
             await refresh();
             break;
-          case 'ghost-section-desc': {
-            const id = parseInt(btn.dataset.idx, 10);
-            const row = btn.closest('.ghost-row');
-            const dEl = row ? row.querySelector('details.ghost-desc') : null;
-            if (dEl) {
-              dEl.open = !dEl.open;
-              if (dEl.open) ghostSectionDescOpen.add(id); else ghostSectionDescOpen.delete(id);
-            }
-            break;
-          }
-          case 'ghost-deck-desc': {
-            const id = parseInt(btn.dataset.idx, 10);
-            const row = btn.closest('.ghost-row');
-            const dEl = row ? row.querySelector('details.ghost-desc') : null;
-            if (dEl) {
-              dEl.open = !dEl.open;
-              if (dEl.open) ghostDeckDescOpen.add(id); else ghostDeckDescOpen.delete(id);
-            }
-            break;
-          }
           case 'media-all':
             toggleAllMedia(true);
             break;
@@ -1488,7 +1325,7 @@
             break;
           case 'chapter-del': {
             const i = parseInt(btn.dataset.idx, 10);
-            if (chapters[i] && chapters[i].section_id) { showToast('Bestehende Kurs-Kapitel können nicht aus der Liste entfernt werden (nur deaktivieren).', 'error'); return; }
+            if (chapters[i] && chapters[i].section_id) { showToast('Import-generierte Kapitel können nicht aus der Liste entfernt werden (Kapitel im Skript-Tab löschen, dann erneut vorschlagen).', 'error'); return; }
             if (chapters[i] && !confirm(`Kapitel „${chapters[i].title}“ entfernen?`)) return;
             chapters.splice(i, 1);
             markDirty('chapters');
@@ -1497,7 +1334,7 @@
           }
           case 'deck-del': {
             const i = parseInt(btn.dataset.idx, 10);
-            if (decks[i] && decks[i].material_id) { showToast('Bestehende Kurs-Decks können nicht aus der Liste entfernt werden (nur deaktivieren).', 'error'); return; }
+            if (decks[i] && decks[i].material_id) { showToast('Import-generierte Decks können nicht aus der Liste entfernt werden (Deck im Folien-Tab löschen, dann erneut vorschlagen).', 'error'); return; }
             if (decks[i] && !confirm(`Deck „${decks[i].title}“ entfernen?`)) return;
             decks.splice(i, 1);
             markDirty('decks');
@@ -1513,15 +1350,6 @@
             await savePlan('decks');
             const cb = document.getElementById('slides-del-cb');
             await api('/slides', { method: 'POST', body: JSON.stringify({ delete_original: cb ? cb.checked : false }) });
-            await refresh();
-            break;
-          }
-          case 'refine-start': {
-            const scope = btn.dataset.scope === 'slides' ? 'slides' : 'script';
-            await api('/refine', { method: 'POST', body: JSON.stringify({ scope }) });
-            showToast(scope === 'script'
-              ? 'Nachbesserung der Skript-Kapitel gestartet.'
-              : 'Nachbesserung der Slide-Decks gestartet.', 'success');
             await refresh();
             break;
           }
@@ -1586,50 +1414,6 @@
           }
           markDirty('decks');
         }
-      } else if (t.dataset.existingSection != null) {
-        const id = parseInt(t.dataset.existingSection, 10);
-        const sc = (state.existing_sections || []).find((x) => x.id === id);
-        if (!sc) return;
-        const idx = chapters.findIndex((c) => c.section_id === id);
-        if (t.checked) {
-          if (idx === -1) {
-            // Ghost-Zeile → Plan-Zeile (mit LLM-Beschreibung aus der Ghost-Zeile)
-            chapters.push({
-              title: sc.title, enabled: true,
-              description: ghostSectionEdits[id] != null ? ghostSectionEdits[id] : (sc.description || ''),
-              sources: [], sections: [sc.id], section_id: sc.id,
-              script_status: 'pending', script_error: null,
-            });
-          } else {
-            chapters[idx].enabled = true;
-          }
-        } else if (idx !== -1) {
-          chapters[idx].enabled = false;
-        }
-        markDirty('chapters');
-        rerenderList('chapters');
-      } else if (t.dataset.existingDeck != null) {
-        const id = parseInt(t.dataset.existingDeck, 10);
-        const d0 = (state.decks || []).find((x) => x.id === id);
-        if (!d0) return;
-        const idx = decks.findIndex((d) => d.material_id === id);
-        if (t.checked) {
-          if (idx === -1) {
-            // Ghost-Zeile → Plan-Zeile (mit LLM-Beschreibung aus der Ghost-Zeile)
-            decks.push({
-              title: d0.title, enabled: true,
-              description: ghostDeckEdits[id] != null ? ghostDeckEdits[id] : (d0.description || ''),
-              sources: [], sections: [], slides: null, material_id: d0.id,
-              slides_status: 'pending', slides_error: null,
-            });
-          } else {
-            decks[idx].enabled = true;
-          }
-        } else if (idx !== -1) {
-          decks[idx].enabled = false;
-        }
-        markDirty('decks');
-        rerenderList('decks');
       } else if (t.id === 'add-file') {
         if (t.files[0]) upload(t.files[0], 'add');
       } else if (t.id === 'slides-del-cb') {
@@ -1652,13 +1436,6 @@
       } else if (e.target.matches('textarea[data-deck="description"]')) {
         const i = parseInt(e.target.dataset.idx, 10);
         if (decks[i]) { decks[i].description = e.target.value; markDirty('decks'); }
-      } else if (e.target.matches('textarea[data-ghost-section-desc]')) {
-        // Ghost-Beschreibung: wird erst beim Anhaken Teil des Plans (kein markDirty)
-        const id = parseInt(e.target.dataset.ghostSectionDesc, 10);
-        ghostSectionEdits[id] = e.target.value;
-      } else if (e.target.matches('textarea[data-ghost-deck-desc]')) {
-        const id = parseInt(e.target.dataset.ghostDeckDesc, 10);
-        ghostDeckEdits[id] = e.target.value;
       }
     });
 

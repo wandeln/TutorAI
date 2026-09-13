@@ -24,8 +24,23 @@ from database.models import User, GlobalUserRole, CourseRole, UserCourse
 import hashlib
 import secrets
 import logging
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
+
+# ─── Current-User-Kontext (z. B. für das LLM-Debug-Log) ───────────
+# Wird von den Auth-Dependencies gesetzt. Propagiert automatisch auf
+# daraus gestartete asyncio-Tasks (Import-, Grading-Jobs, …), sodass jeder
+# LLM-Call dem User zugeordnet werden kann, der ihn ausgelöst hat.
+_current_user_id: ContextVar[Optional[int]] = ContextVar("current_user_id", default=None)
+
+
+def set_current_user_id(user_id: Optional[int]) -> None:
+    _current_user_id.set(user_id)
+
+
+def get_current_user_id() -> Optional[int]:
+    return _current_user_id.get()
 
 # ─── Password Hashing (SHA-256 + salt, kein passlib nötig) ─────
 def hash_password(password: str) -> str:
@@ -292,6 +307,7 @@ async def get_current_user(
     if not user:
         raise HTTPException(status_code=401, detail="User nicht gefunden.")
     
+    set_current_user_id(user.id)
     return user
 
 
@@ -333,6 +349,7 @@ def require_global_admin():
                 detail="Zugriff verweigert. Nur Administratoren.",
             )
         
+        set_current_user_id(user.id)
         return user
     return role_check
 

@@ -850,8 +850,6 @@ class CourseImport(SQLModel, table=True):
     - manifest:     [{path, type, size, read_path?, pages?, line_count?, main_tex?}]
                     (klassifizierte Zip-Einträge; read_path = Datei, die gelesen
                     wird = Sidecar (.md) für docx/pptx/pdf, sonst die Originale)
-    - refine-Scope: report["refine_options"] = {"scope": "script"|"slides"}
-                    (Wirkbereich der Nachbesserungs-Stufe, stateless für Resume)
     - file_map:     {path: {status, chunks: [{start_line, end_line, summary,
                     headings: [{text, line, level}], error?}], error?}}
                     (LLM-Struktur-Digests der Text-Dateien; Zeilen 1-basiert, inclusive)
@@ -859,16 +857,18 @@ class CourseImport(SQLModel, table=True):
     - reference_map: {key: {entry_type, authors, title, year, venue, detail, address,
                     doi, url, note, stub?, sources: [Datei], imported_ref_id?}}
                     (detected Quellen aus .bib-Files + \\cite-Keys; stub = Key ohne Bib-Daten)
-    - chapter_plan: [{title, enabled, description?, sources: [{file, start_line,
-                    end_line}], section_id?, script_status: pending|done|error,
-                    script_error?}] (Skript-Plan; Einträge mit section_id =
-                    Regenerierung eines bestehenden Kapitels; ältere Pläne können
-                    zusätzlich „slides“ enthalten, aus dem der Folien-Plan bei
-                    Bedarf abgeleitet wird)
-    - slides_plan:  [{title, enabled, description?, script_chapters? (legacy),
-                    sources: [...], slides?: {deck, start, end} | null,
-                    sections?: [ScriptSection.id], material_id?,
+    - chapter_plan: [{title, enabled, description?, section_id?,
+                    script_status: pending|done|error, script_error?}]
+                    (Skript-Plan; description nennt die Text-Quelldateien mit
+                    Pfad + Zeilenbereich. sources/sections (Gather-Ergebnis) und
+                    section_id (generiertes Kapitel, Edit-Modus/Reihenfolge) werden
+                    zur Laufzeit ergänzt; ältere Pläne können zusätzlich „sources“/
+                    „slides“ enthalten und werden toleriert, aber ignoriert)
+    - slides_plan:  [{title, enabled, description?, material_id?,
                     slides_status: pending|done|error, slides_error?}]
+                    (Folien-Plan; description nennt Quelldateien inkl. pptx-Pfad
+                    + Folienbereich. sources/sections (Gather-Ergebnis) und
+                    material_id (generiertes Deck) werden zur Laufzeit ergänzt)
     - progress:     {current: str, stages: {stage: {total, done, failed}},
                     units: {unit_key: {done, total}}}
     - report:       {warnings: [], errors: [], summary?, slides_options?: {...}}
@@ -892,7 +892,6 @@ class CourseImport(SQLModel, table=True):
     slides_plan_status: str = Field(default="pending", max_length=20)  # Folien-Planner
     script_status: str = Field(default="pending", max_length=20)
     slides_status: str = Field(default="pending", max_length=20)
-    refine_status: str = Field(default="pending", max_length=20)  # Nachbesserung (Refinement) bereits generierter Kapitel/Decks
 
     manifest: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     file_map: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
@@ -907,8 +906,9 @@ class CourseImport(SQLModel, table=True):
 class LLMDebugEntry(SQLModel, table=True):
     """Persistentes LLM-Debug-Log für die Admin-Konsole (Tab "LLM-Debug-Log").
 
-    Jeder LLM-Call wird mit Prompt-Typ, Modell/URL, public/private, System-Prompt,
-    Prompt, Antwort, Thinking, Latenz und Status protokolliert.
+    Jeder LLM-Call wird mit Prompt-Typ, auslösendem Nutzer, Modell/URL,
+    public/private, System-Prompt, Prompt, Antwort, Thinking, Latenz und
+    Status protokolliert.
     Retention: 7 Tage — alte Einträge werden beim Purgen gelöscht
     (services/llm_service.py). Neue Tabelle wird beim App-Start per create_all angelegt.
     """
@@ -920,6 +920,7 @@ class LLMDebugEntry(SQLModel, table=True):
     model: str = Field(default="", max_length=200)
     url: str = Field(default="", max_length=500)
     is_public: bool = False
+    user_id: Optional[int] = Field(default=None, index=True)  # auslösender User (NULL = kein User-Kontext)
     system_prompt: str = ""
     prompt: str = ""
     response: str = ""

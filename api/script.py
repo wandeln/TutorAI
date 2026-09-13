@@ -136,7 +136,7 @@ _CODE_CAPTION_IN_HEAD_RE = re.compile(r"\[([^\]]*)\]")
 _SEC_LABEL_TAIL_RE = re.compile(r"\s*\{#sec:([\w-]+)\}\s*$")
 # Kapitel-Label: {#sec:label} als EIGENE ZEILE = erste nicht-leere Zeile des Inhalts
 _CHAPTER_LABEL_LINE_RE = re.compile(r"\{#sec:([\w-]+)\}")
-_HEADING_NUM_LINE_RE = re.compile(r"^(#{2,4})\s+(.*\S)\s*$", re.MULTILINE)
+_HEADING_NUM_LINE_RE = re.compile(r"^(#{2,6})\s+(.*\S)\s*$", re.MULTILINE)
 
 
 
@@ -263,7 +263,13 @@ def _scan_tables(content: str) -> list[tuple[str, str]]:
 # KaTeX, code in <pre>, Rest als Text).
 _PREVIEW_LIMIT = 320
 # $$…$$-Block inkl. Label (wie _EQ_LABEL_RE, zusätzlich mit LaTeX-Gruppe).
-_EQ_PREVIEW_RE = re.compile(r"\$\$([\s\S]*?)\$\$\s*\{#eq:([\w-]+)\}")
+# Die LaTeX-Gruppe darF keine $$-Grenze überschreiten (Tempered Token):
+# sonst zwingt ein UNbeschrifteter Display-Block vor dem beschrifteten die
+# Gruppe zu einem Span über beide Blöcke, und die Preview zeigt die falsche
+# Gleichung. Nur der Block, dem das Label direkt (nur Whitespace) folgt,
+# liefert die Preview — dieselbe Semantik wie der JS-Renderer (dort ist die
+# Label-Gruppe optional, daher spannt es nie).
+_EQ_PREVIEW_RE = re.compile(r"\$\$((?:(?!\$\$)[\s\S])*?)\$\$\s*\{#eq:([\w-]+)\}")
 # Fenced-Block inkl. Inhalt (Label auf der ÖFFNENDEN Zeile, s. _scan_code_labels).
 _CODE_BLOCK_RE = re.compile(r"^```([^\n]*)\n?([\s\S]*?)^```[ \t]*$", re.MULTILINE)
 # Box inkl. Inhalt (Label auf der @startbox:-Zeile, s. _BOX_LABEL_RE;
@@ -356,17 +362,25 @@ def _scan_previews(content: str) -> dict[str, str]:
 
 
 def _clean_heading_title(title: str) -> str:
-    """Inline-Markdown (LaTeX, Code, Links, Betonung) aus einem Heading-Titel
-    entfernen — für die Plain-Text-Anzeige im Inhaltsverzeichnis."""
-    t = re.sub(r"\$[^$\n]*\$", " ", title)
+    """Inline-Markdown (Code, Links, Betonung) aus einem Heading-Titel entfernen —
+    für die Anzeige im Inhaltsverzeichnis. LaTeX ($…$) bleibt erhalten, damit
+    es der Renderer (renderCaptionMath) als KaTeX rendern kann."""
+    math_parts: list[str] = []
+
+    def _stash_math(m: re.Match) -> str:
+        math_parts.append(m.group(0))
+        return f"\x00{len(math_parts) - 1}\x00"
+
+    t = re.sub(r"\$[^$\n]*\$", _stash_math, title)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
     t = re.sub(r"[*_~]+", "", t)
-    return " ".join(t.split())
+    t = " ".join(t.split())
+    return re.sub(r"\x00(\d+)\x00", lambda m: math_parts[int(m.group(1))], t)
 
 
 class _ScannedHeading(TypedDict):
-    """Eine erkannte Markdown-Section (h2–h4) mit optionalem {#sec:label}."""
+    """Eine erkannte Markdown-Section (h2–h6) mit optionalem {#sec:label}."""
 
     level: int
     title: str
@@ -374,7 +388,7 @@ class _ScannedHeading(TypedDict):
 
 
 def _scan_headings(content: str) -> list[_ScannedHeading]:
-    """Markdown-Sections h2–h4 (Code-Blöcke ignoriert): level, title, optionales {#sec:label}."""
+    """Markdown-Sections h2–h6 (Code-Blöcke ignoriert): level, title, optionales {#sec:label}."""
     masked = mask_code_blocks(content or "")
     out: list[_ScannedHeading] = []
     for m in _HEADING_NUM_LINE_RE.finditer(masked):
@@ -389,21 +403,30 @@ def _scan_headings(content: str) -> list[_ScannedHeading]:
 
 
 def _local_section_numbers(headings: list[_ScannedHeading]) -> list[str]:
-    """Kapitellokale Nummerierung: h2 → N, h3 → N.M, h4 → N.M.K."""
-    n2 = n3 = n4 = 0
+    """Kapitellokale Nummerierung: h2 → N, h3 → N.M, h4 → N.M.K, h5 → N.M.K.L, h6 → N.M.K.L.M."""
+    n2 = n3 = n4 = n5 = n6 = 0
     nums = []
     for h in headings:
-        if h["level"] == 2:
+        lvl = h["level"]
+        if lvl == 2:
             n2 += 1
-            n3 = n4 = 0
+            n3 = n4 = n5 = n6 = 0
             nums.append(str(n2))
-        elif h["level"] == 3:
+        elif lvl == 3:
             n3 += 1
-            n4 = 0
+            n4 = n5 = n6 = 0
             nums.append(f"{n2}.{n3}")
-        else:
+        elif lvl == 4:
             n4 += 1
+            n5 = n6 = 0
             nums.append(f"{n2}.{n3}.{n4}")
+        elif lvl == 5:
+            n5 += 1
+            n6 = 0
+            nums.append(f"{n2}.{n3}.{n4}.{n5}")
+        else:
+            n6 += 1
+            nums.append(f"{n2}.{n3}.{n4}.{n5}.{n6}")
     return nums
 
 
@@ -427,12 +450,15 @@ def _chapter_label(content: str) -> str:
 # Das LLM darf für lokale Änderungen statt des Volltexts eine Liste von
 # Edit-Objekten liefern („content_edits“). Diese werden serverseitig
 # (services.content_edits) auf den bestehenden Inhalt angewendet — der Anker
-# (Heading bzw. kurzes Snippet) muss dabei eindeutig sein, sonst wird der
-# Edit abgelehnt und der Inhalt bleibt unverändert.
+# (Heading bzw. kurzes Snippet) muss dabei eindeutig sein. Nicht anwendbare
+# Edits werden übersprungen und als Warnung gemeldet, die übrigen werden
+# trotzdem angewendet; erst wenn gar keines anwendbar ist, bleibt der Inhalt
+# unverändert (HTTP 400).
 
-def _apply_content_edits(content: str, edits: object) -> tuple[str, list[str]]:
+def _apply_content_edits(content: str, edits: object) -> tuple[str, int, list[str]]:
     """HTTP-Wrapper um content_edits.apply_content_edits (ContentEditError →
-    HTTP 400; der Inhalt bleibt unverändert). Gibt (neuer_content, warnings)."""
+    HTTP 400; der Inhalt bleibt unverändert). Gibt
+    (neuer_content, applied_count, warnings)."""
     try:
         return content_edits.apply_content_edits(content, edits)
     except ContentEditError as e:
@@ -569,7 +595,7 @@ async def script_refmap(
         courseId: Kurs-ID
         chapters: {id: {title, label, num, visible, maxFig, maxEq, maxCode, maxBox, maxTab,
                         sections: [{num, title, label, anchor}]}}
-                  # num = Kapitelnummer (rollenabhängig), sections = h2–h4-Liste fürs TOC
+                  # num = Kapitelnummer (rollenabhängig), sections = h2–h6-Liste fürs TOC
                   # maxFig/maxEq/maxCode/maxBox/maxTab = Preview-Fallback (neue, ungespeicherte Labels)
         labels:   {"<kind>:<label>": {kind, sectionId, num, chapter?, type?, sub?, preview?}}  # globale Nummer, bei Duplikaten: erstes Vorkommen gewinnt (pro Kind)
                   # keys sind kind-prefixed ("eq:test" ≠ "box:test"), kinds: fig / eq / sec / code / box / tab (sec: num = "N.M…"-String, box: type = Box-Typ,
@@ -687,7 +713,7 @@ async def script_refmap(
                 labels[f"tab:{label}"] = e
             max_tab = max(max_tab, tab_running)
             tables.append({"num": tab_running, "caption": caption, "label": label, "sectionId": s.id})
-        # Sections (h2–h4): kapitellokale Nummerierung, Labels, Anker fürs TOC
+        # Sections (h2–h6): kapitellokale Nummerierung, Labels, Anker fürs TOC
         headings = _scan_headings(s.content)
         ch_label = _chapter_label(s.content)
         # Kapitel-Label ({#sec:label} als eigene Zeile) wird VOR den Section-Labels
@@ -703,6 +729,7 @@ async def script_refmap(
             full_num = f"{ch_num}.{local}"
             sec_entries.append({
                 "num": full_num,
+                "level": h["level"],
                 "title": _clean_heading_title(h["title"]),
                 "label": h["label"],
                 "anchor": f"sec:{h['label']}" if h["label"] else f"sec:{s.id}-{full_num}",
@@ -1006,8 +1033,8 @@ async def ai_generate_section(
         {
             // Leeres Feld = LLM hat das Feld nicht geändert (bestehender Wert bleibt).
             "title": "...", "content": "...", "summary": "...",
-            "edits_applied": 0,   // >0: content wurde aus „content_edits“ gemerged
-            "warnings": [],       // z.B. entfernte/doppelte fig/eq-Labels
+            "edits_applied": 0,   // Anzahl tatsächlich angewendeter „content_edits“
+            "warnings": [],       // z.B. fehlgeschlagene Edits, entfernte/doppelte fig/eq-Labels
             "latency_ms": 123
         }
     """
@@ -1060,8 +1087,9 @@ async def ai_generate_section(
         )
     other_chapters = other_chapters[:20]
 
-    # Noch nicht im Skript verwendete (sichtbare) Medien — ggf. einbindbar.
-    unused_media = media_service.unused_media_for_script(session, course_id)[:15]
+    # Noch nicht im Skript verwendete (sichtbare) Medien — ggf. einbindbar
+    # (vollständig, ohne Limit — analog zum Folien-Flow).
+    unused_media = media_service.unused_media_for_script(session, course_id)
 
     # Übungsaufgaben des Kurses (ID + Titel) — das LLM kann passende Aufgaben
     # per @task:{id} im Kapitel einbinden (Aufgaben-Box für Studenten).
@@ -1105,9 +1133,9 @@ async def ai_generate_section(
             # Inhalt anwenden (Anker müssen eindeutig sein, sonst HTTP 400).
             if not current_content:
                 raise HTTPException(400, "LLM lieferte stellenweise Edits („content_edits“), aber es existiert kein Inhalt zum Editieren. Bitte erneut versuchen.")
-            merged, warnings = _apply_content_edits(current_content, content_edits)
+            merged, applied, warnings = _apply_content_edits(current_content, content_edits)
             response["content"] = merged
-            response["edits_applied"] = len(content_edits)
+            response["edits_applied"] = applied
             response["warnings"] = warnings
         # sonst: LLM hat weder „content“ noch „content_edits“ geliefert → ""
     if "summary" in generate_fields:

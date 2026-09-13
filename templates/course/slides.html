@@ -10,6 +10,10 @@
 
    Kachel-Vorschau: echte eingebettete Reveal-Präsentation pro Deck
    (durchklickbar); leere Decks zeigen einen Empty-State.
+   Performance: Das Mini-Deck startet nur mit den ersten
+   MINI_PREVIEW_SLIDES Folien — das volles Deck wird erst nachgerendert,
+   sobald der Nutzer blättert (Kurs-Übersicht mit vielen Decks soll
+   schnell laden; KaTeX/Markdown-Rendern aller Folien ist der Kostenblock).
    ───────────────────────────────────────────────────────────────────── #}
 
 {% block extra_head %}
@@ -59,7 +63,7 @@
       <div class="reveal{% if slides_theme.template %} theme-{{ slides_theme.template }}{% endif %}{% if slides_has_logo %} slides-has-logo slides-logo-{{ slides_theme.logo_position }}{% endif %}">
         <div class="slides" id="deck-preview-slides-{{ d.id }}"></div>
       </div>
-      <div class="deck-preview-empty">Leeres Deck</div>
+      <div class="deck-preview-empty">Deck wird geladen…</div>
     </div>
     <div class="p-4">
       <div class="flex items-center justify-between gap-2">
@@ -142,50 +146,202 @@
   const TILE_W = 960;
   const TILE_H = Math.round(TILE_W / RATIO);
 
+  // Kachel-Vorschau startet als Mini-Deck (erste MINI_PREVIEW_SLIDES
+  // Folien); das volles Deck wird erst nachgerendert, sobald der Nutzer
+  // blättert. So bleibt die Kurs-Übersicht schnell: gerendert werden
+  // pro Deck initial 3 Folien statt ~20 (KaTeX-lastig).
+  const MINI_PREVIEW_SLIDES = 3;
+
+  // Echte (eingebettete) Reveal-Instanz auf der Kachel: durchklickbar,
+  // keine globalen Tastatur-Bindings (mehrere Instanzen pro Seite).
+  // totalSlides = FLACH gezählte Folien (inkl. Stack-Unterfolien), damit
+  // Zähler und Reveal's eigene getTotalSlides() übereinstimmen.
+  async function initPreviewReveal(shell, totalSlides) {
+    let reveal = null;
+    reveal = new Reveal(shell.querySelector(".reveal"), {
+      embedded: true,
+      keyboard: false,
+      controls: true,
+      controlsTutorial: false,
+      progress: false,
+      center: false,
+      transition: "none",
+      // Zähler "n/gesamt" (flach, inkl. Stack-Unterfolien) — zeigt die echte
+      // Deck-Größe, auch im Mini-Zustand (sonst "1/3"). Guard für den Fall,
+      // dass Reveal die Funktion während des Konstruktors aufruft.
+      slideNumber: () => ((reveal && reveal.getSlidePastCount()) || 0) + 1 + "/" + totalSlides,
+      hash: false,
+      history: false,
+      width: TILE_W,
+      height: TILE_H,
+      autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+      // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
+      // Renderer liefert bereits HTML-escapten Code).
+      highlight: { escapeHTML: false },
+      plugins: [RevealHighlight],
+    });
+    // Code-LaTeX nach Reveal's Highlight-Pass
+    tutoraiWireCodeMath(reveal);
+    await reveal.initialize();
+    // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js);
+    // deckt auch die nach dem Mini→Voll-Upgrade neu inicialisierte Instanz ab.
+    tutoraiRegisterSlideReveal(shell.querySelector(".reveal"), reveal);
+    // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
+    wireBgZoom(reveal);
+    return reveal;
+  }
+
+  async function mountPreviewDeck(shell, deckId, slidesToShow, totalSlides) {
+    const slidesEl = shell.querySelector(".slides");
+    slidesEl.innerHTML = "";
+    if (FOOTER) slidesEl.setAttribute("data-footer", FOOTER);
+    for (let h = 0; h < slidesToShow.length; h++) {
+      // Folien-Position (S-Nummern unlabeled Subfigure-Komplexe):
+      slidesEl.appendChild(await buildSlideSection(slidesToShow[h], FOOTER, { deckId, h }));
+    }
+    shell.classList.add("has-slides");
+    return initPreviewReveal(shell, totalSlides);
+  }
+
+  // Volles Deck nachladen: Restfolien asynchron rendern (Mini-Deck bleibt
+  // bedienbar), dann Synchron-Swap: Mini-Instanz destroyen (Reveal 4.6
+  // räumt DOM-Änderungen auf, Section-Elemente bleiben erhalten), Sections
+  // zusammenlegen, volles Deck in derselben .reveal neu initialisieren und
+  // zur Folie des Nutzers zurückkehren.
+  function wireFullDeckUpgrade(shell, deckId, slides, state) {
+    let upgrading = false;
+    let done = false;
+    // Vom Nutzer angeklicktes Ziel (H-Index): "Weiter"-Klicks werden in der
+    // Capture-Phase gemerkt — an der PRE-Move-Position, VOR Reveal's
+    // Button-Handler. Der Swap nutzt das Ziel, damit der Nutzer auf seiner
+    // Folie landet, selbst wenn die Mini-Navigation oder die Position der
+    // neuen Instanz verloren gehen würde. Klicks am Ende des Mini-Decks
+    // (dort klebt Reveal) akkumulieren es.
+    let requestedH = null;
+
+    const startUpgrade = async () => {
+      if (upgrading || done) return;
+      upgrading = true;
+      let destroyed = false;
+      try {
+        const r = state.reveal;
+        // 1) Fehlende Folien bauen — abgetrennt (kein Layout nötig für
+        //    Markdown/KaTeX), damit das Mini-Deck weiter blätterbar bleibt.
+        const rest = [];
+        for (let h = MINI_PREVIEW_SLIDES; h < slides.length; h++) {
+          rest.push(await buildSlideSection(slides[h], FOOTER, { deckId, h }));
+        }
+        // 2) Synchroner Swap (ab hier keine weitere await bis ready).
+        // Ziel = weiter von beiden: aktuelle Mini-Position und das
+        // angeklickte Ziel — der Nutzer wird nie zurück auf eine Folie
+        // geschickt, die er schon verlassen hat.
+        const idx = r.getIndices();
+        const posH = Math.min(slides.length - 1, Math.max(idx.h || 0, requestedH || 0));
+        const posV = idx.v || 0;
+        console.info(`[slides-preview] Deck ${deckId}: volles Deck geladen, Ziel Folie ${posH + 1}/${slides.length} (angeklickt: ${requestedH == null ? "-" : requestedH + 1}, Mini bei Folie ${idx.h + 1})`);
+        const revealEl = shell.querySelector(".reveal");
+        revealEl.style.visibility = "hidden"; // Kein Frame ohne Reveal-Scaling
+        try { r.destroy(); destroyed = true; } catch (e) { destroyed = true; }
+        const slidesEl = shell.querySelector(".slides");
+        // Mini-Sections wiederverwenden (KaTeX o. ä. nicht erneut rendern).
+        const miniSections = Array.from(slidesEl.querySelectorAll(":scope > section"));
+        slidesEl.innerHTML = "";
+        miniSections.forEach((el) => slidesEl.appendChild(el));
+        rest.forEach((el) => slidesEl.appendChild(el));
+        const fullReveal = await initPreviewReveal(shell, countSlides(slides));
+        state.reveal = fullReveal;
+        // slide() clampt; v ist unverändert (gleiche erste Slides).
+        fullReveal.slide(posH, posV);
+        revealEl.style.visibility = "";
+        // Absicherung: Reveal 4.6 liest beim Start einer Instanz intern die
+        // URL (leerer Hash → Folie 1) — falls das die Ziel-Position im
+        // selben Frame noch überschreibt, sie im nächsten Frame wiederherstellen.
+        requestAnimationFrame(() => {
+          if (state.reveal !== fullReveal) return; // Fallback-Remount gelaufen
+          const cur = fullReveal.getIndices();
+          if (cur.h !== posH || (cur.v || 0) !== posV) {
+            console.info(`[slides-preview] Deck ${deckId}: Position auf Folie ${cur.h + 1} zurückgesetzt, stelle Folie ${posH + 1} wieder her`);
+            fullReveal.slide(posH, posV);
+          }
+        });
+        done = true;
+      } catch (e) {
+        upgrading = false; // Beim nächsten Blättern erneut versuchen
+        requestedH = null; // Altes Ziel verwerfen (Mini-Vorschau wird neu gemountet)
+        try {
+          // Alte Instanz loswerden (falls destroy noch nicht gelaufen ist),
+          // sonst leben zwei Instanzen auf demselben Element.
+          if (!destroyed) { try { state.reveal.destroy(); } catch (e2) {} }
+          shell.querySelector(".reveal").style.visibility = "";
+          state.reveal = await mountPreviewDeck(shell, deckId, slides.slice(0, MINI_PREVIEW_SLIDES), countSlides(slides));
+        } catch (e2) { /* Vorschau bleibt leer */ }
+      }
+    };
+
+    // Fangnetz: Reveal's Pointer-Zonen (Klick auf die Folie selbst) feuern
+    // kein Control-Event → slidechanged als zweiter Upgrade-Trigger.
+    state.reveal.on("slidechanged", (e) => {
+      if (!upgrading && !done && e.indexh >= 1) startUpgrade();
+    });
+
+    // Capture-Phase: läuft VOR Reveal's Button-Handler → die gelesene
+    // Position ist die PRE-Move-Position (sonst ließe sich "Klick am Ende
+    // des Mini-Decks" nicht von "erfolgreich eine weiter" unterscheiden).
+    // Listener lebt auf dem beständigen .reveal-DOM → überlebt den
+    // Mini→Voll-Instance-Swap.
+    shell.querySelector(".reveal").addEventListener("click", (ev) => {
+      if (done || !state.reveal) return;
+      const t = ev.target instanceof Element ? ev.target : null;
+      if (!t) return;
+      const btn = t.closest(".navigate-right, .navigate-left");
+      if (!btn) return;
+      const r = state.reveal;
+      if (btn.classList.contains("navigate-left")) {
+        requestedH = null; // Richtung gewechselt → "Weiter"-Ziel verwerfen
+        return;
+      }
+      const idx = r.getIndices();
+      const hCount = r.getHorizontalSlides().length;
+      if (idx.h >= hCount - 1) {
+        // "Weiter" am Ende des Mini-Decks: Reveal kann nicht weiter →
+        // Ziel akkumulieren, wird nach dem Swap nachgeholt.
+        requestedH = Math.min(slides.length - 1, (requestedH ?? idx.h) + 1);
+      } else {
+        requestedH = idx.h + 1;
+      }
+      // Erstes Blättern ab Slide 2 (oder Klick am Mini-Ende) → volles Deck
+      // nachladen (das slidechanged-Fangnetz deckt Pointer-Zonen-Klicks ab).
+      if (!upgrading) startUpgrade();
+    }, true);
+  }
+
   for (const d of decks) {
     const shell = document.querySelector(`[data-deck-preview="${d.id}"]`);
     if (!shell) continue;
+    const emptyEl = shell.querySelector(".deck-preview-empty");
     fetch(`/api/courses/${courseId}/materials/${d.id}`, { credentials: "same-origin" })
       .then((r) => (r.ok ? r.json() : null))
       .then(async (data) => {
-        if (!data) return;
-        const slides = parseSlides(data.content || "");
-        if (slides.length === 0) return; // Empty-State bleibt sichtbar
-        const slidesEl = shell.querySelector(".slides");
-        if (FOOTER) slidesEl.setAttribute("data-footer", FOOTER);
-        for (let h = 0; h < slides.length; h++) {
-          // Folien-Position (S-Nummern unlabeled Subfigure-Komplexe):
-          slidesEl.appendChild(await buildSlideSection(slides[h], FOOTER, { deckId: d.id, h }));
+        if (!data) {
+          emptyEl.textContent = "Fehler beim Laden";
+          return;
         }
-        shell.classList.add("has-slides");
-        // Echte (eingebettete) Reveal-Instanz: durchklickbar, keine globalen
-        // Tastatur-Bindings (mehrere Instanzen pro Seite).
-        const reveal = new Reveal(shell.querySelector(".reveal"), {
-          embedded: true,
-          keyboard: false,
-          controls: true,
-          controlsTutorial: false,
-          progress: false,
-          center: false,
-          transition: "none",
-          slideNumber: true,
-          hash: false,
-          history: false,
-          width: TILE_W,
-          height: TILE_H,
-          autoAnimateMatcher: tutoraiAutoAnimateMatcher,
-          // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
-          // Renderer liefert bereits HTML-escapten Code).
-          highlight: { escapeHTML: false },
-          plugins: [RevealHighlight],
-        });
-        // Code-LaTeX nach Reveal's Highlight-Pass
-        tutoraiWireCodeMath(reveal);
-        await reveal.initialize();
-        // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
-        wireBgZoom(reveal);
+        const slides = await parseSlides(data.content || "");
+        if (slides.length === 0) {
+          // Empty-State bleibt sichtbar (Platzhalter war "Deck wird geladen…").
+          emptyEl.textContent = "Leeres Deck";
+          return;
+        }
+        const isMini = slides.length > MINI_PREVIEW_SLIDES;
+        const state = { reveal: null };
+        state.reveal = await mountPreviewDeck(
+          shell, d.id,
+          isMini ? slides.slice(0, MINI_PREVIEW_SLIDES) : slides,
+          countSlides(slides)
+        );
+        if (isMini) wireFullDeckUpgrade(shell, d.id, slides, state);
       })
-      .catch(() => {});
+      .catch(() => { emptyEl.textContent = "Fehler beim Laden"; });
   }
 
   // ─── Deck-Verwaltung ────────────────────────────────────────────
@@ -392,9 +548,9 @@
       slidesEl.innerHTML = "";
       const W = 960;
       const H = Math.round(W / themeState.aspect_value);
-      const slide = parseSlides(
+      const slide = (await parseSlides(
         "# Beispiel-Folie\n\nEin Absatz mit **fett** und $E = mc^2$.\n\n- Punkt eins\n- Punkt zwei"
-      )[0];
+      ))[0];
       slidesEl.appendChild(await buildSlideSection(slide, null));
       previewReveal = new Reveal(root, {
         embedded: true,

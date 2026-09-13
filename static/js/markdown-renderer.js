@@ -9,7 +9,14 @@
  *
  * Inline-Latex:  $...$                            → Inline
  * Display-Latex: $$...$$                          → Block
- * Mermaid:       ```mermaid                       → SVG-Diagramm
+ * Mermaid:       ```mermaid                       → SVG-Diagramm;
+ *                                                            öffnende Zeile wie bei Code-Blöcken:
+ *                                                            {#code:label}[Caption] (in beliebiger
+ *                                                            Reihenfolge) → nummerierte Figur
+ *                                                            ("Code N: Caption", Anker code:label);
+ *                                                            $$…$$ in Knoten-/Kanten-Texten → KaTeX
+ *                                                            (nativ von Mermaid gerendert, Display-Mode;
+ *                                                            Text darin via \text{…}; max. 1 Block pro Text)
  * Escaped dollar: \$                              → literal $ (no LaTeX)
  * Nummerierte Figur:  ![caption](src){#fig:label} → "Abb. N: caption" (Anker fig:label)
  * Nummerierte Formel: $$...$$ {#eq:label}         → "(N)" neben der Formel (Anker eq:label)
@@ -17,7 +24,7 @@
  *                                                            → "Tab. N: Caption" unter der Tabelle
  *                                                              (Anker tab:label); {zoom=X} (führender Punkt
  *                                                            optional) = Schriftgröße ×X (Slides UND Skript)
- * Nummerierte Section: ## Titel {#sec:label}      → "K.N[.M]" vor der Überschrift (h2–h4,
+ * Nummerierte Section: ## Titel {#sec:label}      → "K.N[.M]" vor der Überschrift (h2–h6,
  *                                                            kapitellokal; Kapitelnummer aus dem refmap);
  *                                                            Anker sec:label bzw. sec:{sectionId}-{num}
  * Querverweise:       @fig:label / @eq:label / @tab:label / @sec:label
@@ -31,7 +38,16 @@
  *                                                            → "[N]" (Superscript) / "Autor (Jahr)" / "(Autor, Jahr)"
  *                                                            N = kursweite stabile Nummer (script-refmap.references);
  *                                                            bei options.bibliography: „Quellen“-Liste (nur zitierte
- *                                                            Einträge) ans Dokument-Ende; ❓ wenn der Key unbekannt ist
+ *                                                            Einträge) ans Dokument-Ende + In-Page-Anker auf den
+ *                                                            Eintrag; Slide-Mode: Link auf die auto-Quellen-Folie des
+ *                                                            Decks (parseSlides hängt sie an, Navigation/Highlight per
+ *                                                            slides.js-Click-Handler); sonst: Link auf den Quellen-Tab;
+ *                                                            ❓ wenn der Key unbekannt ist
+ * Quellen-Eintrag:    @bibentry:{key}             → komplette Quellenangabe (Nummer [N] OHNE
+ *                                                            Link, Titel kursiv, DOI/Link) im Design des Skript-
+ *                                                            Quellenverzeichnisses — Einträge der auto-Quellen-Folie
+ *                                                            der Slide-Decks (trägt id + data-refkey als
+ *                                                            Zitations-Ziel); ❓ wenn der Key unbekannt ist
  * Aufgaben-Box:       @task:{id}                  → Aufgaben-Box (Student: Punkte/Medaille analog
  *                                                            Aufgabenübersicht, PROF/TUTOR: kompakt; ❓ wenn unbekannt)
  * Hinweis-Boxen:      @startbox:{typ}[Caption] {#box:label} … @endbox
@@ -442,6 +458,30 @@ function parseFenceHead(head) {
   return matchedAny ? out : null;
 }
 
+// Bibliographie-Eintrag: "[N] Autoren (Jahr). <em>Titel</em>. Venue, Detail. DOI Link" —
+// gemeinsame Basis für das Quellenverzeichnis am Dokument-Ende (6b) und die
+// @bibentry:-Einträge der auto-Quellen-Folie (Slide-Decks). Die Nummer [N] ist
+// bewusst KEIN Link: der Quellen-Tab in der Kurs-Navigation ist für Studenten
+// nicht erreichbar; DOI/URL bleiben klickbar.
+function _bibEntryHtml(r) {
+  let entry = '';
+  const authors = (r.authors || []).join(' & ');
+  if (authors) entry += escapeHtml(authors);
+  if (r.year) entry += ' (' + escapeHtml(r.year) + ')';
+  if (entry) entry += '.';
+  if (r.title) entry += ' <em>' + escapeHtml(r.title) + '</em>.';
+  const tail = [r.venue, r.detail].filter(Boolean).join(', ');
+  if (tail) entry += ' ' + escapeHtml(tail) + '.';
+  // DOI und/oder Link immer klickbar anzeigen, wenn vorhanden
+  const links = [];
+  if (r.doi) links.push(
+    `<a href="https://doi.org/${escapeHtml(r.doi)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">DOI</a>`);
+  if (r.url) links.push(
+    `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">Link</a>`);
+  if (links.length) entry += ' ' + links.join(' ');
+  return `<span class="tutorai-bibnum text-gray-400 font-mono">[${r.num}]</span> ` + entry;
+}
+
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
     targetElement.innerHTML = '';
@@ -474,10 +514,38 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // Order matters: extract code blocks FIRST so LaTeX extraction never
   // sees $ signs inside them.
 
-  // 1a. Extract ```mermaid ... ``` blocks
+  // 1a. Extract ```mermaid ... ``` blocks.
+  //     Öffnende Fence-Zeile: optionales {#code:label} und/oder [Caption]
+  //     (beliebige Reihenfolge, je max. einmal) → das Diagramm bekommt wie
+  //     Code-Blöcke eine nummerierte Caption ("Code N: Caption", s. Schritt 11).
+  //     Jedes andere Token → Block fällt durch zum normalen Code (1b).
   const mermaidBlocks = [];
-  let processed = text.replace(/```mermaid\n([\s\S]*?)```/g, (match, diagram) => {
-    mermaidBlocks.push(diagram.trim());
+  let processed = text.replace(/```mermaid([^\n]*)\n([\s\S]*?)```/g, (match, head, diagram) => {
+    head = head.trim();
+    let mLabel = null;
+    let mCaption = null;
+    if (head) {
+      let valid = true;
+      let last = 0;
+      const tokRe = /\{#code:([\p{L}0-9_-]+)\}|\[([^\]]*)\]/gu;
+      let tm;
+      while ((tm = tokRe.exec(head)) !== null) {
+        if (head.slice(last, tm.index).trim()) { valid = false; break; }
+        if (tm[1] !== undefined) {
+          if (mLabel !== null) { valid = false; break; }
+          mLabel = tm[1];
+        } else {
+          if (mCaption !== null) { valid = false; break; }
+          const cap = tm[2].trim();
+          if (!cap) { valid = false; break; }
+          mCaption = cap;
+        }
+        last = tm.index + tm[0].length;
+      }
+      if (valid && head.slice(last).trim()) valid = false;
+      if (!valid) return match; // unbekanntes Token → 1b rendert als Code-Block
+    }
+    mermaidBlocks.push({ diagram: diagram.trim(), label: mLabel, caption: mCaption });
     return `%%MERmaid_BLOCK_${mermaidBlocks.length - 1}%%`;
   });
 
@@ -964,8 +1032,15 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // 1i. Extract cross-references: @fig:label / @eq:label / @code:label / @box:label / @tab:label / @sec:label / @kap:label
   //     + Zitationen @cite:{key} / @citet:{key} / @citep:{key} (BibTeX-Keys; längere
   //     Alternativen zuerst, damit @citet:/@citep: nicht zu @cite: verkürzt werden)
+  //     + @bibentry:{key} = komplette Quellenangabe (auto-Quellen-Folie der Slide-Decks)
+  // Altes Quellen-Folie-Format aus bereits generierten Decks "[@cite:key] Autoren …":
+  // der manuell ausformulierte Rest der Zeile ist redundant (die Angaben rendert
+  // jetzt der Renderer im Design des Skript-Quellenverzeichnisses) → in
+  // @bibentry:{key} umschreiben; damit verschwinden auch die Links auf den für
+  // Studenten nicht erreichbaren Quellen-Tab.
+  processed = processed.replace(/\[@cite:([\p{L}0-9_-]+)\][^\n]*/gu, '@bibentry:$1');
   const xrefs = [];
-  processed = processed.replace(/@(fig|eq|sec|kap|code|box|tab|citep|citet|cite):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
+  processed = processed.replace(/@(fig|eq|sec|kap|code|box|tab|bibentry|citep|citet|cite):([\p{L}0-9_-]+)/gu, (match, kind, label) => {
     xrefs.push({ kind, label });
     return `%%XREF_${xrefs.length - 1}%%`;
   });
@@ -1519,7 +1594,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%SUBFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
-  // 6a3. Heading-Nummerierung (h2–h4) + {#sec:label}-Anker
+  // 6a3. Heading-Nummerierung (h2–h6) + {#sec:label}-Anker
   //      Kapitelnummer aus dem refmap (rollenabhängig: Student = veröffentlichte
   //      Nummerierung). Ohne Kapitel-Kontext (Aufgaben-Seiten, Antwort-Previews)
   //      → keine Nummer; labelte Sections bekommen trotzdem ihren Anker.
@@ -1531,17 +1606,24 @@ async function renderMarkdown(text, targetElement, options = {}) {
     let n2 = 0;
     let n3 = 0;
     let n4 = 0;
-    frag.querySelectorAll('h2, h3, h4').forEach((h) => {
+    let n5 = 0;
+    let n6 = 0;
+    frag.querySelectorAll('h2, h3, h4, h5, h6').forEach((h) => {
       let num = null;
-      if (h.tagName === 'H2') {
-        n2 += 1; n3 = 0; n4 = 0;
-        num = chapterNum != null ? `${chapterNum}.${n2}` : null;
-      } else if (h.tagName === 'H3') {
-        n3 += 1; n4 = 0;
-        num = chapterNum != null ? `${chapterNum}.${n2}.${n3}` : null;
+      const lvl = Number(h.tagName.charAt(1));
+      if (lvl === 2) {
+        n2 += 1; n3 = n4 = n5 = n6 = 0;
+      } else if (lvl === 3) {
+        n3 += 1; n4 = n5 = n6 = 0;
+      } else if (lvl === 4) {
+        n4 += 1; n5 = n6 = 0;
+      } else if (lvl === 5) {
+        n5 += 1; n6 = 0;
       } else {
-        n4 += 1;
-        num = chapterNum != null ? `${chapterNum}.${n2}.${n3}.${n4}` : null;
+        n6 += 1;
+      }
+      if (chapterNum != null) {
+        num = [chapterNum, n2, n3, n4, n5, n6].slice(0, lvl).join('.');
       }
       let label = null;
       const lm = h.innerHTML.match(/\s*\{#sec:([\p{L}0-9_-]+)\}\s*$/u);
@@ -1583,8 +1665,26 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //     @box:-Referenzen zeigen den Box-Typ-Titel an (z. B. „Satz N“ —
   //     CALLOUT_TYPES; Typ-Quelle: Skript-Ref-Map → Slide-Ref-Map → lokal).
   const citedRefs = []; // für das Quellenverzeichnis (Nur zitierte Einträge)
+  // In-Deck-Anker auf die auto-Quellen-Folie (parseSlides hängt sie an): deck-
+  // scoped (ref-{deckId}-…), damit mehrere Decks auf einer Seite (Folien-
+  // Übersicht mit Kacheln) keine doppelten IDs bekommen; Skript: ref-{key}
+  // (Kapitel-Seite, dort eindeutig).
+  const refAnchorId = (key) =>
+    slideMode && slidePos && slidePos.deckId != null ? `ref-${slidePos.deckId}-${key}` : `ref-${key}`;
   xrefs.forEach((x, idx) => {
     const kind = x.kind === 'kap' ? 'sec' : x.kind;
+    if (kind === 'bibentry') {
+      // Komplette Quellenangabe (auto-Quellen-Folie der Slide-Decks): Design wie das
+      // Quellenverzeichnis am Kapitelende im Skript — Nummer [N] OHNE Link (der
+      // Quellen-Tab ist für Studenten nicht erreichbar), DOI/Link bleiben klickbar.
+      // id + data-refkey = Ziel der Zitations-Links (slides.js navigiert + flashen).
+      const r = ((refMap && refMap.references) || {})[x.label];
+      const refHtml = r
+        ? `<span id="${refAnchorId(x.label)}" data-refkey="${x.label}" class="tutorai-bibentry">${_bibEntryHtml(r)}</span>`
+        : `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ bibentry:${x.label}</span>`;
+      html = html.replace(`%%XREF_${idx}%%`, refHtml);
+      return;
+    }
     if (kind === 'cite' || kind === 'citet' || kind === 'citep') {
       // Zitationen: @cite → "[N]", @citet → "Autor (Jahr)", @citep → "(Autor, Jahr)".
       // N = kursweite stabile Nummer (script-refmap.references, display_order) —
@@ -1607,15 +1707,18 @@ async function renderMarkdown(text, targetElement, options = {}) {
           ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
           : '';
         const y = r.year || '';
-        // Mit bibliography: In-Page-Anker auf den Listeneintrag; sonst Link auf den Quellen-Tab.
+        // Mit bibliography (Skript): In-Page-Anker auf den Listeneintrag;
+        // Slide-Mode: Anker auf den Eintrag der auto-Quellen-Folie im Deck
+        // (Navigation/Highlight übernimmt der slides.js-Click-Handler, data-refkey);
+        // sonst: Link auf den Quellen-Tab.
         const cid = (refMap && refMap.courseId) || '';
-        const href = options.bibliography ? `#ref-${x.label}` : `/courses/${cid}/references#ref-${x.label}`;
+        const href = options.bibliography || slideMode ? `#${refAnchorId(x.label)}` : `/courses/${cid}/references#ref-${x.label}`;
         if (kind === 'cite') {
-          refHtml = `<sup><a href="${href}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
+          refHtml = `<sup><a href="${href}" data-refkey="${x.label}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
         } else if (kind === 'citet') {
-          refHtml = `<a href="${href}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
+          refHtml = `<a href="${href}" data-refkey="${x.label}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
         } else {
-          refHtml = `<a href="${href}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
+          refHtml = `<a href="${href}" data-refkey="${x.label}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
         }
       }
       html = html.replace(`%%XREF_${idx}%%`, refHtml);
@@ -1681,32 +1784,17 @@ async function renderMarkdown(text, targetElement, options = {}) {
 
   // 6b. Quellenverzeichnis: „Quellen“-Liste ans Dokument-Ende (nur bei options.bibliography
   //     und ohne slideMode — das pro-Folie-Rendern würde Nummerierung/Liste zersplittern;
-  //     in Slides werden Zitationen ohne Liste aufgelöst). Gelistet werden nur die
+  //     in Slides übernimmt die auto-Quellen-Folie dieselbe Rolle: parseSlides hängt
+  //     sie ans Deck-Ende, die Einträge rendert @bibentry:). Gelistet werden nur die
   //     tatsächlich zitierten Einträge, mit ihrer kursweiten stabilen Nummer.
   if (options.bibliography && !slideMode && citedRefs.length) {
     const seen = new Map();
     citedRefs.forEach((r) => { if (!seen.has(r.key)) seen.set(r.key, r); });
     const items = Array.from(seen.values())
       .sort((a, b) => (a.num || 0) - (b.num || 0))  // nach Quellen-Nummer, nicht Textvorkommnis
-      .map((r) => {
-        let entry = '';
-        const authors = (r.authors || []).join(' & ');
-        if (authors) entry += escapeHtml(authors);
-        if (r.year) entry += ' (' + escapeHtml(r.year) + ')';
-        if (entry) entry += '.';
-        if (r.title) entry += ' <em>' + escapeHtml(r.title) + '</em>.';
-        const tail = [r.venue, r.detail].filter(Boolean).join(', ');
-        if (tail) entry += ' ' + escapeHtml(tail) + '.';
-        // DOI und/oder Link immer klickbar anzeigen, wenn vorhanden
-        const links = [];
-        if (r.doi) links.push(
-          `<a href="https://doi.org/${escapeHtml(r.doi)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">DOI</a>`);
-        if (r.url) links.push(
-          `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">Link</a>`);
-        const url = links.length ? ' ' + links.join(' ') : '';
-        return `<li id="ref-${escapeHtml(r.key)}" class="text-sm text-gray-700 leading-relaxed">`
-          + `<span class="text-gray-400 font-mono">[${r.num}]</span> ` + entry + url + '</li>';
-      }).join('');
+      .map((r) =>
+        `<li id="ref-${escapeHtml(r.key)}" class="text-sm text-gray-700 leading-relaxed">${_bibEntryHtml(r)}</li>`
+      ).join('');
     html += `<div class="tutorai-bibliography mt-6">`
       + `<h3 class="text-base font-semibold text-gray-800 mb-2">Quellen</h3>`
       + `<ul class="tutorai-bibliography list-none space-y-1.5">${items}</ul></div>`;
@@ -1791,13 +1879,62 @@ async function renderMarkdown(text, targetElement, options = {}) {
     });
   }
 
-  // 11. Render Mermaid diagrams
-  if (mermaidBlocks.length > 0 && typeof mermaid !== 'undefined') {
-    const renderedDiagrams = await Promise.all(mermaidBlocks.map((diagram) => {
-      return renderMermaid(diagram);
+  // 11. Render Mermaid diagrams.
+  //     Gelabelte/beschriftete Blöcke (```mermaid {#code:label}[Caption], s. 1a):
+  //     wie Code-Blöcke nummeriert ("Code N: Caption") — die Code-Label-
+  //     Nummerierung (globalLabels/fallback-Zähler aus Schritt 3) wird weiterverwendet —
+  //     in einer Figure mit Anker code:label.
+  if (mermaidBlocks.length > 0) {
+    const renderedDiagrams = await Promise.all(mermaidBlocks.map((b) => {
+      return renderMermaid(b.diagram);
     }));
     renderedDiagrams.forEach((svg, idx) => {
-      html = html.replace(`%%MERmaid_BLOCK_${idx}%%`, svg);
+      const b = mermaidBlocks[idx];
+      let blockHtml = svg;
+      if (b.label !== null || b.caption !== null) {
+        let merNum = null;
+        if (b.label !== null) {
+          if (b.label in codeLabelNumbers) {
+            merNum = codeLabelNumbers[b.label]; // Duplikat → erstes Vorkommen
+          } else {
+            const g = globalLabels['code:' + b.label];
+            if (g && g.kind === 'code') {
+              merNum = g.num; // gespeichertes Label → exakte globale Nummer
+            } else if (slideMode) {
+              const sl = slidesLabels['code:' + b.label]; // typ-qualifiziert (s. slides-refmap)
+              if (sl && sl.kind === 'code') {
+                merNum = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+              } else {
+                slideCodeCount += 1;
+                merNum = 'S' + (slidesMaxSCode + slideCodeCount); // ungespeichert
+              }
+            } else {
+              codeFallbackCount += 1;
+              merNum = codeFallbackBase + codeFallbackCount;
+            }
+            codeLabelNumbers[b.label] = merNum;
+          }
+        }
+        let numHtml = '';
+        if (merNum !== null) {
+          const g = globalLabels['code:' + b.label];
+          if (slideMode && g && g.kind === 'code') {
+            const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+            numHtml =
+              `<a class="tutorai-code-num-link" href="/courses/${cid}/script#code:${b.label}"` +
+              ` title="Zum Code im Skript">Code ${merNum}</a>`;
+          } else {
+            numHtml = `Code ${merNum}`;
+          }
+        }
+        const capParts = [];
+        if (numHtml) capParts.push(numHtml);
+        if (b.caption) capParts.push(renderCaptionMath(b.caption));
+        const idAttr = b.label !== null ? ` id="code:${b.label}"` : '';
+        blockHtml = `<figure class="tutorai-code-figure"${idAttr}>${blockHtml}` +
+          `<figcaption>${capParts.join(': ')}</figcaption></figure>`;
+      }
+      html = html.replace(`%%MERmaid_BLOCK_${idx}%%`, blockHtml.replace(/\$/g, '$$$$'));
     });
   }
 

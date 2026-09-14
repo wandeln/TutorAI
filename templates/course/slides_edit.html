@@ -298,7 +298,7 @@
     const ta = document.getElementById("material-textarea");
     const ti = document.getElementById("material-title-input");
     const si = document.getElementById("material-summary-input");
-    if (ta && (ta.value !== loadedContent || ti.value.trim() !== loadedTitle || (si && si.value !== loadedSummary))) {
+    if (ta && (contentGet() !== loadedContent || ti.value.trim() !== loadedTitle || (si && si.value !== loadedSummary))) {
       if (!confirm("Ungespeicherte Änderungen verwerfen und zur Folien-Übersicht zurückkehren?")) return;
     }
     window.location.href = `/courses/${courseId}/slides`;
@@ -328,12 +328,12 @@
       if (!res.ok) throw new Error("Nicht geladen");
       const data = await res.json();
       titleInput.value = data.title || material.title;
-      textarea.value = data.content || "";
+      contentSet(data.content || "");
       summaryInput.value = data.summary || "";
       loadedTitle = titleInput.value;
-      loadedContent = textarea.value;
+      loadedContent = contentGet();
       loadedSummary = summaryInput.value;
-      renderPreview(textarea.value);
+      renderPreview(contentGet());
     } catch (e) {
       previewEmptyEl.textContent = "Fehler beim Laden des Inhalts.";
       previewEmptyEl.classList.remove("hidden");
@@ -345,7 +345,7 @@
   let previewTimer = null;
   window.schedulePreview = function () {
     clearTimeout(previewTimer);
-    previewTimer = setTimeout(() => renderPreview(textarea.value), 500);
+    previewTimer = setTimeout(() => renderPreview(contentGet()), 500);
   };
 
   // Render-Schutz: überlappende Renders (schnelles Tippen) dürfen sich
@@ -474,7 +474,7 @@
           topic: topicInput.value.trim(),
           minutes: parseInt(minutesInput.value, 10) || 90,
           current_title: titleInput.value,
-          current_content: textarea.value,
+          current_content: contentGet(),
           generate_fields: { title: true, content: true },
         }),
       });
@@ -483,7 +483,7 @@
 
       if (data.title) titleInput.value = data.title;
       if (data.content) {
-        textarea.value = data.content;
+        contentSet(data.content);
         renderPreview(data.content);
       }
       // Leere Felder im Response = LLM hat das Feld nicht geändert
@@ -519,7 +519,7 @@
 
   window.saveMaterial = async function () {
     const title = titleInput.value.trim();
-    const content = textarea.value;
+    const content = contentGet();
     if (!title) {
       showToast("Titel darf nicht leer sein.", "error");
       return;
@@ -576,8 +576,39 @@
       .catch(err => showToast(err.message, "error"));
   };
 
-  // Live-Preview beim Tippen
-  textarea.addEventListener("input", schedulePreview);
+  // CodeMirror (Markdown/GFM, helles CM-Default-Theme mit weißem
+  // Hintergrund) für den Folien-Editor. Solange der Editor aktiv ist,
+  // enthält das versteckte Textarea NICHT den Inhalt → Werte immer über
+  // contentGet()/contentSet() (hoisted, daher oben frei verwendbar) zugreifen.
+  function contentGet() { return cmContent ? cmContent.getValue() : textarea.value; }
+  function contentSet(v) { if (cmContent) cmContent.setValue(v); else textarea.value = v; }
+  let cmContent = null;
+  const cmMode = (typeof CodeMirror !== "undefined" && CodeMirror.modes)
+    ? (CodeMirror.modes.gfm ? "gfm" : (CodeMirror.modes.markdown ? "markdown" : null))
+    : null;
+  if (cmMode) {
+    // GFM/Markdown-Basismode + TutorAI-Annotationen-Overlay (Formeln,
+    // Boxen, Labels, Referenzen) — s. codemirror-mode-tutorai.js.
+    // Wichtig: NamensSTRING übergeben, nicht die Factory-Funktion —
+    // eine Funktion als Mode-Spec fällt in CM5 stumm auf "text/plain" zurück.
+    const mode = CodeMirror.modes["tutorai-markdown"] ? "tutorai-markdown" : cmMode;
+    // Feste Höhe = Originalhöhe des Textareas (CM5-Default wäre 300 px);
+    // bei größeren Inhalten scrollt der Editor intern wie das alte Textarea.
+    const h = textarea.offsetHeight || Math.round(window.innerHeight * 0.55);
+    cmContent = CodeMirror.fromTextArea(textarea, {
+      mode: mode,
+      lineNumbers: true,
+      lineWrapping: true,
+      matchBrackets: true,
+      indentUnit: 2,
+    });
+    const w = cmContent.getWrapperElement();
+    w.classList.add("md-codemirror", "w-full");
+    w.style.height = h + "px";
+    cmContent.on("change", schedulePreview); // Live-Preview beim Tippen
+  } else {
+    textarea.addEventListener("input", schedulePreview); // Live-Preview beim Tippen
+  }
 
   loadContent();
 

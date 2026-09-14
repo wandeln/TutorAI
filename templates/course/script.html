@@ -262,6 +262,17 @@
 
   // ─── Tutor: Bearbeiten (Inline-Formular) ──────────────────────────
 
+  // Wertzugriff auf die Markdown-Editoren: solange CodeMirror aktiv ist,
+  // enthält das versteckte Textarea NICHT den Inhalt → immer über die
+  // Editor-API (getValue/setValue) lesen/schreiben.
+  function mdEditorVal(editor, ta) {
+    return editor ? editor.getValue() : ta.value;
+  }
+  function mdEditorSet(editor, ta, v) {
+    if (editor) editor.setValue(v);
+    else ta.value = v;
+  }
+
   // Formular-HTML; KEY macht alle IDs pro Karte eindeutig
   function sqEditFormHtml(key) {
     return `
@@ -446,8 +457,8 @@
     const isNew = card.hasAttribute('data-new');
     const payload = {
       title,
-      content: edit.contentTa.value,
-      summary: edit.summaryTa.value,
+      content: mdEditorVal(edit.contentEditor, edit.contentTa),
+      summary: mdEditorVal(edit.summaryEditor, edit.summaryTa),
       is_visible: !!card._visible,
     };
     const url = isNew
@@ -534,7 +545,7 @@
           topic: edit.topic.value.trim() || "allgemein",
           section_id: edit.sectionId,
           current_title: edit.titleInput.value,
-          current_content: edit.contentTa.value,
+          current_content: mdEditorVal(edit.contentEditor, edit.contentTa),
           generate_fields: generateFields,
         }),
       });
@@ -546,7 +557,7 @@
       }
       // Preview sofort aktualisieren (analog task_detail.html)
       if (generateFields.content && data.content) {
-        edit.contentTa.value = data.content;
+        mdEditorSet(edit.contentEditor, edit.contentTa, data.content);
         (async () => {
           await renderMarkdown(data.content, edit.contentEditor.previewDiv, { preview: true, sectionId: edit.sectionId });
           if (!edit.contentEditor.isPreview()) edit.contentEditor.toggleBtn.click();
@@ -554,7 +565,7 @@
         })();
       }
       if (generateFields.summary && data.summary) {
-        edit.summaryTa.value = data.summary;
+        mdEditorSet(edit.summaryEditor, edit.summaryTa, data.summary);
         (async () => {
           await renderMarkdown(data.summary, edit.summaryEditor.previewDiv, { preview: true });
           if (!edit.summaryEditor.isPreview()) edit.summaryEditor.toggleBtn.click();

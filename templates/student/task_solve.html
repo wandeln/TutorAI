@@ -721,8 +721,11 @@
     });
 
     // ─── Create Markdown editors for text tasks ─────────────
+    // CodeMirror-Editor (GFM + TutorAI-Annotationen-Highlighting).
+    // Instanz global exponieren: Submit, Hint & LaTeX-Insert müssen den
+    // Wert über getValue() lesen (das versteckte Textarea ist nicht aktuell).
     {% if task.task_type == 'text' %}
-    createMarkdownEditor('text-editor-container', { buttonAnchor: 'text-editor-toolbar' });
+    window._textSolutionEditor = createMarkdownEditor('text-editor-container', { buttonAnchor: 'text-editor-toolbar' });
     {% endif %}
   })();
 
@@ -1567,10 +1570,20 @@
       if (!latex.trim()) return;
 
       {% if task.task_type == 'text' %}
+      const ed = window._textSolutionEditor;
+      const cm = ed ? ed.cm : null;
       const textarea = document.getElementById("text-solution");
-      {% endif %}
 
-      if (textarea) {
+      if (cm) {
+        // CodeMirror aktiv: an der Cursor-Position einfügen; das Change-
+        // Event aktualisiert die Live-Preview automatisch.
+        if (ed.isPreview()) ed.toggleBtn.click(); // in den Edit-Modus zurück
+        const pos = cm.getCursor();
+        const before = cm.getValue().slice(0, cm.indexFromPos(pos));
+        const prefix = (before.length > 0 && !before.endsWith("\n")) ? "\n" : "";
+        cm.replaceRange(prefix + latex, pos);
+        cm.focus();
+      } else if (textarea) {
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const before = textarea.value.substring(0, start);
@@ -1585,10 +1598,13 @@
         textarea.focus();
 
         textarea.dispatchEvent(new Event("input", { bubbles: true }));
-
-        showToast("LaTeX in Loesung eingefuegt!", "success");
-        closeUpload();
+      } else {
+        return;
       }
+
+      showToast("LaTeX in Loesung eingefuegt!", "success");
+      closeUpload();
+      {% endif %}
     }
   })();
   {% endif %}
@@ -1608,7 +1624,8 @@
       body.code_solution = editor.getValue();
       submittedText = body.code_solution;
     {% elif task.task_type == 'text' %}
-      body.solution = document.getElementById("text-solution").value;
+      const textEd = window._textSolutionEditor;
+      body.solution = textEd ? textEd.getValue() : document.getElementById("text-solution").value;
       submittedText = body.solution;
     {% endif %}
 
@@ -1936,8 +1953,12 @@
       if (ta) currentSolution = ta.value;
     }
     {% else %}
-    const ta = document.getElementById('solution-textarea');
-    if (ta) currentSolution = ta.value;
+    const textEd = window._textSolutionEditor;
+    if (textEd) currentSolution = textEd.getValue();
+    else {
+      const ta = document.getElementById('text-solution');
+      if (ta) currentSolution = ta.value;
+    }
     {% endif %}
 
     hintInput.value = '';

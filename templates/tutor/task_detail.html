@@ -378,8 +378,10 @@ class PrivateTest(unittest.TestCase):
     const taskType = document.getElementById("task_type_select").value;
     const isCode = taskType === "code";
     const title = document.querySelector('input[name="title"]').value;
-    const description = descEditor.textarea.value;
-    const modelSolution = solEditor.textarea.value;
+    // CodeMirror-Editoren: Inhalte über die Editor-API lesen (das
+    // versteckte Textarea enthält bei aktivem Editor nicht den Inhalt)
+    const description = descEditor.getValue();
+    const modelSolution = solEditor.getValue();
     const maxPoints = document.querySelector('input[name="max_points"]').value || 10;
     const codeTemplate = codeTemplateCM ? codeTemplateCM.getValue() : (document.getElementById("code-template-editor")?.value || "");
 
@@ -461,7 +463,7 @@ class PrivateTest(unittest.TestCase):
       }
 
       if (generateFields.description && data.description) {
-        descEditor.textarea.value = data.description;
+        descEditor.setValue(data.description);
         (async () => {
           await renderMarkdown(data.description, descEditor.previewDiv, { preview: true, bibliography: true });
           if (!descEditor.isPreview()) descEditor.toggleBtn.click();
@@ -470,7 +472,7 @@ class PrivateTest(unittest.TestCase):
       }
 
       if (generateFields.solution && data.model_solution) {
-        solEditor.textarea.value = data.model_solution;
+        solEditor.setValue(data.model_solution);
         (async () => {
           await renderMarkdown(data.model_solution, solEditor.previewDiv, { preview: true });
           if (!solEditor.isPreview()) solEditor.toggleBtn.click();
@@ -526,8 +528,8 @@ class PrivateTest(unittest.TestCase):
     const form = document.getElementById("task-form");
     const formData = new FormData(form);
 
-    const description = descEditor.textarea.value;
-    const modelSolution = solEditor.textarea.value;
+    const description = descEditor.getValue();
+    const modelSolution = solEditor.getValue();
 
     const body = {
       title: formData.get("title"),

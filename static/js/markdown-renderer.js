@@ -2615,6 +2615,39 @@ function createMarkdownEditor(containerId, options = {}) {
     return null;
   }
 
+  // CodeMirror (falls geladen): Markdown-Editor mit Syntax-Highlighting.
+  // Helliges Design: CM-Default-Theme (weißer Hintergrund) — das Dracula-
+  // Theme greift nur für explizit damit initialisierte Code-Editoren.
+  // Hinweis: Solange der Editor aktiv ist, enthält das versteckte Textarea
+  // nicht den Dokumentinhalt — Werte immer über getValue()/cm.getValue()
+  // lesen (cm.save() schreibt sauberen Text zurück ins Textarea).
+  const useCM = (typeof CodeMirror !== 'undefined') &&
+    !!(CodeMirror.modes && (CodeMirror.modes.gfm || CodeMirror.modes.markdown)) &&
+    (options.codeMirror !== false);
+  let cm = null;
+  if (useCM) {
+    // GFM/Markdown-Basismode + TutorAI-Annotationen-Overlay (Formeln,
+    // Boxen, Labels, Referenzen) — s. codemirror-mode-tutorai.js.
+    const baseMode = CodeMirror.modes.gfm ? 'gfm' : 'markdown';
+    // Wichtig: Modus-NAMENSSTRING übergeben, nicht die Factory-Funktion aus
+    // CodeMirror.modes — eine Funktion als Mode-Spec löst CM5 stumm auf
+    // "text/plain" auf (kein Highlighting, kein Fehler).
+    const mode = CodeMirror.modes['tutorai-markdown'] ? 'tutorai-markdown' : baseMode;
+    // Feste Höhe = Originalhöhe des Textareas (CM5-Default wäre 300 px);
+    // bei größeren Inhalten scrollt der Editor intern wie das alte Textarea.
+    const wrapperHeight = textarea.offsetHeight || 300;
+    cm = CodeMirror.fromTextArea(textarea, {
+      mode: mode,
+      lineNumbers: true,
+      lineWrapping: true,
+      matchBrackets: true,
+      indentUnit: 2,
+    });
+    const wrapper = cm.getWrapperElement();
+    wrapper.classList.add('md-codemirror', 'w-full');
+    wrapper.style.height = wrapperHeight + 'px';
+  }
+
   const previewDiv = document.createElement('div');
   previewDiv.className = 'markdown-preview-area hidden min-h-[200px] border border-gray-300 rounded-lg p-4 bg-white overflow-y-auto';
 
@@ -2623,7 +2656,8 @@ function createMarkdownEditor(containerId, options = {}) {
   toggleBtn.className = 'text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5';
   toggleBtn.innerHTML = '<span>👁️</span> <span>Preview</span>';
 
-  textarea.parentNode.insertBefore(previewDiv, textarea.nextSibling);
+  // Preview unterhalb des (CodeMirror-)Editors einhängen
+  textarea.parentNode.insertBefore(previewDiv, (cm ? cm.getWrapperElement() : textarea).nextSibling);
 
   const anchorId = options.buttonAnchor;
   if (anchorId) {
@@ -2650,44 +2684,71 @@ function createMarkdownEditor(containerId, options = {}) {
 
   // Preview rendern; options.onPreviewRender wird danach aufgerufen
   // (z. B. um Skript-Fragen-Markierungen im Edit-Modus neu anzuwenden)
+  // getValue() ist hier eine Closure auf die unten definierte Konstante —
+  // renderPreview wird erst nach deren Initialisierung aufgerufen.
   const renderPreview = async () => {
-    await renderMarkdown(textarea.value, previewDiv, mdRenderOptions).catch(() => {});
+    await renderMarkdown(getValue(), previewDiv, mdRenderOptions).catch(() => {});
     if (options.onPreviewRender) options.onPreviewRender();
   };
 
   toggleBtn.addEventListener('click', () => {
     isPreview = !isPreview;
     if (isPreview) {
-      textarea.classList.add('hidden');
+      if (cm) cm.getWrapperElement().classList.add('hidden');
+      else textarea.classList.add('hidden');
       previewDiv.classList.remove('hidden');
       toggleBtn.innerHTML = '<span>✏️</span> <span>Edit</span>';
       toggleBtn.classList.add('bg-blue-50', 'border-blue-300', 'text-blue-700');
       renderPreview();
     } else {
       previewDiv.classList.add('hidden');
-      textarea.classList.remove('hidden');
+      if (cm) {
+        cm.getWrapperElement().classList.remove('hidden');
+        cm.refresh(); // Größen neu berechnen (Wrapper war versteckt)
+      } else {
+        textarea.classList.remove('hidden');
+      }
       toggleBtn.innerHTML = '<span>👁️</span> <span>Preview</span>';
       toggleBtn.classList.remove('bg-blue-50', 'border-blue-300', 'text-blue-700');
     }
   });
 
+  // Sauberer Wert, unabhängig vom Editorzustand
+  const getValue = () => (cm ? cm.getValue() : textarea.value);
+
   let updateTimeout = null;
-  textarea.addEventListener('input', () => {
+  const onValueChanged = () => {
     if (isPreview) {
       clearTimeout(updateTimeout);
       updateTimeout = setTimeout(renderPreview, 300);
     }
     if (options.onValueChange) {
-      options.onValueChange(textarea.value);
+      options.onValueChange(getValue());
     }
-  });
+  };
+  if (cm) {
+    cm.on('change', onValueChanged);
+  } else {
+    textarea.addEventListener('input', onValueChanged);
+  }
 
   // Optional: direkt im Preview-Modus starten (z.B. für LLM-generierte Inhalte)
   if (options.startInPreview) {
     toggleBtn.click();
   }
 
-  return { textarea, previewDiv, toggleBtn, isPreview: () => isPreview };
+  return {
+    textarea,
+    cm,
+    previewDiv,
+    toggleBtn,
+    isPreview: () => isPreview,
+    getValue,
+    setValue(v) {
+      if (cm) cm.setValue(v);
+      else textarea.value = v;
+    },
+  };
 }
 
 // ─── Xref-Hover-Previews (data-xref-tip) ────────────────────────────────

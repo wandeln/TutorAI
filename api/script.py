@@ -32,6 +32,7 @@ from database.models import (
 )
 from services import bibtex as bib
 from services import content_edits
+from services import fig_labels
 from services.auth_service import get_current_user, require_course_access
 from services.content_edits import ContentEditError, mask_code_blocks
 from services.llm_service import LLMService
@@ -42,88 +43,26 @@ from services.settings_resolver import get_effective_llm_config
 router = APIRouter(prefix="/api", tags=["Skript"])
 llm_service = LLMService()
 
+# Figuren-/Label-Scan: Single Source of Truth in services/fig_labels.py
+# (Parität zum Client-Renderer s. dort) — underscore-Alias, damit die
+# Imports in api/slides.py unverändert bleiben.
+_scan_fig_labels = fig_labels.scan_fig_labels
+_scan_figures = fig_labels.scan_figures
+
 # Regexen identisch zu static/js/markdown-renderer.js:
 # Labels werden nur außerhalb von Code-Blöcken gezählt (fenced + inline
 # Code werden vorher entfernt). [\w-] ≈ JS [\p{L}0-9_-] (Unicode-Buchstaben,
 # Ziffern, Unterstrich, Bindestrich).
 _CODE_FENCED_RE = re.compile(r"```[\s\S]*?```")
 _CODE_INLINE_RE = re.compile(r"`[^`]+`")
-_FIG_LABEL_RE = re.compile(r"!\[[^\]]*\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
 _EQ_LABEL_RE = re.compile(r"\$\$[\s\S]*?\$\$\s*\{#eq:([\w-]+)\}")
-
-# Subfiguren (identisch zu markdown-renderer.js): Ein Komplex wird als EINE
-# nummerierte Abbildung gezählt, wenn er ein äußeres {#fig:label} ODER
-# mindestens ein Inner mit {#fig:label} trägt (s. _scan_figures / JS 1e0);
-# die inneren ![…](…) zählen NICHT als eigene Figuren. Die Inners dürfen
-# dort strikt nur {height=X} und/oder ein {#fig:label} tragen (je max.
-# einmal, in beliebiger Reihenfolge — s. _parseSubfigInners), sonst rendert
-# das JS sie als normal beschriftete Figuren → Refmap-Drift.
-_SF_GAP = r"[ \t]*(?:\r?\n[ \t]*)?"
-_SF_H = r"\{\.?height=[\d.]+(?:px)?\}"
-_SF_FIG = r"\{#fig:[\w-]+\}"  # nicht-capturing (wird in _SF_INNER komponiert)
-# ACHTUNG: `!` in src ausschließen — sonst matcht der äußere Komplex-Kopf
-# ![Gesamt]( auf das erste INNER als src (Src = [^)\s!]+, s. auch JS 1e0).
-_SF_INNER = (
-    r"!\[[^\]]*\]\([^)\s!]+\)(?:" + _SF_GAP
-    + r"(?:" + _SF_H + r"(?:" + _SF_GAP + _SF_FIG + r")?|"
-    + _SF_FIG + r"(?:" + _SF_GAP + _SF_H + r")?))?"
-)
-_SF_INNER_RE = re.compile(_SF_INNER)
-_SF_FIG_RE = re.compile(r"\{#fig:([\w-]+)\}")  # capturing: Label-Extraktion
-_SUBFIG_INNERS = _SF_INNER + r"(?:[ \t\r\n]+" + _SF_INNER + r")+"
-_SUBFIG_ANY_RE = re.compile(
-    r"!\[([^\]]*)\]\([ \t]*(?:\r?\n[ \t]*)?" + _SUBFIG_INNERS + r"[ \t]*(?:\r?\n[ \t]*)?\)"
-)
-_OUTER_LABEL_RE = re.compile(r"[ \t]*(?:\r?\n[ \t]*)?\{#fig:([\w-]+)\}")
-
-
-def _outer_fig_label(text: str, pos: int) -> Optional[str]:
-    """Äußeres {#fig:label} eines Subfigure-Komplexes direkt nach dem
-    schließenden ) (oder None) — Gap-Regeln wie JS-ATTR_BLOCK."""
-    m = _OUTER_LABEL_RE.match(text, pos)
-    return m.group(1) if m else None
-
-
-def _mask_subfigs(text: str) -> str:
-    """Subfiguren-Komplexe längentreu maskieren.
-
-    Maskiert JEDEN gültigen Komplex — exakt die Komplexe, die auch das JS
-    maskiert (s. 1e0) — damit die inneren ![…](…) und ihre {#fig:}-Labels
-    nicht als eigene Figuren aufgesammelt werden. Gelabelte Komplexe und
-    gelabelte Inners zählen über _scan_figures / _scan_fig_labels mit.
-    """
-    return _SUBFIG_ANY_RE.sub(lambda m: " " * len(m.group(0)), text)
-
-
-def _scan_fig_labels(text: str) -> list[str]:
-    """{#fig:…}-Labels in Reihenfolge des Vorkommens: Komplex-Labels,
-    gelabelte Subfigure-Inners (ebenfalls fig-Labels) und einfache Figuren."""
-    found: list[tuple[int, str]] = []
-    for m in _SUBFIG_ANY_RE.finditer(text):
-        om = _OUTER_LABEL_RE.match(text, m.end())
-        if om:
-            found.append((om.start(1), om.group(1)))  # absolute (re.match mit pos)
-        for im in _SF_INNER_RE.finditer(m.group(0)):
-            sm = _SF_FIG_RE.search(im.group(0))
-            if sm:
-                found.append((m.start() + im.start() + sm.start(1), sm.group(1)))
-    masked = _mask_subfigs(text)
-    for m in _FIG_LABEL_RE.finditer(masked):
-        found.append((m.start(), m.group(1)))
-    return [label for _, label in sorted(found)]
 
 
 def _scan_labels(content: str) -> tuple[list[str], list[str]]:
     """{#fig:…}/{#eq:…}-Labels aus Markdown in Reihenfolge des Vorkommens (Code-Blöcke ignoriert)."""
-    text = _CODE_FENCED_RE.sub("", content or "")
-    text = _CODE_INLINE_RE.sub("", text)
-    figs = _scan_fig_labels(text)
-    eqs = _EQ_LABEL_RE.findall(text)
+    figs = _scan_fig_labels(content)
+    eqs = _EQ_LABEL_RE.findall(fig_labels.strip_code(content))
     return figs, eqs
-
-
-# Nummerierte Figuren inkl. Caption (Abbildungsverzeichnis)
-_FIG_CAPTION_RE = re.compile(r"!\[([^\]]*)\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
 # Beschriftete Code-Blöcke: {#code:label} auf der ÖFFNENDEN Zeile eines
 # Fenced-Blocks (``` …), optional mit Caption [text] auf derselben Zeile
 # (Syntax {#code:label}[caption], s. parseFenceHead in markdown-renderer.js).
@@ -138,46 +77,6 @@ _SEC_LABEL_TAIL_RE = re.compile(r"\s*\{#sec:([\w-]+)\}\s*$")
 _CHAPTER_LABEL_LINE_RE = re.compile(r"\{#sec:([\w-]+)\}")
 _HEADING_NUM_LINE_RE = re.compile(r"^(#{2,6})\s+(.*\S)\s*$", re.MULTILINE)
 
-
-
-def _scan_subfig_inners(complex_text: str) -> list[tuple[Optional[str], str]]:
-    """(fig-Label oder None, Caption) der Inners eines Subfigure-Komplexes (Reihenfolge).
-
-    Wird auf einem _SUBFIG_ANY_RE-Match angewendet: der äußere Kopf
-    ``![Gesamt](`` kann nicht als Inner matchen (src schließt `!` aus,
-    s. _SF_INNER) → die Treffer sind exakt die Inners.
-    """
-    inners: list[tuple[Optional[str], str]] = []
-    for m in _SF_INNER_RE.finditer(complex_text):
-        am = re.match(r"!\[([^\]]*)\]", m.group(0))
-        sm = _SF_FIG_RE.search(m.group(0))
-        inners.append((sm.group(1) if sm else None, am.group(1) if am else ""))
-    return inners
-
-
-def _scan_figures(content: str) -> list[tuple[str, Optional[str], Optional[list[tuple[Optional[str], str]]]]]:
-    """(Caption, Label, Inners) nummerierter Figuren in Reihenfolge des Vorkommens (Code-Blöcke ignoriert).
-
-    Nummeriert = einfache Figur mit {#fig:label}, Subfigure-Komplex mit
-    äußerm {#fig:label} ODER Komplex mit mindestens einem gelabelten Inner
-    (dann darf label None sein — der Komplex wird trotzdem nummeriert,
-    Parität s. JS 1e0). Komplexe ohne jegliches Label zählen nicht mit.
-    Inners eines Komplexes zählen nicht als eigene Figuren (s. _mask_subfigs);
-    Inners = [(fig-Label oder None, Inner-Caption)], sonst None.
-    """
-    text = _CODE_FENCED_RE.sub("", content or "")
-    text = _CODE_INLINE_RE.sub("", text or "")
-    found: list[tuple[int, tuple[str, Optional[str], Optional[list[tuple[Optional[str], str]]]]]] = []
-    for m in _SUBFIG_ANY_RE.finditer(text):
-        inners = _scan_subfig_inners(m.group(0))
-        label = _outer_fig_label(text, m.end())
-        if label is None and not any(l is not None for l, _cap in inners):
-            continue  # kein Label irgendwo → keine Nummer (Parität s. JS 1e0)
-        found.append((m.start(), (m.group(1), label, inners)))
-    masked = _mask_subfigs(text)
-    for m in _FIG_CAPTION_RE.finditer(masked):
-        found.append((m.start(), (m.group(1), m.group(2), None)))
-    return [val for _, val in sorted(found)]
 
 
 def _scan_code_labels(content: str) -> list[tuple[str, str]]:
@@ -339,15 +238,12 @@ def _scan_previews(content: str) -> dict[str, str]:
     out: dict[str, str] = {}
     text = _CODE_FENCED_RE.sub("", content or "")
     text = _CODE_INLINE_RE.sub("", text)
-    masked = _mask_subfigs(text)
-    for m in _SUBFIG_ANY_RE.finditer(text):
-        if om := _OUTER_LABEL_RE.match(text, m.end()):
-            out.setdefault(f"fig:{om.group(1)}", _truncate_preview(m.group(1)))
-        for sub_label, inner_cap in _scan_subfig_inners(m.group(0)):
-            if sub_label:
+    for cap, label, inners in _scan_figures(text):
+        if label is not None:
+            out.setdefault(f"fig:{label}", _truncate_preview(cap))
+        for sub_label, inner_cap in inners or []:
+            if sub_label is not None:
                 out.setdefault(f"fig:{sub_label}", _truncate_preview(inner_cap))
-    for m in _FIG_CAPTION_RE.finditer(masked):
-        out.setdefault(f"fig:{m.group(2)}", _truncate_preview(m.group(1)))
     for m in _EQ_PREVIEW_RE.finditer(text):
         out.setdefault(f"eq:{m.group(2)}", _truncate_preview(m.group(1)))
     for m in _BOX_CONTENT_RE.finditer(text):

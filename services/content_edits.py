@@ -24,6 +24,8 @@ Ops:
 import re
 from typing import TypedDict
 
+from services import fig_labels
+
 
 class ContentEditError(ValueError):
     """Edit ungültig oder unklar (deutsche Meldung)."""
@@ -33,7 +35,6 @@ class ContentEditError(ValueError):
 _HEADING_LINE_RE = re.compile(r"^#{1,6}\s+(\S.*?)\s*$", re.MULTILINE)
 _CODE_FENCED_RE = re.compile(r"```[\s\S]*?```")
 _CODE_INLINE_RE = re.compile(r"`[^`]+`")
-_FIG_LABEL_RE = re.compile(r"!\[[^\]]*\]\([^)\s]+\)\s*\{#fig:([\w-]+)\}")
 _EQ_LABEL_RE = re.compile(r"\$\$[\s\S]*?\$\$\s*\{#eq:([\w-]+)\}")
 
 
@@ -182,13 +183,21 @@ def _resolve_span(content: str, old: str) -> tuple[int, int]:
 
 
 def _label_diff_warnings(old: str, new: str) -> list[str]:
-    """Warnungen, wenn Edits fig/eq-Labels entfernen oder Duplikate erzeugen."""
+    """Warnungen, wenn Edits fig/eq-Labels entfernen oder Duplikate erzeugen.
+
+    fig-Labels über den gemeinsamen Client-Paritätsscan (services/fig_labels.py),
+    damit exakt die Labels erkannt werden, die auch die Nummerierung nutzen.
+    """
+    labels = {
+        "fig": (fig_labels.scan_fig_labels(old), fig_labels.scan_fig_labels(new)),
+        "eq": (
+            _EQ_LABEL_RE.findall(fig_labels.strip_code(old)),
+            _EQ_LABEL_RE.findall(fig_labels.strip_code(new)),
+        ),
+    }
     warnings: list[str] = []
-    text_old = _CODE_INLINE_RE.sub("", _CODE_FENCED_RE.sub("", old or ""))
-    text_new = _CODE_INLINE_RE.sub("", _CODE_FENCED_RE.sub("", new or ""))
-    for kind, regex in (("fig", _FIG_LABEL_RE), ("eq", _EQ_LABEL_RE)):
-        old_labels = regex.findall(text_old)
-        new_labels = regex.findall(text_new)
+    for kind in ("fig", "eq"):
+        old_labels, new_labels = labels[kind]
         for label in dict.fromkeys(set(old_labels) - set(new_labels)):
             warnings.append(f"Label {kind}:{label} wurde entfernt — ggf. in anderen Kapiteln referenziert.")
         for label in dict.fromkeys(new_labels):

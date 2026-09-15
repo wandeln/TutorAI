@@ -58,6 +58,7 @@
   {% if code_editor %}
   <link rel="stylesheet" href="{{ asset('vendor/codemirror/codemirror.min.css') }}">
   <link rel="stylesheet" href="{{ asset('vendor/codemirror/theme/dracula.min.css') }}">
+  <link rel="stylesheet" href="{{ asset('vendor/codemirror/addon/dialog/dialog.min.css') }}">
   <script src="{{ asset('vendor/codemirror/codemirror.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/mode/python/python.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/mode/xml/xml.min.js') }}"></script>
@@ -69,6 +70,15 @@
   <script src="{{ asset('vendor/codemirror/mode/gfm/gfm.min.js') }}"></script>
   <script src="{{ asset('js/codemirror-mode-tutorai.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/addon/edit/closebrackets.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/addon/dialog/dialog.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/addon/search/searchcursor.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/addon/search/search.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/addon/search/jump-to-line.min.js') }}"></script>
+  <script>
+    // Search-Addons lesen cm.options.search (Dialog-Position) — ohne
+    // Default wirft das Addon beim Öffnen des Find-Dialogs einen TypeError.
+    if (window.CodeMirror) CodeMirror.defaults.search = {};
+  </script>
   {% endif %}
 
   <!-- KaTeX (MIT) — LaTeX-Rendering (lokal gespiegelt) -->

@@ -495,6 +495,21 @@ function _bibEntryHtml(r) {
   return `<span class="tutorai-bibnum text-gray-400 font-mono">[${r.num}]</span> ` + entry;
 }
 
+// Tabellen: inhaltslose Kopfzeile (alle <th> leer) → <thead> entfernen.
+// GFM-Tabellen haben IMMER eine erste Zeile als <thead> (grau
+// gehighlightet); ist sie ohne Inhalt, wäre das ein leerer grauer Balken
+// über der Tabelle → wird dann nicht gerendert.
+function _stripEmptyTableHead(html) {
+  return html.replace(/<table[^>]*>([\s\S]*?)<\/table>/g, (m, inner) => {
+    const tm = inner.match(/<thead>\s*<tr[^>]*>([\s\S]*?)<\/tr>\s*<\/thead>/);
+    if (!tm) return m;
+    const cells = tm[1].match(/<th[^>]*>[\s\S]*?<\/th>/g) || [];
+    const allEmpty = cells.every((c) =>
+      c.replace(/<[^>]+>/g, '').replace(/&nbsp;/gi, '').trim() === '');
+    return allEmpty ? m.replace(tm[0], '') : m;
+  });
+}
+
 async function renderMarkdown(text, targetElement, options = {}) {
   if (!text || typeof text !== 'string') {
     targetElement.innerHTML = '';
@@ -1404,11 +1419,79 @@ async function renderMarkdown(text, targetElement, options = {}) {
     html = html.replace(`%%TAB_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
+  // Xref-/Zitations-Tokens IN Formeln (@eq:/@cite:/@citet:/@citep:) →
+  // KaTeX-\href-Links (aufrecht, klickbar) — erst hier, im Restore, denn
+  // eqLabelNumbers/Ref-Maps sind zu Extraktionszeit (1g/1h) noch unvollständig
+  // (Vorwärtsreferenzen!). Auflösung spiegelt den Fließtext (6b): eq lokal
+  // (nur Skript) → Skript-Ref-Map → Slide-Ref-Map; Zitationen = kursweite
+  // Nummer + dieselbe href-Regel wie 6b. Zitierte Einträge landen zusätzlich
+  // in citedRefs (→ Quellenliste / auto-Quellen-Folie). IM MATH-MODUS wird
+  // das Link in \text{…} verpackt (gültiges aufrechtes Atom, auch in
+  // aligned/\frac); in KaTeX-Textmodi (\text/\mbox/\textrm/…) erbt das nackte
+  // \href die umgebende Schrift. Unbekannte Labels → Literal
+  // "? kind:label" (kein KaTeX-Error). refs = [{url, key?}] für
+  // _injectMathRefKeys (key = Zitations-Schlüssel → data-refkey).
+  const _mathXrefsToLatex = (latex) => {
+    const refs = [];
+    const out = latex.replace(
+      /@(eq|citep|citet|cite):([\p{L}0-9_-]+)/gu,
+      (m, kind, label, offset) => {
+        const cid = (refMap && refMap.courseId) || '';
+        const wrap = (s) => (_mathXrefInText(latex, offset) ? s : `\\text{${s}}`);
+        if (kind === 'eq') {
+          let url = null;
+          let text = null;
+          if (!slideMode && eqLabelNumbers[label]) {
+            url = '#eq:' + label;
+            text = 'Gl. ' + eqLabelNumbers[label];
+          } else {
+            const g = globalLabels['eq:' + label];
+            const sl = slidesLabels['eq:' + label];
+            if (g && g.kind === 'eq') {
+              url = '/courses/' + cid + '/script#eq:' + label;
+              text = 'Gl. ' + g.num;
+            } else if (sl && sl.kind === 'eq') {
+              const scid = (slidesRefMap && slidesRefMap.courseId) || cid;
+              url = `/courses/${scid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}`;
+              text = 'Gl. S' + sl.num;
+            }
+          }
+          if (url) {
+            refs.push({ url });
+            return wrap(`\\href{${url}}{${_texSafeText(text)}}`);
+          }
+        } else {
+          const r = ((refMap && refMap.references) || {})[label];
+          if (r) {
+            citedRefs.push(r);
+            const a0 = (r.authors && r.authors.length)
+              ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
+              : '';
+            const y = r.year || '';
+            const text = kind === 'cite'
+              ? '[' + r.num + ']'
+              : kind === 'citet'
+                ? a0 + (y ? ' (' + y + ')' : '')
+                : '(' + a0 + (y ? ', ' + y : '') + ')';
+            const url = options.bibliography || slideMode
+              ? '#' + refAnchorId(label)
+              : `/courses/${cid}/references#ref-${label}`;
+            refs.push({ url, key: label });
+            return wrap(`\\href{${url}}{${_texSafeText(text)}}`);
+          }
+        }
+        return wrap('? ' + _texSafeText(kind + ':' + label));
+      },
+    );
+    return { latex: out, refs };
+  };
+
   // 5. Restore LaTeX blocks (labeled ones as numbered equation "(N)")
   //    Slide-Mode: Nummer eines im Skript vorhandenen Labels ist klickbar und
   //    verlinkt zur Gleichung im Skript; slide-eigene Labels zeigen (S1), …
   latexBlocks.forEach((latex, idx) => {
-    const rendered = renderLatexBlock(latex);
+    const mx = _mathXrefsToLatex(latex);
+    const rendered = _injectMathRefKeys(renderLatexBlock(mx.latex), mx.refs);
     const label = latexLabels[idx];
     const frag = latexFragments[idx];
     const aaid = latexAaids[idx];
@@ -1443,9 +1526,10 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
   });
 
-  // 6. Restore inline LaTeX
+  // 6. Restore inline LaTeX (inkl. in-Formel-Xrefs, s. _mathXrefsToLatex)
   latexInlines.forEach((latex, idx) => {
-    html = html.replace(`%%LATEX_INLINE_${idx}%%`, renderLatexInline(latex));
+    const mx = _mathXrefsToLatex(latex);
+    html = html.replace(`%%LATEX_INLINE_${idx}%%`, _injectMathRefKeys(renderLatexInline(mx.latex), mx.refs));
   });
 
   // 6a. Restore numbered figures (.html-Medien als interaktives Iframe)
@@ -1931,6 +2015,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // 8. Apply syntax highlighting
   html = highlightCodeBlocks(html);
 
+  // 9a. Tabellen: leere (grau gehighlightete) Kopfzeilen nicht rendern
+  html = _stripEmptyTableHead(html);
+
   // 9. Decode HTML entities in non-code text
   html = decodeTextEntities(html);
 
@@ -2324,6 +2411,66 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
+// ─── Xref/Zitationen IN Formeln (Restore-Schritte 5/6 von renderMarkdown) ──
+// KaTeX-Textmodus-Sonderzeichen → Escape-Kommandos (einmalige Pass; Quellen
+// sind nur Plain-Link-Texte, keine Doppele-Scape). Nur nötig für den
+// Link-TEXT — die URL-Gruppe von \href wird von KaTeX roh geparst.
+const _TEX_TEXT_ESCAPES = {
+  '\\': '\\textbackslash', '&': '\\&', '%': '\\%', '$': '\\$', '#': '\\#',
+  '_': '\\_', '{': '\\{', '}': '\\}', '~': '\\textasciitilde',
+  '^': '\\textasciicircum', "'": '\\textquotesingle', '"': '\\textquotedbl',
+};
+const _texSafeText = (s) =>
+  String(s).replace(/[\\&%$#_{}~^"']/g, (c) => _TEX_TEXT_ESCAPES[c]);
+
+// KaTeX-Kommandos, deren {}-Argument im TEXT-Modus geparst wird: darin
+// wird das \href-Link nackt emittiert (allowedInText) und erbt damit die
+// umgebende Schrift (fette Caption bleibt fett).
+const _MATH_TEXT_CMDS = new Set([
+  'text', 'mbox', 'textrm', 'textit', 'textbf', 'textsc', 'texttt',
+  'xleftarrow', 'xrightarrow',
+]);
+
+// Liegt Position pos in der LaTeX-Zeichenfolge im TEXT-Modus? Rückwärts-
+// Scan: innere offene Gruppe = ERSTES nicht-escapedes { bei Klammer-Tiefe
+// 0 (vorher geschlossene Gruppen heben sich via depth auf), der vor dem {
+// stehende Kommandoname entscheidet den Modus (_MATH_TEXT_CMDS); alles
+// andere (keine Gruppe, mathematische Gruppen wie x_{…}) = Math-Modus.
+function _mathXrefInText(latex, pos) {
+  let depth = 0;
+  for (let i = pos - 1; i >= 0; i -= 1) {
+    const c = latex[i];
+    const escaped = i > 0 && latex[i - 1] === '\\';
+    if (c === '}' && !escaped) {
+      depth += 1;
+    } else if (c === '{' && !escaped) {
+      if (depth > 0) { depth -= 1; continue; }
+      let j = i - 1;
+      while (j >= 0 && /[ \t]/.test(latex[j])) j -= 1;
+      if (j >= 0 && /[a-zA-Z]/.test(latex[j])) {
+        let k = j;
+        while (k >= 0 && /[a-zA-Z]/.test(latex[k])) k -= 1;
+        return _MATH_TEXT_CMDS.has(latex.slice(k + 1, j + 1));
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+// data-refkey in ALLE \href-Anker des KaTeX-HTMLs injizieren (derselbe
+// URL kann zweimal in einer Formel vorkommen → alle Vorkommen). Nötig nur
+// bei Zitationen (slides.js: Klick → auto-Quellen-Folie + flash); eq-Links
+// navigieren über den plain href.
+function _injectMathRefKeys(texHtml, refs) {
+  let out = texHtml;
+  for (const r of refs) {
+    if (!r.key) continue;
+    out = out.split(`href="${r.url}"`).join(`href="${r.url}" data-refkey="${r.key}"`);
+  }
+  return out;
+}
+
 // Sanitize LaTeX input to prevent HTML/JS injection.
 function sanitizeLatex(latex) {
   let prev = '';
@@ -2334,6 +2481,14 @@ function sanitizeLatex(latex) {
   latex = latex.replace(/\[HTML\]/gi, '').replace(/\[TeX\]/gi, '');
   latex = latex.replace(/<\/?script[\s>][^>]*>/gi, '');
   latex = latex.replace(/<\s*[a-zA-Z][^>=]*=[^>]*>/gi, '');
+  // @-Xref-/Zitations-Tokens in Formeln auf Render-Pfaden OHNE Ref-Map
+  // (Hover-Tooltips, Code-Formeln): → Literal "? kind:label" als aufrechte
+  // Text statt KaTeX-Error (@ ist undefiniert). Der Hauptpfad (Schritte 5/6)
+  // wandelt die Tokens vorher in \href-Links um → dort kein Effekt.
+  latex = latex.replace(
+    /@(eq|fig|code|box|tab|sec|kap|bibentry|citep|citet|cite|task):([\p{L}0-9_-]+)/gu,
+    (m, kind, label) => `\\text{? ${_texSafeText(kind + ':' + label)}}`,
+  );
   return latex;
 }
 
@@ -2601,13 +2756,23 @@ function _katexFragRewrite(latex) {
 }
 
 // KaTeX-Trust-Funktion (ersetzt trust:false): erlaubt NUR \htmlClass mit
-// genau unseren Fragment-Klassen — alle anderen Trust-Kommandos
-// (\htmlClass mit fremden Klassen, \href, \url, \includegraphics,
+// genau unseren Fragment-Klassen und \href mit den internen
+// Xref-/Zitations-URLs aus Formeln (KATEX_HREF_TRUST_RE, Schritte 5/6 von
+// renderMarkdown) — alle anderen Trust-Kommandos (\htmlClass mit fremden
+// Klassen, \href mit externen URLs, \url, \includegraphics,
 // \htmlId/\htmlStyle/\htmlData) bleiben abgelehnt (roter
 // Unsupported-Command-Text, Rest der Formel rendert normal).
 const KATEX_FRAG_TRUST_RE = new RegExp('^' + KATEX_FRAG_CLASS + '( ' + KATEX_FRAG_ID_PREFIX + '[\\p{L}0-9_-]+)?$', 'u');
+// Striktes Allow-List der von _mathXrefsToLatex generierten hrefs:
+// In-Page-Anker (#eq:, #ref-…) und kursinterne Routen. Alles andere
+// (z. B. LLM-generiertes \href) bleibt untrusted.
+const KATEX_HREF_TRUST_RE =
+  /^(?:#eq:[\p{L}0-9_-]+|#ref-[\p{L}0-9_-]+|\/courses\/[\w-]+\/(?:script#eq:[\p{L}0-9_-]+|references#ref-[\p{L}0-9_-]+|slides\/[\w-]+\/present#\/\d+\/\d+))$/u;
 function _katexTrust(ctx) {
-  return !!ctx && ctx.command === '\\htmlClass' && KATEX_FRAG_TRUST_RE.test(String(ctx.class || ''));
+  if (!ctx) return false;
+  if (ctx.command === '\\htmlClass') return KATEX_FRAG_TRUST_RE.test(String(ctx.class || ''));
+  if (ctx.command === '\\href') return KATEX_HREF_TRUST_RE.test(String(ctx.url || ''));
+  return false;
 }
 
 // Syntax-Highlighting (hljs, global aus base.html): alle Sprachen mit
@@ -2765,6 +2930,31 @@ function createMarkdownEditor(containerId, options = {}) {
       lineWrapping: true,
       matchBrackets: true,
       indentUnit: 2,
+      // Find & Replace (Search-Addons, s. base.html):
+      // Ctrl-F persistent Suchdialog (sucht beim Tippen mit), F3/Shift-F3
+      // nächste/vorige Übereinstimmung, Ctrl-Shift-F Ersetzen, Ctrl-Shift-R
+      // alle ersetzen (Standard-Keymap), Ctrl-L zur Zeile springen.
+      extraKeys: {
+        "Ctrl-F": "findPersistent",
+        "F3": "findNext",
+        "Shift-F3": "findPrev",
+      },
+      // Dialog-Texte der Search-Addons (Standard: Englisch) ins Deutsche
+      phrases: {
+        "Search:": "Suchen:",
+        "(Use /re/ syntax for regexp search)": "(regulärer Ausdruck: /re/)",
+        "Replace:": "Ersetzen:",
+        "Replace all:": "Alle ersetzen:",
+        "Replace with:": "Ersetzen durch:",
+        "With:": "Durch:",
+        "Replace?": "Ersetzen?",
+        "Yes": "Ja",
+        "No": "Nein",
+        "All": "Alle",
+        "Stop": "Stopp",
+        "Jump to line:": "Zur Zeile:",
+        "(Use line:column or scroll% syntax)": "(Zeile:Spalte oder scroll%)",
+      },
     });
     const wrapper = cm.getWrapperElement();
     wrapper.classList.add('md-codemirror', 'w-full');

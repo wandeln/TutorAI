@@ -783,6 +783,11 @@ a.tutorai-xref {
   border-right: 1px solid #e5e7eb;
 }
 
+/* Search-Addons: gelber Hintergrund für Suchtreffer (alle CM-Editoren) */
+.CodeMirror-searching {
+  background: #fde68a;
+}
+
 /* TutorAI-Annotationen (Overlay-Mode „tutorai-annotations“): */
 .md-codemirror .cm-ta-math { color: #b91c1c; }   /* LaTeX: $…$, $$…$$ */
 .md-codemirror .cm-ta-box { color: #0f766e; font-weight: 600; }  /* @startbox/@endbox */

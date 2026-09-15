@@ -60,6 +60,11 @@ MARKDOWN_MANUAL = """\
   @fig:label / @eq:label / @code:label / @box:label / @tab:label / @sec:label
   → werden durch klickbare Referenzen ersetzt („Abb. N“ / „Gl. N“ / „Code N“ / „Satz N“ / „Tab. N“ / „Abs. N.M“).
   Richtig: „wie in @eq:shannon gezeigt“ — Falsch: „wie in `@eq:shannon` gezeigt“.
+  Auch IN Formeln ($...$ / $$...$$) sind @eq:label und @cite:key / @citet:key / @citep:key erlaubt
+  (am besten innerhalb von \\text{…}) → klickbarer aufrechter Text („Gl. N“ / „[N]“ / „Autor (Jahr)“ /
+  „(Autor, Jahr)“), z. B. \\text{siehe @eq:shannon} bzw. \\text{vgl. @cite:shannon1948}.
+  Alle anderen Referenztypen (@fig:/@code:/@box:/@tab:/@sec:) werden in Formeln NICHT aufgelöst —
+  die vermeide dort.
 - Mathematische Boxen für Definitionen, Sätze/Theoreme, Lemmata, Propositionen, Korollare, Beweise und
   Beispiele — Marker JEWEILS auf EIGENER Zeile, Inhalt dazwischen (Markdown, $...$ und @-Referenzen erlaubt):
   @startbox:theorem[Name] {#box:label}

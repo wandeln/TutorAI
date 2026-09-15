@@ -198,7 +198,7 @@ async def start_import(
             "uploads": uploads,
             "errors": [
                 e for e in (report.get("errors") or [])
-                if not str(e).startswith("Zip-Extraktion fehlgeschlagen")
+                if not import_service.report_entry_msg(e).startswith("Zip-Extraktion fehlgeschlagen")
             ],
         }
         imp.report = report
@@ -289,7 +289,7 @@ async def start_media(
     # Alte Fehler-Warnings aus vorherigen (misslungenen) Läufe bereinigen.
     report = dict(imp.report or {})
     report["warnings"] = [w for w in (report.get("warnings") or [])
-                          if not str(w).startswith("Medium nicht importiert")]
+                          if not import_service.report_entry_msg(w).startswith("Medium nicht importiert")]
     imp.report = {**report, "media_options": {"paths": paths}}
     imp.updated_at = datetime.now()
     session.add(imp)
@@ -343,7 +343,7 @@ async def start_references(
     # Alte Fehler-Warnings aus vorherigen (misslungenen) Läufen bereinigen.
     report = dict(imp.report or {})
     report["warnings"] = [w for w in (report.get("warnings") or [])
-                          if not str(w).startswith("Quelle nicht importiert")]
+                          if not import_service.report_entry_msg(w).startswith("Quelle nicht importiert")]
     imp.report = {**report, "references_options": {"keys": keys}}
     imp.updated_at = datetime.now()
     session.add(imp)

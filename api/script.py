@@ -119,7 +119,7 @@ _BOX_LABEL_RE = re.compile(
 
 
 def _box_label_of(m: re.Match) -> str:
-    """Label aus einem _BOX_LABEL_RE/_BOX_CONTENT_RE-Match (eine der drei Gruppen)."""
+    """Label aus einem _BOX_LABEL_RE/_BOX_HEAD_RE-Match (eine der drei Gruppen)."""
     return m["box_lbl1"] or m["box_lbl2"] or m["box_lbl3"] or ""
 
 
@@ -171,11 +171,31 @@ _PREVIEW_LIMIT = 320
 _EQ_PREVIEW_RE = re.compile(r"\$\$((?:(?!\$\$)[\s\S])*?)\$\$\s*\{#eq:([\w-]+)\}")
 # Fenced-Block inkl. Inhalt (Label auf der ÖFFNENDEN Zeile, s. _scan_code_labels).
 _CODE_BLOCK_RE = re.compile(r"^```([^\n]*)\n?([\s\S]*?)^```[ \t]*$", re.MULTILINE)
-# Box inkl. Inhalt (Label auf der @startbox:-Zeile, s. _BOX_LABEL_RE;
-# Gruppen: box_type, box_lbl1/2/3, box_cap2/3, box_body=Inhalt).
-_BOX_CONTENT_RE = re.compile(
-    r"@(?:start)?box:(?P<box_type>[\w-]+)" + _BOX_LABEL_HEAD + r"[ \t]*\r?\n(?P<box_body>[\s\S]*?)\r?\n@endbox"
-)
+# Box-Öffnung inkl. Head-Zeile (Label auf der @startbox:-Zeile, s. _BOX_LABEL_RE;
+# Gruppen: box_type, box_lbl1/2/3, box_cap2/3). NICHT verankert (wie früher):
+# eine mittelzeilige Öffnung (z. B. Bullet) zählt mit. Der Inhalt wird
+# tiefenbasiert per _find_box_close ermittelt — Boxen sind NESTBAR
+# (s. markdown-renderer.js); der alte Nicht-greedy-Regex brach beim innersten
+# @endbox ab und verlor den Rest der äußeren Box.
+_BOX_HEAD_RE = re.compile(r"@(?:start)?box:(?P<box_type>[\w-]+)" + _BOX_LABEL_HEAD + r"[ \t]*\r?\n")
+# Start-/End-Events für die Tiefenzählung (Parität zu BOX_EVENT_RE in JS).
+_BOX_EVENT_RE = re.compile(r"@startbox:[\w-]+|@endbox")
+
+
+def _find_box_close(text: str, start: int) -> re.Match | None:
+    """Zugehöriges @endbox (Zeilenanfang) zur bei start geöffneten Box —
+    verschachtelte Boxen werden per Tiefenzählung gepaart; None = ungeschlossen."""
+    depth = 1
+    for m in _BOX_EVENT_RE.finditer(text, start):
+        if m.group(0).startswith("@startbox"):
+            depth += 1
+            continue
+        if m.start() != 0 and text[m.start() - 1] != "\n":
+            continue  # nicht Zeilenanfang → literal (wie in JS)
+        depth -= 1
+        if depth == 0:
+            return m
+    return None
 # Tabelle inkl. Block (Label-Zeile nach dem Block, s. _TAB_CAPTION_RE;
 # {zoom=X} nicht erfasst — die Preview braucht nur Tabellen-Block + Label).
 _TAB_CONTENT_RE = re.compile(
@@ -246,8 +266,16 @@ def _scan_previews(content: str) -> dict[str, str]:
                 out.setdefault(f"fig:{sub_label}", _truncate_preview(inner_cap))
     for m in _EQ_PREVIEW_RE.finditer(text):
         out.setdefault(f"eq:{m.group(2)}", _truncate_preview(m.group(1)))
-    for m in _BOX_CONTENT_RE.finditer(text):
-        out.setdefault(f"box:{_box_label_of(m)}", _preview_plain(m["box_body"]))
+    for m in _BOX_HEAD_RE.finditer(text):
+        close = _find_box_close(text, m.end())
+        if close is None:
+            continue  # ungeschlossene Box bleibt literal
+        body = text[m.end() : close.start()]
+        if body.endswith("\r\n"):
+            body = body[:-2]
+        elif body.endswith("\n"):
+            body = body[:-1]
+        out.setdefault(f"box:{_box_label_of(m)}", _preview_plain(body))
     for m in _TAB_CONTENT_RE.finditer(text):
         out.setdefault(f"tab:{m.group(2)}", _preview_plain(m.group(1)))
     for m in _CODE_BLOCK_RE.finditer(content or ""):
@@ -259,20 +287,21 @@ def _scan_previews(content: str) -> dict[str, str]:
 
 def _clean_heading_title(title: str) -> str:
     """Inline-Markdown (Code, Links, Betonung) aus einem Heading-Titel entfernen —
-    für die Anzeige im Inhaltsverzeichnis. LaTeX ($…$) bleibt erhalten, damit
-    es der Renderer (renderCaptionMath) als KaTeX rendern kann."""
-    math_parts: list[str] = []
+    für die Anzeige im Inhaltsverzeichnis. LaTeX ($…$) und Zitationen
+    (@cite:/@citet:/@citep:) bleiben erhalten, damit der Renderer
+    (renderCaptionRef) sie als KaTeX bzw. Zitations-Link rendern kann."""
+    keep_parts: list[str] = []
 
-    def _stash_math(m: re.Match) -> str:
-        math_parts.append(m.group(0))
-        return f"\x00{len(math_parts) - 1}\x00"
+    def _stash(m: re.Match) -> str:
+        keep_parts.append(m.group(0))
+        return f"\x00{len(keep_parts) - 1}\x00"
 
-    t = re.sub(r"\$[^$\n]*\$", _stash_math, title)
+    t = re.sub(r"\$[^$\n]*\$|@(?:citep|citet|cite):[\w-]+", _stash, title)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
     t = re.sub(r"[*_~]+", "", t)
     t = " ".join(t.split())
-    return re.sub(r"\x00(\d+)\x00", lambda m: math_parts[int(m.group(1))], t)
+    return re.sub(r"\x00(\d+)\x00", lambda m: keep_parts[int(m.group(1))], t)
 
 
 class _ScannedHeading(TypedDict):

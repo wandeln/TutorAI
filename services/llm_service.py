@@ -1282,7 +1282,6 @@ class LLMService:
     async def import_generate_slide_deck(
         self,
         chapter_title: str,
-        max_slides: str,
         other_context: str,
         script_labels: str,
         image_map: str,
@@ -1294,8 +1293,6 @@ class LLMService:
     ):
         """Slide-Deck für ein Kapitel (plain Text im Slide-Format).
 
-        max_slides: Foliengrenze-Zeile für den Prompt (1:1: "EXAKT N — ...",
-        sonst "keine feste Obergrenze — ...").
         other_context: Summaries der andern Kapitel/Folien-Decks (Konsistenz/Querverweise).
         script_labels: Labels der Skript-Quell-Kapitel (gemeinsame Objekte wiederverwenden).
         image_map: importierte Medien (Original-Pfad → URL, mit Kurzbeschreibung).
@@ -1305,7 +1302,6 @@ class LLMService:
         prompt = self._render_prompt(
             SLIDE_DECK_PROMPT_TEMPLATE,
             chapter_title=chapter_title,
-            max_slides=max_slides,
             other_context=other_context,
             label_rules=LABEL_RULES_SLIDES,
             script_labels=script_labels,

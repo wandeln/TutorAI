@@ -873,6 +873,7 @@ async def script_page(
         for s in sections
     ]
     ctx["page_title"] = f"Skript — {ctx['course']['name']}"
+    ctx["code_editor"] = True  # CodeMirror (Markdown-Mode) für die Kapitel-Editoren
     return templates.TemplateResponse("course/script.html", ctx)
 
 
@@ -1008,6 +1009,7 @@ async def slides_deck_page(
     ctx["material_label"] = "Folien"
     ctx.update(_slides_theme_ctx(session, course_id))
     ctx["page_title"] = f"{deck.title} — {ctx['course']['name']}"
+    ctx["code_editor"] = True  # CodeMirror (Markdown-Mode) für den Folien-Editor
     return templates.TemplateResponse("course/slides_edit.html", ctx)
 
 
@@ -1464,7 +1466,7 @@ async def new_task_page(
             "task": None,
             "is_tutor": True,
             "is_code": False,
-            "code_editor": False,
+            "code_editor": True,  # CodeMirror (Markdown-Mode) für Aufgabenstellung/Musterlösung
             "LLM_TIMEOUT": LLM_TIMEOUT,
         },
     )
@@ -1644,7 +1646,7 @@ async def task_page(
             "is_tutor": is_tutor,
             "is_student_view": is_student_view,
             "is_code": is_code,
-            "code_editor": is_code,
+            "code_editor": is_code or is_tutor,  # Tutoren: CodeMirror für Markdown-Editoren (Aufgabenstellung/Musterlösung)
             "my_submissions": my_submissions,
             "latest_points": latest_points,
             "total_attempts": len(my_submissions),

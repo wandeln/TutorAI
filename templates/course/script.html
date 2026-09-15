@@ -836,26 +836,33 @@
       d.textContent = text;
       return d;
     };
-    // Link mit Math im Titel: Präfix (Nummer) als Text, Titel via
-    // renderCaptionMath (LaTeX $…$ → gerenderte Formel, Rest HTML-escaped) —
-    // Titel aus der Refmap sind Server-Plain-Text mit möglichen $…$-Paaren.
-    const tocMathLink = (href, prefix, title, cls) => {
+    // Caption-Kontext für TOC-Zeilen (Headings + Figuren-Captions):
+    // Zitationen aufgelöst wie im Dokument, aber mit In-Page-Ankern auf den
+    // Quellen-Listeneintrag am Kapitelende; keine citedRefs-Registrierung
+    // (die Kapitel-Seite registriert ihre eigenen Zitate selbst).
+    const capCtx = { refMap, citedRefs: null, hrefFor: (label) => '#ref-' + label };
+    // Link mit Math/Zitationen im Titel: Präfix (Nummer) als Text, Titel via
+    // renderCaptionRef (LaTeX $…$ → gerenderte Formel + @cite/… → Zitations-Link;
+    // Titel aus der Refmap sind Server-Plain-Text mit möglichen $…$-Paaren
+    // und Cite-Tokens).
+    const tocMathLink = (href, prefix, title, cls, ctx) => {
       const a = document.createElement('a');
       a.href = href;
       a.className = cls;
       a.appendChild(document.createTextNode(prefix));
-      if (title) a.insertAdjacentHTML('beforeend', renderCaptionMath(title));
+      if (title) a.insertAdjacentHTML('beforeend', renderCaptionRef(title, ctx));
       return a;
     };
-    // Link mit Caption: Präfix (Nummer) als Text, Caption via renderCaptionMath
-    // (LaTeX $…$ → gerenderte Formel, Rest HTML-escaped) — Captions aus der
-    // Refmap sind Server-Plain-Text mit möglichen $…$-Paaren.
-    const tocCaptionLink = (href, prefix, caption, cls) => {
+    // Link mit Caption: Präfix (Nummer) als Text, Caption via renderCaptionRef
+    // (LaTeX $…$ → gerenderte Formel, + Zitationen @cite/… —
+    // ctx als 5. Argument; Captions aus der Refmap sind Server-Plain-Text mit
+    // möglichen $…$-Paaren und Cite-Tokens; Codes/Tabellen ohne ctx = Math-only).
+    const tocCaptionLink = (href, prefix, caption, cls, ctx) => {
       const a = document.createElement('a');
       if (href) a.href = href;
       a.className = cls;
       a.appendChild(document.createTextNode(caption ? prefix + ': ' : prefix));
-      if (caption) a.insertAdjacentHTML('beforeend', renderCaptionMath(caption));
+      if (caption) a.insertAdjacentHTML('beforeend', renderCaptionRef(caption, ctx));
       return a;
     };
 
@@ -865,7 +872,7 @@
       const ch = refMap.chapters[id];
       const row = document.createElement('div');
       row.className = 'py-0.5 text-sm flex items-center gap-2';
-      row.appendChild(tocMathLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ', ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0'));
+      row.appendChild(tocMathLink('#chapter-' + id, 'Kapitel ' + ch.num + ' — ', ch.title, 'text-gray-700 hover:text-blue-600 hover:underline min-w-0', capCtx));
       if (SQ_IS_TUTOR && !ch.visible) {
         const badge = document.createElement('span');
         badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-500 shrink-0';
@@ -879,7 +886,7 @@
         // 15/25 stehen nicht in Tailwinds Spacing-Skala → Arbitrary Values.
         const pad = { 2: 'pl-5', 3: 'pl-10', 4: 'pl-[3.75rem]', 5: 'pl-20', 6: 'pl-[6.25rem]' }[sec.level] || 'pl-5';
         srow.className = 'py-0.5 ' + pad + ' text-sm';
-        srow.appendChild(tocMathLink('#' + sec.anchor, sec.num + '\u00a0', sec.title, 'text-gray-500 hover:text-blue-600 hover:underline'));
+        srow.appendChild(tocMathLink('#' + sec.anchor, sec.num + '\u00a0', sec.title, 'text-gray-500 hover:text-blue-600 hover:underline', capCtx));
         body.appendChild(srow);
       }
     }
@@ -899,7 +906,7 @@
         // Ungelabelte, nummerierte Figuren (Subfigure-Komplexe mit gelabelten
         // Inners): kein Anker-Link, nur Anzeige.
         const href = f.label != null ? '#fig:' + encodeURIComponent(f.label) : null;
-        frow.appendChild(tocCaptionLink(href, 'Abb. ' + f.num, f.caption, href != null ? 'text-gray-500 hover:text-blue-600 hover:underline' : 'text-gray-500'));
+        frow.appendChild(tocCaptionLink(href, 'Abb. ' + f.num, f.caption, href != null ? 'text-gray-500 hover:text-blue-600 hover:underline' : 'text-gray-500', capCtx));
         body.appendChild(frow);
       }
     }

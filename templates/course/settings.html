@@ -342,21 +342,16 @@
 
     function renderImport() {
       const st = state;
-      const zipNames = (st.report && (st.report.uploads || []).length) ? st.report.uploads : [st.zip_name];
 
-      let html = `
-      <div class="flex items-center justify-between mb-4">
-        <div class="text-sm">
-          <span class="font-medium text-gray-700">📦 ${esc(zipNames.join(' · '))}</span>
-          <span class="text-gray-400 ml-2">${esc((st.created_at || '').slice(0, 16).replace('T', ' '))}</span>
-        </div>
-        <button data-act="delete-import" class="text-xs text-red-600 hover:underline">Import löschen</button>
-      </div>`;
+      let html = '';
 
       if (st.has_active) {
         html += `<div class="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
         ⚠️ Ein Import-Lauf ist aktiv – bitte den Kurs in dieser Zeit nicht parallel bearbeiten.</div>`;
       }
+
+      // Weitere Zip-Dateien: oberhalb/außerhalb der Stufen (analog zur initialen Upload-Dropzone)
+      html += addZipBlock();
 
       for (const s of SECTIONS) {
         html += section(s, st);
@@ -374,7 +369,8 @@
       // (Polling würde andernfalls die Listen ständig nach oben scrollen)
       const chapScroll = (document.getElementById('chapter-list') || {}).scrollTop || 0;
       const deckScroll = (document.getElementById('deck-list') || {}).scrollTop || 0;
-      const repScroll = (document.getElementById('report-log') || {}).scrollTop || 0;
+      const repErrScroll = (document.getElementById('report-err-log') || {}).scrollTop || 0;
+      const repWarnScroll = (document.getElementById('report-warn-log') || {}).scrollTop || 0;
       const refScroll = (document.getElementById('ref-list') || {}).scrollTop || 0;
       const fmScroll = (document.getElementById('filemap-list') || {}).scrollTop || 0;
       const fmProgScroll = (document.getElementById('filemap-progress') || {}).scrollTop || 0;
@@ -386,8 +382,10 @@
       if (cl) cl.scrollTop = chapScroll;
       const dl = document.getElementById('deck-list');
       if (dl) dl.scrollTop = deckScroll;
-      const rl = document.getElementById('report-log');
-      if (rl) rl.scrollTop = repScroll;
+      const rel = document.getElementById('report-err-log');
+      if (rel) rel.scrollTop = repErrScroll;
+      const rwl = document.getElementById('report-warn-log');
+      if (rwl) rwl.scrollTop = repWarnScroll;
       const refl = document.getElementById('ref-list');
       if (refl) refl.scrollTop = refScroll;
       const fml = document.getElementById('filemap-list');
@@ -473,9 +471,12 @@
 
     function reportSection(st) {
       const rep = st.report || {};
-      const errs = rep.errors || [];
-      const warns = rep.warnings || [];
-      const logs = rep.log || [];
+      // Einträge: [ts, msg] (ts = HH:MM:SS des Eintreffens) bzw. Legacy-String
+      const norm = (arr) => (arr || []).map((e) => (Array.isArray(e) ? e : [null, e]));
+      const errs = norm(rep.errors);
+      const warns = norm(rep.warnings);
+      const logs = norm(rep.log);
+      const ts = (t) => (t ? `<span class="text-[10px] text-gray-400">${esc(t)}</span>` : '');
       const isOpen = !!openSec.report;
       const badge = errs.length
         ? `<span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 whitespace-nowrap">${errs.length} ✕</span>`
@@ -492,14 +493,17 @@
           </span>
         </summary>
         <div class="px-4 pb-4 pt-3 border-t border-gray-100">
-          <div id="report-log" class="bg-orange-50 border border-orange-200 rounded-lg p-3 max-h-64 overflow-y-auto pr-2 space-y-1">
-            ${errs.map((e) => `<p class="text-xs text-red-700">✕ ${esc(e)}</p>`).join('')}
-            ${warns.map((e) => `<p class="text-xs text-orange-700">! ${esc(e)}</p>`).join('')}
-            ${(!errs.length && !warns.length) ? '<p class="text-xs text-gray-500">Keine Meldungen.</p>' : ''}
+          <div id="report-err-log" class="bg-red-50 border border-red-200 rounded-lg p-3 max-h-64 overflow-y-auto pr-2 space-y-1">
+            <p class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Fehler</p>
+            ${errs.length ? errs.map(([t, m]) => `<p class="text-xs text-red-700">${ts(t)} ✕ ${esc(m)}</p>`).join('') : '<p class="text-xs text-gray-500">Keine Fehler.</p>'}
+          </div>
+          <div id="report-warn-log" class="mt-2 bg-amber-50 border border-amber-200 rounded-lg p-3 max-h-64 overflow-y-auto pr-2 space-y-1">
+            <p class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Warnungen</p>
+            ${warns.length ? warns.map(([t, m]) => `<p class="text-xs text-orange-700">${ts(t)} ! ${esc(m)}</p>`).join('') : '<p class="text-xs text-gray-500">Keine Warnungen.</p>'}
           </div>
           ${logs.length ? `<div class="mt-2 bg-gray-50 border border-gray-200 rounded-lg p-3 max-h-48 overflow-y-auto pr-2 space-y-1">
             <p class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Debug-Log (Quellen pro Kapitel/Deck)</p>
-            ${logs.map((e) => `<p class="text-[11px] leading-snug text-gray-500">› ${esc(e)}</p>`).join('')}
+            ${logs.map(([t, m]) => `<p class="text-[11px] leading-snug text-gray-500">${ts(t)} › ${esc(m)}</p>`).join('')}
           </div>` : ''}
         </div>
       </details>`;
@@ -509,6 +513,11 @@
 
     function filemapPanel(st) {
       const p = st.filemap_status;
+      // Import löschen: unten in der Dateianalyse (Stage wird geleert); während
+      // eines aktiven Laufs ausgeblendet (Backend lehnt es dann auch ab).
+      const delHtml = st.has_active ? '' : `<div class="mt-3 flex justify-end">
+        <button data-act="delete-import" class="text-xs text-red-600 hover:underline">Import löschen</button>
+      </div>`;
       if (p === 'done') {
         const manifest = st.manifest || [];
         const nText = manifest.filter((m) => m.read_path).length;
@@ -518,20 +527,20 @@
         let html = `<div class="text-sm text-green-700">
           ✓ Analyse abgeschlossen: ${nText} Text-Datei(en), ${nMedia} Medium/Medien${nBib ? ', ' + nBib + ' BibTeX-Datei(en)' : ''}${nOther ? ', ' + nOther + ' ignoriert' : ''}.</div>`;
         html += fileList(st);
-        html += addZipBlock();
+        html += delHtml;
         return html;
       }
       if (p === 'error') {
-        return `<div class="text-sm text-red-700">Analyse fehlgeschlagen (Details im Bericht unten).</div>`;
+        return `<div class="text-sm text-red-700">Analyse fehlgeschlagen (Details im Bericht unten).</div>` + delHtml;
       }
       if (p === 'pending') {
-        return `<div class="text-xs text-gray-500">Startet automatisch nach dem Upload …</div>`;
+        return `<div class="text-xs text-gray-500">Startet automatisch nach dem Upload …</div>` + delHtml;
       }
 
       // running / paused / interrupted: Per-Datei-Progress
       const textFiles = (st.manifest || []).filter((m) => m.read_path);
       const cur = (st.progress && st.progress.current) || 'Wird vorbereitet …';
-      if (!textFiles.length) return `<div class="text-xs text-gray-500">${esc(cur)}</div>`;
+      if (!textFiles.length) return `<div class="text-xs text-gray-500">${esc(cur)}</div>` + delHtml;
 
       const units = (st.progress && st.progress.units) || {};
       const fmap = st.file_map || {};
@@ -556,6 +565,7 @@
       return `<div>
         <p class="text-xs text-gray-500 mb-2">${esc(cur)}</p>
         <div id="filemap-progress" class="space-y-1 max-h-48 overflow-y-auto pr-1">${rows}</div>
+        ${delHtml}
       </div>`;
     }
 
@@ -595,11 +605,11 @@
     }
 
     function addZipBlock() {
-      return `<div class="mt-4 border-t border-gray-100 pt-3">
-        <div id="add-dropzone" class="border-2 border-dashed border-gray-300 rounded-xl p-4 text-center cursor-pointer hover:border-blue-400 transition">
-          <div class="text-xl mb-1">➕</div>
-          <p class="text-xs font-medium text-gray-700">Weitere Zip-Datei hinzufügen (wird in dieselbe Stage gemerged)</p>
-          <p class="text-[11px] text-gray-400 mt-0.5">Max. 500 MB · .zip</p>
+      return `<div class="mb-4">
+        <div id="add-dropzone" class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition">
+          <div class="text-3xl mb-2">📦</div>
+          <p class="text-sm font-medium text-gray-700">Weitere Zip-Datei hierher ziehen oder klicken (wird in dieselbe Stage gemerged)</p>
+          <p class="text-xs text-gray-400 mt-1">Max. 500 MB · .zip</p>
           <input type="file" id="add-file" accept=".zip,application/zip" class="hidden">
         </div>
         <div id="add-progress" class="hidden mt-3">

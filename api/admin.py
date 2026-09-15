@@ -4,24 +4,39 @@ Admin-Endpoints: Kurs-Management + User-Verwaltung + Systemeinstellungen.
 Rollen: Administrator (global)
 """
 
+import shutil
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import Optional
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from config import MEDIA_DIR
 from database.base import get_session
 from database.models import (
     Course,
     CourseCreate,
+    CourseInvite,
+    CourseMaterial,
+    CourseMedia,
+    CourseReference,
     CourseRole,
     CourseSettings,
     CourseSettingsUpdate,
+    CourseSlidesTheme,
     Feedback,
     ForumChannel,
+    ForumChannelReadState,
+    ForumMessage,
     GlobalSettings,
     GlobalSettingsUpdate,
     GlobalSettingsRead,
     GlobalUserRole,
+    HintExchange,
+    MediaUsage,
+    ScriptQuestion,
+    ScriptQuestionResponse,
+    ScriptSection,
     Submission,
     Task,
     User,
@@ -119,7 +134,8 @@ async def duplicate_course(
     session: Session = Depends(get_session),
     user: User = Depends(require_global_admin()),
 ):
-    """Kurs duplizieren (Kurs + Tasks + Settings, ohne Mitglieder/Submissions)."""
+    """Kurs duplizieren (Kurs + Tasks + Skript-Kapitel + Slides + Quellen + Settings,
+    ohne Mitglieder/Submissions)."""
     source_course = session.get(Course, course_id)
     if not source_course:
         raise HTTPException(404, "Kurs nicht gefunden.")
@@ -144,22 +160,7 @@ async def duplicate_course(
     session.add(membership)
     session.commit()
 
-    # 3. Forum-Kanäle kopieren (ohne Nachrichten)
-    source_channels = session.exec(
-        select(ForumChannel).where(ForumChannel.course_id == course_id)
-    ).all()
-    for src_ch in source_channels:
-        session.add(
-            ForumChannel(
-                course_id=new_course.id,  # type: ignore[arg-type]
-                name=src_ch.name,
-                description=src_ch.description,
-                created_by=user.id,  # type: ignore[arg-type]
-            )
-        )
-    session.commit()
-
-    # 4. Alle Tasks kopieren (ohne Submissions/Feedback)
+    # 3. Alle Tasks kopieren (ohne Submissions/Feedback)
     source_tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
     for src_task in source_tasks:
         new_task = Task(
@@ -179,7 +180,7 @@ async def duplicate_course(
         session.add(new_task)
     session.commit()
 
-    # 5. CourseSettings kopieren
+    # 4. CourseSettings kopieren
     source_settings = session.exec(
         select(CourseSettings).where(CourseSettings.course_id == course_id)
     ).first()
@@ -199,6 +200,75 @@ async def duplicate_course(
         session.add(new_settings)
         session.commit()
 
+    # 5. Skript-Kapitel kopieren
+    source_sections = session.exec(
+        select(ScriptSection).where(ScriptSection.course_id == course_id)
+    ).all()
+    for src_section in source_sections:
+        session.add(
+            ScriptSection(
+                course_id=new_course.id,  # type: ignore[arg-type]
+                title=src_section.title,
+                content=src_section.content,
+                is_visible=src_section.is_visible,
+                display_order=src_section.display_order,
+                summary=src_section.summary,
+                created_by=user.id,  # type: ignore[arg-type]
+            )
+        )
+    session.commit()
+
+    # 6. Materialien (Slide-Decks) kopieren
+    source_materials = session.exec(
+        select(CourseMaterial).where(CourseMaterial.course_id == course_id)
+    ).all()
+    for src_material in source_materials:
+        session.add(
+            CourseMaterial(
+                course_id=new_course.id,  # type: ignore[arg-type]
+                title=src_material.title,
+                material_type=src_material.material_type,
+                content=src_material.content,
+                is_visible=src_material.is_visible,
+                display_order=src_material.display_order,
+                summary=src_material.summary,
+                created_by=user.id,  # type: ignore[arg-type]
+            )
+        )
+    session.commit()
+
+    # 7. Quellen-Referenzen (für @cite:{key} im Inhalt) + Slides-Theme kopieren
+    source_references = session.exec(
+        select(CourseReference).where(CourseReference.course_id == course_id)
+    ).all()
+    for src_ref in source_references:
+        session.add(
+            CourseReference(
+                course_id=new_course.id,  # type: ignore[arg-type]
+                key=src_ref.key,
+                entry_type=src_ref.entry_type,
+                authors=src_ref.authors,
+                title=src_ref.title,
+                year=src_ref.year,
+                venue=src_ref.venue,
+                detail=src_ref.detail,
+                address=src_ref.address,
+                doi=src_ref.doi,
+                created_by=user.id,  # type: ignore[arg-type]
+            )
+        )
+    source_theme = session.exec(
+        select(CourseSlidesTheme).where(CourseSlidesTheme.course_id == course_id)
+    ).first()
+    if source_theme:
+        session.add(
+            CourseSlidesTheme(
+                course_id=new_course.id,  # type: ignore[arg-type]
+                theme=source_theme.theme,
+            )
+        )
+    session.commit()
+
     return {
         "message": f"Kurs '{data.name}' aus '{source_course.name}' dupliziert.",
         "course": {
@@ -206,6 +276,8 @@ async def duplicate_course(
             "name": new_course.name,
             "semester": new_course.semester,
             "task_count": len(source_tasks),
+            "section_count": len(source_sections),
+            "material_count": len(source_materials),
         },
     }
 
@@ -223,37 +295,136 @@ async def delete_course(
     
     course_name = course.name
 
-    # Manuelle Cascading deletes in korrekter Reihenfolge
-    # 1. Alle Tasks des Kurses finden
+    # Manuelle Cascading deletes in korrekter Reihenfolge (Kinder zuerst).
+    # flush() nach jeder Gruppe, damit die Lösch-Reihenfolge garantiert ist —
+    # alles in einem einzigen Commit, atomar.
+
+    # 1. Skript-Fragen: Antworten → Fragen → Kapitel
+    questions = session.exec(
+        select(ScriptQuestion).where(ScriptQuestion.course_id == course_id)
+    ).all()
+    for question in questions:
+        responses = session.exec(
+            select(ScriptQuestionResponse).where(
+                ScriptQuestionResponse.question_id == question.id
+            )
+        ).all()
+        for response in responses:
+            session.delete(response)
+        session.delete(question)
+    session.flush()
+    sections = session.exec(
+        select(ScriptSection).where(ScriptSection.course_id == course_id)
+    ).all()
+    for section in sections:
+        session.delete(section)
+    session.flush()
+
+    # 2. Forum: Nachrichten → Read-States → Kanäle
+    messages = session.exec(
+        select(ForumMessage).where(ForumMessage.course_id == course_id)
+    ).all()
+    for message in messages:
+        session.delete(message)
+    session.flush()
+    channels = session.exec(
+        select(ForumChannel).where(ForumChannel.course_id == course_id)
+    ).all()
+    for channel in channels:
+        read_states = session.exec(
+            select(ForumChannelReadState).where(
+                ForumChannelReadState.channel_id == channel.id
+            )
+        ).all()
+        for read_state in read_states:
+            session.delete(read_state)
+        session.delete(channel)
+    session.flush()
+
+    # 3. Einladungslinks
+    invites = session.exec(
+        select(CourseInvite).where(CourseInvite.course_id == course_id)
+    ).all()
+    for invite in invites:
+        session.delete(invite)
+    session.flush()
+
+    # 4. Medien: Usages → DB-Einträge (Dateien auf Disc nach dem Commit)
+    media = session.exec(
+        select(CourseMedia).where(CourseMedia.course_id == course_id)
+    ).all()
+    for medium in media:
+        usages = session.exec(
+            select(MediaUsage).where(MediaUsage.media_id == medium.id)
+        ).all()
+        for usage in usages:
+            session.delete(usage)
+        session.delete(medium)
+    session.flush()
+
+    # 5. Materialien, Referenzen, Slides-Theme
+    materials = session.exec(
+        select(CourseMaterial).where(CourseMaterial.course_id == course_id)
+    ).all()
+    for material in materials:
+        session.delete(material)
+    references = session.exec(
+        select(CourseReference).where(CourseReference.course_id == course_id)
+    ).all()
+    for reference in references:
+        session.delete(reference)
+    theme = session.exec(
+        select(CourseSlidesTheme).where(CourseSlidesTheme.course_id == course_id)
+    ).first()
+    if theme:
+        session.delete(theme)
+    session.flush()
+
+    # 6. Tasks: Feedbacks → Submissions → Hint-Dialoge → Tasks
     tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
     for task in tasks:
         task_id = task.id
-        # 2. Alle Submissions der Tasks
-        submissions = session.exec(select(Submission).where(Submission.task_id == task_id)).all()
+        submissions = session.exec(
+            select(Submission).where(Submission.task_id == task_id)
+        ).all()
         for sub in submissions:
-            # 3. Alle Feedbacks der Submissions
-            feedbacks = session.exec(select(Feedback).where(Feedback.submission_id == sub.id)).all()
+            feedbacks = session.exec(
+                select(Feedback).where(Feedback.submission_id == sub.id)
+            ).all()
             for fb in feedbacks:
                 session.delete(fb)
             session.delete(sub)
+        hints = session.exec(
+            select(HintExchange).where(HintExchange.task_id == task_id)
+        ).all()
+        for hint in hints:
+            session.delete(hint)
         session.delete(task)
+    session.flush()
 
-    # 5. Alle CourseSettings
-    settings = session.exec(select(CourseSettings).where(CourseSettings.course_id == course_id)).first()
+    # 7. Kurs-Settings + Mitgliedschaften
+    settings = session.exec(
+        select(CourseSettings).where(CourseSettings.course_id == course_id)
+    ).first()
     if settings:
         session.delete(settings)
-
-    # 6. Alle UserCourse-Mitgliedschaften
-    memberships = session.exec(select(UserCourse).where(UserCourse.course_id == course_id)).all()
+    memberships = session.exec(
+        select(UserCourse).where(UserCourse.course_id == course_id)
+    ).all()
     for mc in memberships:
         session.delete(mc)
+    session.flush()
 
-    # 6b. Kurs-Import (DB-Zeile + Staging-Dateien, eigenes Session-Handling)
+    # 8. Kurs-Import (DB-Zeile + Staging-Dateien, eigenes Session-Handling)
     import_service.delete_import(course_id)
 
-    # 7. Schließlich den Kurs selbst
+    # 9. Schließlich den Kurs selbst
     session.delete(course)
     session.commit()
+
+    # 10. Medien-Dateien des Kurses von Disc entfernen (best effort)
+    shutil.rmtree(MEDIA_DIR / f"course_{course_id}", ignore_errors=True)
+
     return {"message": f"Kurs '{course_name}' gelöscht."}
 
 

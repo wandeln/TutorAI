@@ -525,7 +525,11 @@
         return;
       }
 
-      showToast(`Kurs "${name}" dupliziert! (${data.course.task_count} Aufgaben kopiert)`, 'success');
+      const parts = [];
+      if (data.course.task_count) parts.push(`${data.course.task_count} Aufgaben`);
+      if (data.course.section_count) parts.push(`${data.course.section_count} Skript-Kapitel`);
+      if (data.course.material_count) parts.push(`${data.course.material_count} Slide-Decks`);
+      showToast(`Kurs "${name}" dupliziert!` + (parts.length ? ` (${parts.join(', ')} kopiert)` : ''), 'success');
       closeDuplicateCourseModal();
 
       window.location.reload();
@@ -662,10 +666,15 @@
         credentials: 'same-origin',
       });
 
-      const data = await res.json();
+      let detail;
+      try {
+        detail = (await res.json()).detail;
+      } catch (_) {
+        detail = null; // Nicht-JSON-Antwort (z. B. 500 Plain-Text)
+      }
 
       if (!res.ok) {
-        showToast(data.detail || 'Fehler beim Löschen.', 'error');
+        showToast(detail || `Fehler beim Löschen (HTTP ${res.status}).`, 'error');
         return;
       }
 
@@ -867,10 +876,15 @@
         credentials: 'same-origin',
       });
 
-      const data = await res.json();
+      let detail;
+      try {
+        detail = (await res.json()).detail;
+      } catch (_) {
+        detail = null; // Nicht-JSON-Antwort (z. B. 500 Plain-Text)
+      }
 
       if (!res.ok) {
-        showToast(data.detail || 'Fehler beim Löschen.', 'error');
+        showToast(detail || `Fehler beim Löschen (HTTP ${res.status}).`, 'error');
         return;
       }
 

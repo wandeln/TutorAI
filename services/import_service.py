@@ -250,6 +250,13 @@ def set_progress(
     _mutate(import_id, fn)
 
 
+def report_entry_msg(entry) -> str:
+    """Report-Eintrag ([ts, msg] bzw. Legacy-String) → Nachrichtentext."""
+    if isinstance(entry, (list, tuple)) and len(entry) > 1:
+        return str(entry[1])
+    return str(entry)
+
+
 def append_report(
     import_id: int,
     *,
@@ -260,19 +267,20 @@ def append_report(
 ) -> None:
     def fn(imp: CourseImport):
         r = dict(imp.report or {})
+        ts = datetime.now().strftime("%H:%M:%S")
         warns = list(r.get("warnings") or [])
         errs = list(r.get("errors") or [])
         for w in warnings or []:
-            if w not in warns:
-                warns.append(w)
+            if w not in [report_entry_msg(p) for p in warns]:
+                warns.append([ts, w])
         for e in errors or []:
-            if e not in errs:
-                errs.append(e)
+            if e not in [report_entry_msg(p) for p in errs]:
+                errs.append([ts, e])
         r["warnings"] = warns[:200]
         r["errors"] = errs[:200]
         if log:
             logs = list(r.get("log") or [])
-            logs.extend(log)
+            logs.extend([ts, m] for m in log)
             r["log"] = logs[-300:]
         if summary is not None:
             r["summary"] = summary
@@ -3608,15 +3616,8 @@ async def _generate_deck(
     if not section_content.strip() and n_src_slides == 0:
         raise RuntimeError("Kein Quelltext für dieses Deck (Skript-Kapitel und Sources leer).")
 
-    # 1:1-Modus (QUELLE FOLIEN vorhanden): Foliengenzahl = Anzahl der Quell-Folien.
-    # Sonst: keine Obergrenze — das LLM wählt die Foliengenzahl passend zum Inhalt.
+    # 1:1-Modus (QUELLE FOLIEN vorhanden) — für Runaway-Cap und Fallback-Text.
     is_1to1 = n_src_slides > 0
-    max_slides_text = (
-        f"EXAKT {n_src_slides} — eine Quellfolie = eine Ziel-Folie"
-        if is_1to1 else
-        "keine feste Obergrenze — orientiere dich am Inhalt der QUELLE: so viele "
-        "Folien wie nötig, um den Inhalt vollständig und übersichtlich darzustellen"
-    )
 
     source = section_content or (
         "(keine Text-Quelle — die QUELLE FOLIEN oben sind die Grundlage)" if is_1to1 else ""
@@ -3635,7 +3636,7 @@ async def _generate_deck(
             if not await gate(import_id, "slides"):
                 raise RuntimeError("gestoppt (Pause/Cancel)")
             res = await llm_service.import_generate_slide_deck(
-                dk["title"], max_slides_text, ctx,
+                dk["title"], ctx,
                 ", ".join(sorted(script_labels)) or "(keine)",
                 image_map_text, ref_text, src_slides, source,
                 config=llm_cfg, max_tokens=max_tokens,

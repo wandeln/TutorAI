@@ -531,6 +531,13 @@ class PrivateTest(unittest.TestCase):
     const description = descEditor.getValue();
     const modelSolution = solEditor.getValue();
 
+    // Pflichtfeld-Check per JS: Das "required"-Attribut liegt nicht mehr auf
+    // dem versteckten Textarea (CodeMirror), native Validierung geht nicht.
+    if (descEditor.required && !description.trim()) {
+      showToast("Aufgabenstellung ist erforderlich.", "error");
+      return null;
+    }
+
     const body = {
       title: formData.get("title"),
       task_type: formData.get("task_type"),

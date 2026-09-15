@@ -70,6 +70,7 @@ HTML-Struktur:
   - KaTeX (globale Variable katex) für mathematische Formeln: <link rel="stylesheet" href="/static/vendor/katex/katex.min.css"></link> UND <script src="/static/vendor/katex/katex.min.js"></script> (Achtung: beachte für die CSS und die JS Datei den subfolder /katex/ im Path!)
 - Verwende AUSSCHLIESSLICH diese Bibliotheken plus Vanilla JS, Canvas, SVG und CSS. KEINE anderen externen Ressourcen: keine weiteren CDN-Links, kein fetch/XHR, keine Bilder von URLs, keine ES-Modules (kein type="module"), keine Import-Maps. Bei Plotly: keine „mapbox“/„map“-Traces (MapLibre benötigt Web Worker, die im Sandbox nicht verfügbar sind).
 - KEIN Zugriff auf localStorage, sessionStorage oder Cookies (im Sandbox nicht verfügbar) — den gesamten Zustand in JavaScript-Variablen halten.
+- KEIN Webcam-/Mikrofon-Zugriff (getUserMedia ist im sandboxed Iframe blockiert) — verlangt die Anfrage Device-Input, stattdessen ein Dateifeld zum Hochladen anbieten (z. B. <input type="file" accept="image/*"> bzw. accept="audio/*") und die Datei lokal mit URL.createObjectURL() verarbeiten.
 - Mathematische Formeln: KaTeX verwenden (gleiche Library wie die Kursplattform für LaTeX), z. B. katex.renderToString("H(X) = -\\\\sum_i p_i \\\\log_2 p_i", { throwOnError: false, displayMode: true }) in ein Element einbauen — niemals rohen LaTeX-Quelltext anzeigen.
 
 Design:

@@ -43,6 +43,8 @@
  *                                                            Decks (parseSlides hängt sie an, Navigation/Highlight per
  *                                                            slides.js-Click-Handler); sonst: Link auf den Quellen-Tab;
  *                                                            ❓ wenn der Key unbekannt ist
+ *                                                            Auch in Figuren-Captions (Alt-Text) erlaubt — wird dort
+ *                                                            ebenso aufgelöst (renderCaptionRef) und im TOC gerendert
  * Quellen-Eintrag:    @bibentry:{key}             → komplette Quellenangabe (Nummer [N] OHNE
  *                                                            Link, Titel kursiv, DOI/Link) im Design des Skript-
  *                                                            Quellenverzeichnisses — Einträge der auto-Quellen-Folie
@@ -56,6 +58,8 @@
  *                                                            [Caption] = Box-Überschrift („Definition N: Caption“,
  *                                                            $…$-Math erlaubt); Caption/Label in beliebiger
  *                                                            Reihenfolge (je max. einmal)
+ *                                                            NESTBAR (beliebige Tiefe): @startbox innerhalb einer Box,
+ *                                                            jeweils mit eigenem @endbox (s. Schritt 1d)
  *                                                            highlight: Box OHNE Kopf (transparent + Blur,
  *                                                            Primärfarbe), z.B. für Titel auf Deckslides;
  *                                                            @boxcolor:<farbe> als ERSTE Zeile übersteuert
@@ -220,6 +224,9 @@ function _chapterRef(refMap, sectionId) {
 // ergänzt den Kopf: „Definition N: Caption“ (Math: s. renderCaptionMath).
 // Mathe-Typen (definition, satz, …): Referenzen auf beschriftete Boxen
 // ({#box:label}) zeigen den Typ-Titel („Satz N“), s. Xref-Auflösung unten.
+// NESTBAR (beliebige Tiefe, s. Schritt 1d / _convertBoxBlocks): ein gültiges
+// @startbox:{typ} öffnet, ein @endbox am Zeilenanfang schließt — die
+// zugehörigen Marker paart die Tiefenzählung (BOX_EVENT_RE).
 const CALLOUT_TYPES = {
   merksatz: { icon: '📌', title: 'Merksatz' },
   hinweis: { icon: '💡', title: 'Hinweis' },
@@ -236,6 +243,12 @@ const CALLOUT_TYPES = {
   beweis: { icon: '🧮', title: 'Beweis' },
   frage: { icon: '❔', title: 'Frage' },
 };
+
+// Box-Events für das Paaren/Nesten (Schritt 1d): gültiges @startbox:{typ}
+// (Typ direkt nach dem Doppelpunkt) ÖFFNET, @endbox SCHLIESST (nur am
+// Zeilenanfang wirksam — den Check macht _findBoxClose; Parität zum alten
+// 1d-Regex \r?\n@endbox).
+const BOX_EVENT_RE = /@startbox:([\p{L}0-9_-]+)|@endbox/gu;
 
 // ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
 // @startbox:highlight ist die headless Variante der Hinweis-Boxen (kein
@@ -507,6 +520,27 @@ async function renderMarkdown(text, targetElement, options = {}) {
   const slidesMaxSBox = (slidesRefMap && slidesRefMap.maxSBox) || 0;
   const slidesMaxSTab = (slidesRefMap && slidesRefMap.maxSTab) || 0;
 
+  // Für das Quellenverzeichnis (Nur zitierte Einträge) — auch Caption-
+  // Zitationen (renderCaptionRef) füllen sie, damit Zitate in Figuren-
+  // Captions im Quellenverzeichnis erscheinen.
+  const citedRefs = [];
+  // In-Deck-Anker auf die auto-Quellen-Folie (parseSlides hängt sie an): deck-
+  // scoped (ref-{deckId}-…), damit mehrere Decks auf einer Seite (Folien-
+  // Übersicht mit Kacheln) keine doppelten IDs bekommen; Skript: ref-{key}
+  // (Kapitel-Seite, dort eindeutig).
+  const refAnchorId = (key) =>
+    slideMode && slidePos && slidePos.deckId != null ? `ref-${slidePos.deckId}-${key}` : `ref-${key}`;
+  // Caption-Kontext für renderCaptionRef (Figuren-Captions + TOC): dieselbe
+  // Link-Ziel-Regel wie die Fließtext-Zitationen (Schritt 6b).
+  const captionCtx = {
+    refMap,
+    citedRefs,
+    hrefFor: (label) =>
+      options.bibliography || slideMode
+        ? `#${refAnchorId(label)}`
+        : `/courses/${(refMap && refMap.courseId) || ''}/references#ref-${label}`,
+  };
+
   // 0. Kapitel-Label ({#sec:label} als erste nicht-leere Zeile) → kein Content, entfernen
   text = text.replace(/^(?:[ \t]*\n)*[ \t]*\{#sec:[\p{L}0-9_-]+\}[ \t]*(?:\r?\n|$)/u, '');
 
@@ -563,12 +597,19 @@ async function renderMarkdown(text, targetElement, options = {}) {
     return `%%IC${inlineCodeSpans.length - 1}%%`;
   });
 
-  // 1d. Convert callout boxes: @startbox:{typ} … @endbox
+  // 1d. Convert callout boxes: @startbox:{typ} … @endbox — NESTBAR
+  //     (beliebige Tiefe, z. B. Beweis-Box in Satz-Box; s. _convertBoxBlocks).
   //     → statischer HTML-Wrapper (marked lässt HTML-Blöcke unverändert
   //     durch, DOMPurify behält die divs). Der INHALT bleibt im Fließtext →
   //     $...$/{#fig:…}/@fig:/@box:/@task:… darin werden wie gewohnt extrahiert.
   //     Code-Blöcke sind zu diesem Zeitpunkt bereits extrahiert →
   //     in Code bleibt @startbox:… literal.
+  //     Paaren (Nesten): gültiges @startbox:{typ} (Typ direkt nach dem
+  //     Doppelpunkt) ÖFFNET, @endbox am Zeilenanfang SCHLIESST — die
+  //     Tiefenzählung (BOX_EVENT_RE / _findBoxClose) findet den zugehörigen
+  //     Schließmarker. Ein Startbox ohne passendes @endbox (oder mit
+  //     ungültiger Head-Zeile) bleibt literal, die darin enthaltenen Boxen
+  //     werden trotzdem konvertiert (Tippfehler fallen so auf).
   //     Tokens auf der @startbox:-Zeile (beliebige Reihenfolge, je max. einmal,
   //     nur Leerraum dazwischen, sonst bleibt die Box literal — Tippfehler
   //     fallen auf):
@@ -584,111 +625,160 @@ async function renderMarkdown(text, targetElement, options = {}) {
   let boxFallbackCount = 0;
   // Slide-Decks: slide-eigene Box-Labels → S1, S2, … (wie eq/fig/code).
   let slideBoxCount = 0;
-  processed = processed.replace(
-    /@startbox:([\p{L}0-9_-]+)([^\n]*)\r?\n([\s\S]*?)\r?\n@endbox/gu,
-    (match, type, head, content) => {
-      // @startbox:-Zeile tokenisieren: [Caption] und {#box:label}, je max. einmal,
-      // nur Leerraum zwischen/nach den Tokens (CRLF: trailing \r vorher
-      // entfernen). Abweichung (z. B. weiterer Text) → Box bleibt literal.
-      let caption = null;
-      let label = null;
-      let valid = true;
-      let tokEnd = 0;
-      const headLine = head.replace(/\r$/, '');
-      const boxTokRe = /\[([^\]]*)\]|\{#box:([\p{L}0-9_-]+)\}/gu;
-      let bt;
-      while ((bt = boxTokRe.exec(headLine)) !== null) {
-        if (!/^[ \t]*$/.test(headLine.slice(tokEnd, bt.index))) { valid = false; break; }
-        if (bt[1] !== undefined) {
-          if (caption !== null) { valid = false; break; }
-          caption = bt[1];
-        } else {
-          if (label !== null) { valid = false; break; }
-          label = bt[2];
-        }
-        tokEnd = bt.index + bt[0].length;
+  processed = _convertBoxBlocks(processed);
+
+  // Erste Box-Öffnung ab pos: gültiges @startbox:{typ} (Typ direkt nach dem
+  // Doppelpunkt, s. BOX_EVENT_RE) → { start, type, typeEnd } oder null.
+  function _nextBoxOpen(text, pos) {
+    const re = /@startbox:([\p{L}0-9_-]+)/gu;
+    re.lastIndex = pos;
+    const m = re.exec(text);
+    if (m === null) return null;
+    return { start: m.index, type: m[1], typeEnd: m.index + m[0].length };
+  }
+
+  // Zur bereits geöffneten Box (Depth 1; from = Index direkt nach deren
+  // Head-Zeile) passende @endbox → { start, end } oder null (ungeschlossen).
+  // @endbox zählt nur am Zeilenanfang (Semantik des alten 1d-Regex \r?\n@endbox).
+  function _findBoxClose(text, from) {
+    BOX_EVENT_RE.lastIndex = from;
+    let depth = 1;
+    let m;
+    while ((m = BOX_EVENT_RE.exec(text)) !== null) {
+      if (m[1] !== undefined) {
+        depth += 1; // verschachtelte Öffnung
+        continue;
       }
-      if (valid && !/^[ \t]*$/.test(headLine.slice(tokEnd))) valid = false;
-      if (!valid) return match;
-      let boxNum = null;
-      if (label) {
-        if (label in boxLabelNumbers) {
-          boxNum = boxLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
-        } else {
-          const g = globalLabels['box:' + label];
-          if (g && g.kind === 'box') {
-            boxNum = g.num; // gespeichertes Label → exakte globale Nummer
-          } else if (slideMode) {
-            const sl = slidesLabels['box:' + label]; // typ-qualifiziert (s. slides-refmap)
-            if (sl && sl.kind === 'box') {
-              boxNum = 'S' + sl.num; // slide-eigenes Label → S-Nummer
-            } else {
-              slideBoxCount += 1;
-              boxNum = 'S' + (slidesMaxSBox + slideBoxCount); // ungespeichert
-            }
-          } else {
-            boxFallbackCount += 1;
-            boxNum = boxFallbackBase + boxFallbackCount; // neues (ungespeichertes) Label
-          }
-          boxLabelNumbers[label] = boxNum;
-          boxLabelTypes[label] = type;
-        }
-      }
-      if (type === 'highlight') {
-        // Headless-Box (kein Kopf). Optional: ERSTE Zeile @boxcolor:<farbe>
-        // → normalisierter Inline-Style (ungültig → CSS-Default, Primärfarbe);
-        // die @boxcolor-Zeile wird im Match-Fall immer entfernt. Ein Label
-        // ist erlaubt (Anker + Nummerierung, aber ohne sichtbaren Kopf).
-        const idAttr = label ? ` id="box:${label}"` : '';
-        let body = content;
-        const m = /^@boxcolor:\s*(.+?)\s*\r?\n([\s\S]*)$/u.exec(body);
-        if (m) {
-          const rgba = _boxColorToRgba(m[1]);
-          body = m[2];
-          if (rgba) {
-            return (
-              '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr +
-              ' style="background-color:' + rgba + '">\n\n' + body.trim() + '\n\n</div>\n\n'
-            );
-          }
-        }
-        return (
-          '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr +
-          '>\n\n' + body.trim() + '\n\n</div>\n\n'
-        );
-      }
-      const info = CALLOUT_TYPES[type] || { icon: '📄', title: type.charAt(0).toUpperCase() + type.slice(1) };
-      const body = content.trim();
-      const idAttr = label ? ` id="box:${label}"` : '';
-      // Nummer im Kopf: in Slides trägt ein im Skript vorhandenes Label die
-      // Skript-Nummer als Link zur Box im Skript (wie bei eq/fig/code).
-      let headTitle;
-      if (boxNum !== null) {
-        const g = globalLabels['box:' + label];
-        if (slideMode && g && g.kind === 'box') {
-          const cid = (refMap && refMap.courseId) || _getCourseId() || '';
-          headTitle =
-            escapeHtml(info.title) +
-            ` <a class="tutorai-callbox-num-link" href="/courses/${cid}/script#box:${label}"` +
-            ` title="Zur Box im Skript">${boxNum}</a>`;
-        } else {
-          headTitle = escapeHtml(info.title) + ' ' + boxNum;
-        }
+      if (m.index > 0 && text[m.index - 1] !== '\n') continue; // nicht Zeilenanfang → literal
+      depth -= 1;
+      if (depth === 0) return { start: m.index, end: m.index + '@endbox'.length };
+    }
+    return null;
+  }
+
+  // Head-Zeile tokenisieren: [Caption] und {#box:label}, je max. einmal, nur
+  // Leerraum zwischen/nach den Tokens (CRLF: trailing \r vorher entfernen) →
+  // { valid, caption, label } (null = nicht vorhanden). Abweichung (z. B.
+  // weiterer Text) → valid = false (Box bleibt literal).
+  function _parseBoxHead(headLine) {
+    let caption = null;
+    let label = null;
+    let valid = true;
+    let tokEnd = 0;
+    const line = headLine.replace(/\r$/, '');
+    const tokRe = /\[([^\]]*)\]|\{#box:([\p{L}0-9_-]+)\}/gu;
+    let bt;
+    while ((bt = tokRe.exec(line)) !== null) {
+      if (!/^[ \t]*$/.test(line.slice(tokEnd, bt.index))) { valid = false; break; }
+      if (bt[1] !== undefined) {
+        if (caption !== null) { valid = false; break; }
+        caption = bt[1];
       } else {
-        headTitle = escapeHtml(info.title);
+        if (label !== null) { valid = false; break; }
+        label = bt[2];
       }
-      if (caption !== null && caption.trim() !== '') {
-        headTitle += ': ' + renderCaptionMath(caption.trim());
+      tokEnd = bt.index + bt[0].length;
+    }
+    if (valid && !/^[ \t]*$/.test(line.slice(tokEnd))) valid = false;
+    return { valid, caption, label };
+  }
+
+  function _convertBoxBlocks(text) {
+    const open = _nextBoxOpen(text, 0);
+    if (open === null) return text;
+    const nl = text.indexOf('\n', open.typeEnd);
+    if (nl === -1) return text; // kein Ende der Head-Zeile → bleibt literal
+    const close = _findBoxClose(text, nl + 1);
+    const head = _parseBoxHead(text.slice(open.typeEnd, nl));
+    if (close === null || !head.valid) {
+      // Öffnung bleibt literal (ungeschlossen/ungültige Head-Zeile); ab nach
+      // der Head-Zeile weiter verarbeiten, damit verschachtelte Boxen
+      // weiterhin konvertiert werden.
+      return text.slice(0, nl + 1) + _convertBoxBlocks(text.slice(nl + 1));
+    }
+    const type = open.type;
+    const label = head.label;
+    const caption = head.caption;
+    let boxNum = null;
+    if (label) {
+      if (label in boxLabelNumbers) {
+        boxNum = boxLabelNumbers[label]; // Duplikat → erstes Vorkommen gewinnt
+      } else {
+        const g = globalLabels['box:' + label];
+        if (g && g.kind === 'box') {
+          boxNum = g.num; // gespeichertes Label → exakte globale Nummer
+        } else if (slideMode) {
+          const sl = slidesLabels['box:' + label]; // typ-qualifiziert (s. slides-refmap)
+          if (sl && sl.kind === 'box') {
+            boxNum = 'S' + sl.num; // slide-eigenes Label → S-Nummer
+          } else {
+            slideBoxCount += 1;
+            boxNum = 'S' + (slidesMaxSBox + slideBoxCount); // ungespeichert
+          }
+        } else {
+          boxFallbackCount += 1;
+          boxNum = boxFallbackBase + boxFallbackCount; // neues (ungespeichertes) Label
+        }
+        boxLabelNumbers[label] = boxNum;
+        boxLabelTypes[label] = type;
       }
+    }
+    const rawContent = text.slice(nl + 1, close.start);
+    const tail = _convertBoxBlocks(text.slice(close.end));
+    if (type === 'highlight') {
+      // Headless-Box (kein Kopf). Optional: ERSTE Zeile @boxcolor:<farbe>
+      // → normalisierter Inline-Style (ungültig → CSS-Default, Primärfarbe);
+      // die @boxcolor-Zeile wird im Match-Fall immer entfernt. Ein Label
+      // ist erlaubt (Anker + Nummerierung, aber ohne sichtbaren Kopf).
+      const idAttr = label ? ` id="box:${label}"` : '';
+      let body = rawContent;
+      const m = /^@boxcolor:\s*(.+?)\s*\r?\n([\s\S]*)$/u.exec(body);
+      let rgba = null;
+      if (m) {
+        rgba = _boxColorToRgba(m[1]);
+        body = m[2];
+      }
+      const styleAttr = rgba ? ' style="background-color:' + rgba + '"' : '';
       return (
-        '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '"' + idAttr + '>\n' +
-        '<div class="tutorai-callbox-head">' +
-        '<span class="tutorai-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
-        headTitle + '</div>\n' +
-        '<div class="tutorai-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n'
+        text.slice(0, open.start) +
+        '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr + styleAttr +
+        '>\n\n' + _convertBoxBlocks(body).trim() + '\n\n</div>\n\n' +
+        tail
       );
     }
-  );
+    const info = CALLOUT_TYPES[type] || { icon: '📄', title: type.charAt(0).toUpperCase() + type.slice(1) };
+    const body = _convertBoxBlocks(rawContent).trim();
+    const idAttr = label ? ` id="box:${label}"` : '';
+    // Nummer im Kopf: in Slides trägt ein im Skript vorhandenes Label die
+    // Skript-Nummer als Link zur Box im Skript (wie bei eq/fig/code).
+    let headTitle;
+    if (boxNum !== null) {
+      const g = globalLabels['box:' + label];
+      if (slideMode && g && g.kind === 'box') {
+        const cid = (refMap && refMap.courseId) || _getCourseId() || '';
+        headTitle =
+          escapeHtml(info.title) +
+          ` <a class="tutorai-callbox-num-link" href="/courses/${cid}/script#box:${label}"` +
+          ` title="Zur Box im Skript">${boxNum}</a>`;
+      } else {
+        headTitle = escapeHtml(info.title) + ' ' + boxNum;
+      }
+    } else {
+      headTitle = escapeHtml(info.title);
+    }
+    if (caption !== null && caption.trim() !== '') {
+      headTitle += ': ' + renderCaptionMath(caption.trim());
+    }
+    return (
+      text.slice(0, open.start) +
+      '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '"' + idAttr + '>\n' +
+      '<div class="tutorai-callbox-head">' +
+      '<span class="tutorai-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
+      headTitle + '</div>\n' +
+      '<div class="tutorai-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n' +
+      tail
+    );
+  }
 
   // 1e. Extract figures (labeled + unlabeled) mit Attribut-Tokens.
   //     → labeliert {#fig:label} = nummerierte Abbildung ("Abb. N") mit Anker,
@@ -1466,7 +1556,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const figHtml =
       `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}${figAaidAttr}>` +
       innerMedia +
-      `<figcaption>${numHtml}${f.alt ? `: ${renderCaptionMath(f.alt)}` : ''}</figcaption></figure>`;
+      `<figcaption>${numHtml}${f.alt ? `: ${renderCaptionRef(f.alt, captionCtx)}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
 
@@ -1524,7 +1614,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       : iframeTag;
     // Caption unter dem Medium: Alt-Text (unlabelt → ohne Nummer).
     const figHtml = f.alt.trim()
-      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${renderCaptionMath(f.alt.trim())}</figcaption></figure>`
+      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${renderCaptionRef(f.alt.trim(), captionCtx)}</figcaption></figure>`
       : iframeHtml;
     html = html.replace(`%%APPLETFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
@@ -1537,7 +1627,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const imgTag = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
     const imgHtml = (f.height != null || f.alt.trim())
       ? `<figure class="tutorai-figure">${imgTag}` +
-        (f.alt.trim() ? `<figcaption>${renderCaptionMath(f.alt.trim())}</figcaption>` : '') +
+        (f.alt.trim() ? `<figcaption>${renderCaptionRef(f.alt.trim(), captionCtx)}</figcaption>` : '') +
         `</figure>`
       : imgTag;
     html = html.replace(`%%PLAINFIG_${idx}%%`, imgHtml.replace(/\$/g, '$$$$'));
@@ -1564,7 +1654,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       const letterPrefix = hasInnerLabel ? `${String.fromCharCode(97 + i)}) ` : '';
       const capText = (letterPrefix + inner.alt.trim()).trim();
       return `<figure class="tutorai-subfig-item"${innerId}>${mediaTag}` +
-        (capText ? `<figcaption>${renderCaptionMath(capText)}</figcaption>` : '') +
+        (capText ? `<figcaption>${renderCaptionRef(capText, captionCtx)}</figcaption>` : '') +
         `</figure>`;
     }).join('');
     const rowStyle = f.height != null ? ` style="max-height: ${f.height}px"` : '';
@@ -1585,7 +1675,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
     const capParts = [];
     if (numHtml) capParts.push(numHtml);
-    if (f.alt.trim()) capParts.push(renderCaptionMath(f.alt.trim()));
+    if (f.alt.trim()) capParts.push(renderCaptionRef(f.alt.trim(), captionCtx));
     const figHtml =
       `<figure${idAttr} class="tutorai-figure tutorai-subfig"${fragAttrs}${aaidAttr}>` +
       `<div class="tutorai-subfig-row"${rowStyle}>${items}</div>` +
@@ -1664,13 +1754,6 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //               4) unbekannt → ❓
   //     @box:-Referenzen zeigen den Box-Typ-Titel an (z. B. „Satz N“ —
   //     CALLOUT_TYPES; Typ-Quelle: Skript-Ref-Map → Slide-Ref-Map → lokal).
-  const citedRefs = []; // für das Quellenverzeichnis (Nur zitierte Einträge)
-  // In-Deck-Anker auf die auto-Quellen-Folie (parseSlides hängt sie an): deck-
-  // scoped (ref-{deckId}-…), damit mehrere Decks auf einer Seite (Folien-
-  // Übersicht mit Kacheln) keine doppelten IDs bekommen; Skript: ref-{key}
-  // (Kapitel-Seite, dort eindeutig).
-  const refAnchorId = (key) =>
-    slideMode && slidePos && slidePos.deckId != null ? `ref-${slidePos.deckId}-${key}` : `ref-${key}`;
   xrefs.forEach((x, idx) => {
     const kind = x.kind === 'kap' ? 'sec' : x.kind;
     if (kind === 'bibentry') {
@@ -1699,28 +1782,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
             .replace(/"/g, '&quot;')
             .replace(/\$/g, '$$$$')}"`
         : '';
-      let refHtml;
-      if (!r) {
-        refHtml = `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ ${x.kind}:${x.label}</span>`;
-      } else {
-        const a0 = (r.authors && r.authors.length)
-          ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
-          : '';
-        const y = r.year || '';
-        // Mit bibliography (Skript): In-Page-Anker auf den Listeneintrag;
-        // Slide-Mode: Anker auf den Eintrag der auto-Quellen-Folie im Deck
-        // (Navigation/Highlight übernimmt der slides.js-Click-Handler, data-refkey);
-        // sonst: Link auf den Quellen-Tab.
-        const cid = (refMap && refMap.courseId) || '';
-        const href = options.bibliography || slideMode ? `#${refAnchorId(x.label)}` : `/courses/${cid}/references#ref-${x.label}`;
-        if (kind === 'cite') {
-          refHtml = `<sup><a href="${href}" data-refkey="${x.label}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
-        } else if (kind === 'citet') {
-          refHtml = `<a href="${href}" data-refkey="${x.label}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
-        } else {
-          refHtml = `<a href="${href}" data-refkey="${x.label}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
-        }
-      }
+      // Mit bibliography (Skript): In-Page-Anker auf den Listeneintrag;
+      // Slide-Mode: Anker auf den Eintrag der auto-Quellen-Folie im Deck
+      // (Navigation/Highlight übernimmt der slides.js-Click-Handler, data-refkey);
+      // sonst: Link auf den Quellen-Tab.
+      const cid = (refMap && refMap.courseId) || '';
+      const href = options.bibliography || slideMode ? `#${refAnchorId(x.label)}` : `/courses/${cid}/references#ref-${x.label}`;
+      const refHtml = _citeHtml(kind, x.label, r, href, tipAttr);
       html = html.replace(`%%XREF_${idx}%%`, refHtml);
       return;
     }
@@ -2297,6 +2365,28 @@ function renderLatexInline(latex) {
 // $…$-Paare in Captions (Figure/Code/Tabelle/Subfigure/Box) rendern.
 // Captions sind Kurztexte → hier (im Gegensatz zum Fließtext) werden ALLE
 // $-Paare als Formel gerendert; der Rest wird HTML-escaped.
+// Zitations-Link-HTML (Fließtext UND Figuren-Captions, s. renderCaptionRef):
+// @cite → Superscript "[N]", @citet → "Autor (Jahr)", @citep → "(Autor, Jahr)";
+// unbekannter Key → ❓-Marker (wie im Fließtext). tipAttr = optionales
+// data-xref-tip-Attribut (nur Fließtext-Pfad; Caption-HTML läuft durch
+// html.replace, wo das dortige $$-Escaping es verballern würde).
+function _citeHtml(kind, label, r, href, tipAttr) {
+  if (!r) {
+    return `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ ${kind}:${label}</span>`;
+  }
+  const a0 = (r.authors && r.authors.length)
+    ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
+    : '';
+  const y = r.year || '';
+  if (kind === 'cite') {
+    return `<sup><a href="${href}" data-refkey="${label}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
+  }
+  if (kind === 'citet') {
+    return `<a href="${href}" data-refkey="${label}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
+  }
+  return `<a href="${href}" data-refkey="${label}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
+}
+
 function renderCaptionMath(text) {
   let out = '';
   let last = 0;
@@ -2307,6 +2397,33 @@ function renderCaptionMath(text) {
     last = m.index + m[0].length;
   }
   return out + escapeHtml(text.slice(last));
+}
+
+// Caption-Text rendern: inline-Math ($...$) + Zitationen (@cite / @citet /
+// @citep — für Figuren-Captions; Box-/Code-/Tabellen-Captions bleiben
+// Math-only). ctx = captionCtx aus renderMarkdown: { refMap, citedRefs,
+// hrefFor }; null/undefined → Math-only wie renderCaptionMath. Zitierte
+// Quellen landen in ctx.citedRefs → Quellenverzeichnis (bzw. auto-Quellen-
+// Folie in Slides, die den rohen Markdown-Alt-Text selbst scannt).
+function renderCaptionRef(text, ctx) {
+  if (text == null) return '';
+  text = String(text);
+  if (!ctx) return renderCaptionMath(text);
+  const refs = (ctx.refMap && ctx.refMap.references) || {};
+  const re = /@(citep|citet|cite):([\p{L}0-9_-]+)/gu;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    out += renderCaptionMath(text.slice(last, m.index));
+    const kind = m[1];
+    const label = m[2];
+    const r = refs[label];
+    if (r && ctx.citedRefs) ctx.citedRefs.push(r);
+    out += _citeHtml(kind, label, r, ctx.hrefFor ? ctx.hrefFor(label) : '#', '');
+    last = m.index + m[0].length;
+  }
+  return out + renderCaptionMath(text.slice(last));
 }
 
 // Code-LaTeX-Heuristik: sieht ein $…$-Paar im Code nach Math aus?
@@ -2624,8 +2741,14 @@ function createMarkdownEditor(containerId, options = {}) {
   const useCM = (typeof CodeMirror !== 'undefined') &&
     !!(CodeMirror.modes && (CodeMirror.modes.gfm || CodeMirror.modes.markdown)) &&
     (options.codeMirror !== false);
+  // CM5 versteckt das Original-Textarea (display:none) — ein "required"-
+  // Attribut darauf bricht die native Formularvalidierung ("is not
+  // focusable"). Wir entfernen es und geben die Pflichtigkeit via
+  // editor.required an die Seite weiter (dort per JS validieren).
+  const wasRequired = textarea.hasAttribute('required');
   let cm = null;
   if (useCM) {
+    textarea.removeAttribute('required');
     // GFM/Markdown-Basismode + TutorAI-Annotationen-Overlay (Formeln,
     // Boxen, Labels, Referenzen) — s. codemirror-mode-tutorai.js.
     const baseMode = CodeMirror.modes.gfm ? 'gfm' : 'markdown';
@@ -2744,6 +2867,7 @@ function createMarkdownEditor(containerId, options = {}) {
     toggleBtn,
     isPreview: () => isPreview,
     getValue,
+    required: wasRequired,
     setValue(v) {
       if (cm) cm.setValue(v);
       else textarea.value = v;

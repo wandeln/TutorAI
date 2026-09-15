@@ -418,10 +418,13 @@ Antworte mit reinem Text (keine Code-Blöcke):
 # ─── 5. Slide-Deck-Generierung ───────────────────────────────────────────
 
 SLIDE_DECK_PROMPT_TEMPLATE = _SECURITY + """
-Du bist ein Slide-Deck-Generator für ein Lehr-System. Erstelle ein Slide-Deck zum Thema
-„__CHAPTER_TITLE__“. FOLIENZAHL: __MAX_SLIDES__. Sind „QUELLE FOLIEN“ angegeben, übernehme
-sie möglichst WORTGETREU (1:1 — nur das Format wird konvertiert); andernfalls übertrage
-die QUELLE möglichst treu in hochwertige Folien (s. Aufgabe).
+Du bist ein Konverter, der hochgeladenes Lehrmaterial in das Slide-Deck-Format eines
+Lehr-Systems übernimmt. Deine Aufgabe: die QUELLE unten in das Slide-Deck zum Thema
+„__CHAPTER_TITLE__“ möglichst WORTGETREU übernehmen — das ist eine KONVERTIERUNG, keine
+Neuschreibung: Inhalt, Reihenfolge und Gliederung BEHALTEN. Nur die Darstellung wird
+umgewandelt (LaTeX/Word/PowerPoint → Slide-Format).
+Sind „QUELLE FOLIEN“ angegeben, ist der Auftrag strikt 1:1: eine Quellfolie = eine
+Ziel-Folie (Reihenfolge + Inhalt beibehalten, nur das Format wird konvertiert).
 SPRACHE BEHALTEN: Ist die QUELLE in einer anderen Sprache (Englisch, Französisch, …),
 übernimm Folientexte und Captions in der ORIGINALSPRACHE — NICHT übersetzen.
 Eigene Sprechernotizen ("notes:") auf Deutsch.
@@ -480,8 +483,7 @@ und sind KEIN Teil des Inhalts — nie ins Ergebnis übernehmen):
 __SOURCE__
 
 Aufgabe:
-- Es gilt: max. 5-6 Bullets pro Folie, eine zentrale Botschaft pro Folie,
-  „notes:“ PFLICHT für jede Inhaltsfolie (als erste Zeile der Folie, s. obige Struktur).
+- „notes:“ PFLICHT für jede Inhaltsfolie (als erste Zeile der Folie, s. obige Struktur).
 - ERSTES PRÜFEN — BOXEN: Gehe die QUELLE Absatz für Absatz ab und liste (mental) ALLE
   abgesetzten Definitionen, Sätze/Theoreme, Lemmata, Propositionen, Korollare, Beweise
   und Beispiele auf (Theorem-Umgebungen ODER nummerierter Text wie „Definition 2.1:“).
@@ -490,10 +492,21 @@ Aufgabe:
 - Falls „QUELLE FOLIEN“ angegeben sind: übernehme diese Folien reihenfolge- und inhaltsgetreu
   1:1 — nur das Format wird konvertiert (keine Kürzung/Erweiterung); eine Quellfolie =
   genau eine Ziel-Folie (Foliennummer beibehalten).
-- Andernfalls: übertrage den Inhalt der QUELLE möglichst TREU in Folien
-  (keine ganzen Absätze kopieren; zentrale Formeln/Definitionen als $$…$$):
-  alle Abschnitte/Aussagen/Ergebnisse der QUELLE abdecken — nichts weglassen, nichts
-  erfinden; zentrale Sätze/Theoreme/Definitionen/Beispiele als Boxen setzen (s. Format).
+- Andernfalls übernimm den Inhalt der QUELLE möglichst WORTGETREU und VOLLSTÄNDIG auf
+  Folien: alle Abschnitte, Aussagen, Formeln, Definitionen, Beispiele, Code, Tabellen und
+  Abbildungen — nichts weglassen, nichts ergänzen oder umformulieren; nur die Darstellung
+  in Folien gliedern (zentrale Formeln/Definitionen als $$…$$, Boxen s. oben).
+- REIHENFOLGE (wenn die QUELLE aus mehreren „%--- start“-Teilen oder „===“-Markern
+  besteht) — ERST PLANEN, DANN SCHREIBEN:
+  (1) Bestimme ZUERST aus den \\input/\\include-Befehlen der Quelle (die können in der
+  Main-Datei ODER in Teil-Dateien stehen) und den „===“-Markern, an welcher STELLE jedes
+  Teilstück im Dokument steht. Die Marker-Zeilen „%--- start <Datei>, Zeilen X-Y ---“
+  geben nur die HERKUNFT an — NICHT die Position. Lege vor dem Schreiben die genaue
+  Reihenfolge aller Abschnitte fest.
+  (2) Setze jeden Teil DANN an die Stelle, an der sein \\input/\\include-Befehl steht:
+  ein zwischen zwei \\chapter-Befehlen eingebundenes Teilstück gehört in die MITTE —
+  NICHT ans Ende. Im 1:1-Modus ist die Reihenfolge bereits durch die „%% Folie N %%“-
+  Marker vorgegeben — daran halten.
 - Ist die QUELLE rohes LaTeX: wandle NUR die Darstellung in Markdown/KaTeX um
   (\\section/\\subsection → Folientitel, \\textbf → **, \\textit → *, Math in $...$/$$...$$,
   \\begin{itemize} → Bullets, \\includegraphics/Bilder → ![Caption](URL) gemäß Bild-Mapping,
@@ -509,18 +522,15 @@ Aufgabe:
   Identitäten). Kommt dieselbe Gleichung in einem Skript-Kapitel vor: EXAKT das dortige
   {#eq:-Label} (SKRIPT-LABELS) wiederverwenden — die Folie zeigt dann dieselbe Nummer
   wie das Skript (verlinkt auf die Gleichung).
-- Zitate (entfällt im 1:1-Modus mit "QUELLE FOLIEN"): Nutze das QUELLENVERZEICHNIS des
-  Kurses aktiv: Steht dort eine passende Quelle für Aussagen/Ergebnisse, zitiere sie mit
-  @cite:key (im Fließtext: @citet:key bzw. @citep:key) — KEINE geschweiften Klammern um
-  den Key. NUR tatsächlich gelistete Keys verwenden, KEINE erfinden.
-- KEINE eigene Quellen-Folie erstellen — wenn mindestens eine Quelle zitiert wurde,
-  wird sie automatisch am Ende des Decks angehängt (vollständige Angaben,
-  Zitationen verlinken auf die jeweilige Quelle darauf).
-- Die QUELLE kann aus MEHREREN Skript-Kapiteln bestehen (===-Marker); verbinde sie zu einem
-  stimmigen Deck. Ist die QUELLE breiter als das Deck-Thema, konzentriere dich auf das Thema.
-- Bilder aus dem Bild-Mapping einbinden, wenn sie wirklich passen (sparsam, exakte URLs).
+- Zitate: Zitate in der QUELLE (\\cite{key}, [1] etc.): Ist der Key im QUELLENVERZEICHNIS
+  gelistet, in @cite:key umwandeln (im Fließtext: @citet:key bzw. @citep:key) — KEINE
+  geschweiften Klammern um den Key. Sonst das Zitat entfernen (den Text selbst behalten).
+  NUR tatsächlich gelistete Keys verwenden, KEINE erfinden und keine neuen Zitate ergänzen.
+- Bilder: JEDER im Quelltext referenzierten Medien-URL aus dem Bild-Mapping muss im
+  Ergebnis vorkommen (an der Stelle, an der sie in der QUELLE vorkommt).
 - Vor dem Absenden prüfen: Deckt das Deck ALLE Abschnitte, Boxen und Bilder der QUELLE ab?
-  (Anzahl von Boxen/Bildern mit der Quelle vergleichen.)
+  (Anzahl von Boxen/Bildern mit der QUELLE vergleichen; im 1:1-Modus: eine Quellfolie =
+  eine Ziel-Folie — keine Folie fehlt oder ist doppelt vorhanden.)
 - Antworte NUR mit dem kompletten Deck im Slide-Format — keine Code-Block-Fences drumherum,
   keine Kommentare."""
 

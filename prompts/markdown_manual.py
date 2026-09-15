@@ -45,7 +45,8 @@ MARKDOWN_MANUAL = """\
   (a/b/… = Position im Komplex), das äußere {#fig:label} nach dem schließenden ) ist in dem Fall optional):
   ![Gesamt-Caption](![Caption 1](/media/…){height=300}{#fig:teil1} ![Caption 2](/media/…){height=300}){#fig:label}
 - Captions (Abbildung/Code/Tabelle) dürfen inline-Math ($...$) enthalten; auch in Code-Blöcken
-  (z. B. Pseudo-Code) werden $...$-Paare als Formel gerendert.
+  (z. B. Pseudo-Code) werden $...$-Paare als Formel gerendert. Abbildungs-Captions (Alt-Text) dürfen
+  zusätzlich Zitationen @cite:key / @citet:key / @citep:key enthalten (werden wie im Fließtext gerendert).
 - Labels (snake_case, klein, eindeutig im gesamten Kurs):
   - Abbildung: ![Caption](/media/…){#fig:label}  →  wird als „Abb. N: Caption“ gerendert.
   - Display-Math: $$…$$ {#eq:label}  →  wird als „(N)“ neben der Formel gerendert — die Nummer wird AUTOMATISCH
@@ -66,6 +67,9 @@ MARKDOWN_MANUAL = """\
   @endbox
   → wird als „Theorem N: Name“ gerendert (Typ als Kopf; [Caption] und {#box:label} optional, beliebige
   Reihenfolge auf der @startbox:-Zeile). Verfügbare Typen: theorem, definition, satz, lemma, proposition, korollar, beweis, beispiel.
+  Boxen sind NESTBAR (beliebige Tiefe): ein @startbox:{typ} innerhalb einer Box öffnet eine innere Box,
+  jeweils mit eigenem @endbox (z. B. Beweis-Box in Satz-Box) — ein @endbox schließt immer die
+  zuletzt geöffnete (innere) Box, die äußere Box bekommt ihr eigenes @endbox.
   WICHTIG: @startbox:… STARTET eine Box und @endbox schließt sie; @box:label REFERENZIERT eine
   beschriftete Box im Fließtext („Satz N“) — die beiden Syntaxen NICHT verwechseln.
 - Hinweis-Boxen für besondere Absätze (z. B. zentrale Merksätze, typische Fehler, Nebenbemerkungen, Fragen):

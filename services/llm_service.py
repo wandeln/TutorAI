@@ -445,6 +445,7 @@ class LLMService:
         code_template: str = "",
         script_chapters: Optional[list[dict]] = None,
         course_media: Optional[list[dict]] = None,
+        references: str = "",
         config: Optional[dict] = None,
     ):
         """Generiert/ändert die angeforderten Felder einer Aufgabe via LLM.
@@ -452,6 +453,8 @@ class LLMService:
         generate_fields: Untermenge von ["title", "description", "model_solution"].
         Das LLM liefert JSON mit EXAKT diesen Schlüsseln — nicht angeforderte
         Felder werden nicht zurückgegeben.
+        references: Kurs-Quellenverzeichnis als Text (Zitations-Keys) — leer,
+        wenn der Kurs kein Quellenverzeichnis hat.
 
         Enthält keine sensitive Studentendaten — nutzt daher den Public
         Endpoint, falls konfiguriert.
@@ -471,6 +474,7 @@ class LLMService:
             code_template=code_template,
             script_chapters=script_chapters or [],
             course_media=course_media or [],
+            references=references,
         )
 
         return await self._call_with_json(
@@ -487,6 +491,7 @@ class LLMService:
         other_chapters: Optional[list[dict]] = None,
         unused_media: Optional[list[dict]] = None,
         course_tasks: Optional[list[dict]] = None,
+        references: str = "",
         config: Optional[dict] = None,
     ):
         """Generiert/ändert die angeforderten Felder eines Skript-Kapitels via LLM.
@@ -499,6 +504,8 @@ class LLMService:
         verwendete Medien (ggf. einbindbar).
         course_tasks: [{id, title}] — Übungsaufgaben des Kurses (ggf. per
         @task:{id} im Kapitel einbindbar → Aufgaben-Box für Studenten).
+        references: Kurs-Quellenverzeichnis als Text (Zitations-Keys) — leer,
+        wenn der Kurs kein Quellenverzeichnis hat.
         Das LLM liefert JSON mit einer Untermenge der angeforderten Schlüssel —
         weggelassene Schlüssel = das Feld bleibt unverändert (leeres Feld im
         Response, Frontend behält den vorhandenen Wert). Für lokale Änderungen
@@ -518,6 +525,7 @@ class LLMService:
             other_chapters=other_chapters or [],
             unused_media=unused_media or [],
             course_tasks=course_tasks or [],
+            references=references,
             current_title=current_title,
             current_content=current_content,
             markdown_manual=SCRIPT_MARKDOWN_MANUAL,
@@ -539,6 +547,7 @@ class LLMService:
         chapters: Optional[list[dict]] = None,
         course_media: Optional[list[dict]] = None,
         course_tasks: Optional[list[dict]] = None,
+        references: str = "",
         config: Optional[dict] = None,
     ):
         """Generiert/ändert ein Slide-Deck (Vorlesungsfolien) via LLM.
@@ -556,6 +565,8 @@ class LLMService:
         Medien dürfen in Skript UND Slides verwendet werden).
         course_tasks: [{id, title}] — Übungsaufgaben des Kurses (ggf. per
         @task:{id} im Deck einbindbar → Aufgaben-Box).
+        references: Kurs-Quellenverzeichnis als Text (Zitations-Keys) — leer,
+        wenn der Kurs kein Quellenverzeichnis hat.
         current_content: bestehendes Deck — für die Folien-Referenz in
         „content_edits“ mit expliziten Nummern („%% Folie N %%“) vorliegen
         (s. slides_service.numbered_slide_content); die Marker sind KEIN
@@ -580,6 +591,7 @@ class LLMService:
             chapters=chapters or [],
             course_media=course_media or [],
             course_tasks=course_tasks or [],
+            references=references,
             current_title=current_title,
             current_content=current_content,
             markdown_manual=SLIDES_MARKDOWN_MANUAL,

@@ -80,6 +80,7 @@ from database.models import (
 from services import bibtex as bib
 from services import media_service
 from services.llm_service import LLMService, SLIDES_MAX_TOKENS
+from services.references_service import build_references_text
 from services.settings_resolver import get_effective_llm_config
 from services.slides_service import (
     SlideError,
@@ -2340,25 +2341,7 @@ def _build_media_list_text(course_id: int) -> str:
 def _build_references_text(course_id: int) -> str:
     """Quellenverzeichnis des Zielkurses (Key, Autoren, Titel, Kernpunkte) als Text."""
     with Session(engine) as s:
-        rows = s.exec(
-            select(CourseReference)
-            .where(CourseReference.course_id == course_id)
-            .order_by(CourseReference.display_order.asc(), CourseReference.id.asc())  # type: ignore[attr-defined]
-        ).all()
-    if not rows:
-        return "(leeres Quellenverzeichnis)"
-    lines = []
-    for r in rows[:100]:
-        authors = ", ".join(str(a) for a in (r.authors or []))
-        meta = f"{authors} ({r.year})" if (authors or r.year) else ""
-        line = f"- {r.key}: {meta} {r.title}".strip()
-        if r.venue:
-            line += f" [{r.venue}]"
-        desc = (r.description or "").strip()
-        if desc:
-            line += f" — {desc[:150]}"
-        lines.append(line)
-    return "\n".join(lines)
+        return build_references_text(s, course_id) or "(leeres Quellenverzeichnis)"
 
 
 def _as_int(v: Any, default: int, lo: int = 1, hi: int = 10**9) -> int:

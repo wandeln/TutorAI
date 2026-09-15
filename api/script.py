@@ -38,6 +38,7 @@ from services.content_edits import ContentEditError, mask_code_blocks
 from services.llm_service import LLMService
 from services import media_service
 from services.media_service import sync_media_usages
+from services.references_service import build_references_text
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Skript"])
@@ -1039,6 +1040,7 @@ async def ai_generate_section(
         other_chapters=other_chapters,
         unused_media=unused_media,
         course_tasks=course_tasks,
+        references=build_references_text(session, course_id),
         config=llm_cfg,
     )
     if not result.get("success"):

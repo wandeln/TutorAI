@@ -42,6 +42,14 @@ MEDIEN DES KURSES (Titel — Beschreibung | Einbindung-Snippet):
 - {{ m.title }}{% if m.description %} — {{ m.description }}{% endif %} | ![{{ m.title }}]({{ m.url }})
 {% endfor %}
 {% endif %}
+{% if references %}
+
+QUELLENVERZEICHNIS DES KURSES (Zitations-Keys, Autoren, Titel, Kernpunkte):
+{{ references }}
+Zitiere mit @cite:key (im Fließtext: @citet:key bzw. @citep:key) — KEINE geschweiften
+Klammern um den Key — nur wenn eine Aussage tatsächlich auf eine der gelisteten Quellen
+zurückgeht. NUR tatsächlich gelistete Keys verwenden, KEINE erfinden.
+{% endif %}
 {% if current_title %}
 BESTEHENDER TITEL:
 {{ current_title }}

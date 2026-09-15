@@ -43,6 +43,7 @@ from database.models import (
 from services import media_service
 from services.auth_service import get_current_user, require_course_access
 from services.llm_service import LLMService
+from services.references_service import build_references_text
 from services.settings_resolver import get_effective_llm_config
 from services.slides_service import (
     SlideError,
@@ -271,6 +272,7 @@ async def ai_generate_slide_deck(
         chapters=chapters,
         course_media=course_media,
         course_tasks=course_tasks,
+        references=build_references_text(session, course_id),
         config=llm_cfg,
     )
     if not result.get("success"):

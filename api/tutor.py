@@ -34,6 +34,7 @@ from services.export_service import ExportService
 from services.grading_service import GradingService
 from services.llm_service import LLMService
 from services.media_service import all_media_for_course, sync_media_usages
+from services.references_service import build_references_text
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api", tags=["Tutor"])
@@ -705,6 +706,7 @@ async def ai_generate_task(
             code_template=current_template,
             script_chapters=script_chapters,
             course_media=course_media,
+            references=build_references_text(session, course_id),
             config=llm_cfg,
         )
 

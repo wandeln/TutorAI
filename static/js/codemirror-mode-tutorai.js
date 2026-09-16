@@ -8,6 +8,7 @@
 // Hervorgehoben:
 //  - LaTeX-Formeln: $...$ und $$...$$ (auch mehrzeilig)
 //  - Boxen: @startbox:<typ> … @endbox
+//  - Spalten: @startcolumn[:gewicht] … @nextcolumn[:gewicht] … @endcolumn
 //  - Labels/Metadaten: {#typ:label}, {#fragment}, {#aaid:…}, {#lines:…},
 //    {.zoom=1.5}, {.height=300}, {zoom=0.8}
 //  - Querverweise: @typ:label (@eq:, @fig:, @box:, @sec:, @code:, @tab:, …)
@@ -107,6 +108,11 @@
         // eigene Tokens und werden von den Regeln darunter erfasst)
         if (matchAt(stream, /@startbox(?::[\w-]+)?/)) return 'ta-box';
         if (matchAt(stream, /@endbox\b/)) return 'ta-box';
+        // Spalten-Marker (vor der generischen @typ:label-Regel, die
+        // @startcolumn:2 andernfalls als ta-ref erfassen würde)
+        if (matchAt(stream, /@startcolumn(?::[0-9]+(?:\.[0-9]+)?)?/)) return 'ta-box';
+        if (matchAt(stream, /@nextcolumn(?::[0-9]+(?:\.[0-9]+)?)?/)) return 'ta-box';
+        if (matchAt(stream, /@endcolumn\b/)) return 'ta-box';
         // Labels/Metadaten: {#typ:label}, {#fragment}, {.zoom=1.5}, …
         if (matchAt(stream, /\{[#.][^}\n]*\}/)) return 'ta-label';
         if (matchAt(stream, /\{zoom=\d+(?:\.\d+)?\}/)) return 'ta-label';

@@ -462,11 +462,12 @@ notes: Hier die Sprechernotiz in 1-3 Sätzen.
 
 ---
 notes: Weitere Sprechernotiz.
-layout: twocol
 ## Vergleich
+@startcolumn:2
 Linke Spalte
-||
+@nextcolumn:1
 Rechte Spalte
+@endcolumn
 
 Wichtig: Die Direktivenzeilen (notes:, layout:, transition:, …) stehen IMMER zuerst,
 vor dem Folientitel ("## …") — niemals danach oder mitten im Folientext.

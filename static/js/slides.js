@@ -46,7 +46,7 @@
  *                            transform-Zoom bleibt erhalten.
  */
 
-const SLIDE_LAYOUTS = new Set(["center", "topleft", "twocol"]);
+const SLIDE_LAYOUTS = new Set(["center", "topleft"]);
 const SLIDE_TRANSITIONS = new Set(["fade", "slide", "zoom", "none", "autoanimate"]);
 const SLIDE_DEFAULT_TRANSITION = "autoanimate";
 
@@ -184,25 +184,11 @@ function _parseSlideBlock(block, index) {
     i++;
   }
 
+  // Spalten werden hier NICHT geparsed (das alte twocol + "||" ist weg):
+  // die @startcolumn … @nextcolumn … @endcolumn-Marker sind Renderer-Seite
+  // (markdown-renderer.js) — der Folientext bleibt ein einziger Part.
   const body = lines.slice(i);
-  const firstSplit = body.findIndex((l) => l.trim() === "||");
-  if (firstSplit !== -1 && slide.layout === "twocol") {
-    const leftLines = body.slice(0, firstSplit);
-    const right = body.slice(firstSplit + 1).join("\n").trim();
-    // Überschrift auf der ersten nicht-leeren Zeile der linken Spalte →
-    // eigener, vollbreiter Header über beiden Spalten (Spiegel von
-    // _parse_block in slides_service.py; rendert renderSlideInto).
-    let k = 0;
-    while (k < leftLines.length && !leftLines[k].trim()) k++;
-    if (k < leftLines.length && /^#{1,6}[ \t]\S/.test(leftLines[k].trim())) {
-      slide.header = leftLines[k].trim();
-      slide.columns = [leftLines.slice(k + 1).join("\n").trim(), right];
-    } else {
-      slide.columns = [leftLines.join("\n").trim(), right];
-    }
-  } else {
-    slide.columns = [body.join("\n").trim()];
-  }
+  slide.columns = [body.join("\n").trim()];
   return slide;
 }
 
@@ -358,34 +344,12 @@ function countSlides(slides) {
  *  und Skript-Labels verlinken zur Gleichung im Skript. */
 async function renderSlideInto(slide, container, slidePos) {
   container.innerHTML = "";
-  // Teil-Index (p) pari zu _slide_md_parts in api/slides.py: [Header?,
-  // nicht-leere Spalten…] — pro gerendertem (nicht-leerem) Teil
-  // weiterzählen. Nur relevant, wenn slidePos gesetzt ist (S-Nummern
-  // unlabeled Subfigure-Komplexe aus der slides-refmap).
-  let part = 0;
-  const nextPos = () => (slidePos ? { ...slidePos, p: part++ } : null);
-  const isTwocol = slide.layout === "twocol" && slide.columns.length === 2;
-  if (isTwocol) {
-    if (slide.header) {
-      // Überschrift spannt über beide Spalten (eigener Block vor dem Grid).
-      const headerEl = document.createElement("div");
-      headerEl.className = "slides-twocol-header";
-      await renderMarkdown(slide.header, headerEl, { slideMode: true, slidePos: nextPos() });
-      container.appendChild(headerEl);
-    }
-    const wrap = document.createElement("div");
-    wrap.className = "slides-twocol";
-    for (const colMd of slide.columns) {
-      const colEl = document.createElement("div");
-      colEl.className = "slides-col";
-      wrap.appendChild(colEl);
-      if (colMd) await renderMarkdown(colMd, colEl, { slideMode: true, slidePos: nextPos() });
-    }
-    container.appendChild(wrap);
-  } else {
-    const md = slide.columns[0] || "";
-    if (md) await renderMarkdown(md, container, { slideMode: true, slidePos: nextPos() });
-  }
+  // Teil-Index (p) pari zu _slide_md_parts in api/slides.py: höchstens ein
+  // (nicht-leerer) Teil → p = 0 (Spalten sind Renderer-Seite, s. oben).
+  // Nur relevant, wenn slidePos gesetzt ist (S-Nummern unlabeled
+  // Subfigure-Komplexe aus der slides-refmap).
+  const md = slide.columns[0] || "";
+  if (md) await renderMarkdown(md, container, { slideMode: true, slidePos: slidePos ? { ...slidePos, p: 0 } : null });
 }
 
 /* Seitenverhältnis (Breite/Höhe) aus dem Theme — kommt als CSS-Variable

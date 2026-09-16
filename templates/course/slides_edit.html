@@ -19,10 +19,11 @@
 
    Folien-Format:
      - Folien werden durch eine eigene Zeile "---" getrennt
-     - optionale Direktiven am Blockanfang: layout: center|topleft|twocol,
+     - optionale Direktiven am Blockanfang: layout: center|topleft,
        transition: fade|slide|zoom|none|autoanimate (Default: autoanimate),
        class: <kennung>, notes: <text>
-     - layout: twocol + eigene Zeile "||" → zweispaltige Folie
+     - Spalten: @startcolumn[:gewicht] … @nextcolumn[:gewicht] … @endcolumn
+       (Marker je eigene Zeile; Renderer-Seite, s. markdown-renderer.js)
      - Fragments: {#fragment}, {#fragment:id} (gleichzeitig),
        {#Fragment} (Groß: Element + alle folgenden Inhalte in einem Schritt)
    ───────────────────────────────────────────────────────────────────── #}
@@ -211,7 +212,7 @@
             <section>
               <h5 class="text-xs font-semibold text-gray-800 mb-1">Direktiven (je eigene Zeile am Folienanfang)</h5>
               <ul class="list-disc pl-4 space-y-1">
-                <li><code>layout: center|topleft|twocol</code></li>
+                <li><code>layout: center|topleft</code></li>
                 <li><code>transition: fade|slide|zoom|none|autoanimate</code> — Default <code>autoanimate</code> (Inhalt animiert zwischen den Folien ineinander; gezoomte Applets <code>{zoom=X}</code> überspringt das Auto-Animate); <code>fade</code>/<code>slide</code>/<code>zoom</code>/<code>none</code> = klassische Transition</li>
                 <li><code>class: &lt;kennung&gt;</code></li>
                 <li><code>notes: &lt;Sprechernotiz&gt;</code></li>
@@ -220,10 +221,11 @@
             </section>
 
             <section>
-              <h5 class="text-xs font-semibold text-gray-800 mb-1">Zweispaltig</h5>
+              <h5 class="text-xs font-semibold text-gray-800 mb-1">Spalten (auch verschachtelt)</h5>
               <ul class="list-disc pl-4 space-y-1">
-                <li><code>layout: twocol</code> + eigene Zeile <code>||</code></li>
-                <li>Überschrift auf der ersten Zeile der linken Spalte → spannt über beide Spalten</li>
+                <li><code>@startcolumn[:gewicht]</code> … <code>@nextcolumn[:gewicht]</code> … <code>@endcolumn</code> — Marker je eigene Zeile am Zeilenanfang; Gewicht = positive Zahl (Default 1) = Breitenanteil (z. B. <code>@startcolumn:2</code> / <code>@nextcolumn:1</code> = 2:1)</li>
+                <li>Zellen-Inhalt = normales Markdown; weitere Spaltenzeilen darin = verschachtelte Spalten; Inhalt VOR <code>@startcolumn</code> (z. B. Überschrift) bleibt vollbreit über der Zeile</li>
+                <li>2–4 Spalten pro Zeile sinnvoll</li>
               </ul>
             </section>
 

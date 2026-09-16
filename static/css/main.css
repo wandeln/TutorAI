@@ -526,6 +526,21 @@
   padding: 0.5rem 1rem 0.75rem !important;
 }
 
+/* Spalten: @startcolumn … @nextcolumn … @endcolumn (Renderer: markdown-renderer.js).
+   Die Spalten-Breiten kommen als Inline-Style (grid-template-columns: Nfr …);
+   min-width: 0 lässt Grid-Items schrumpfen (sonst würde überlanger Inhalt
+   z. B. Code-Blöcke aus der Spalte drücken). */
+.tutorai-cols {
+  display: grid;
+  gap: 2.5em;
+  align-items: start;
+  width: 100%;
+  text-align: left;
+}
+.tutorai-col {
+  min-width: 0;
+}
+
 /* Applet-Iframes: interaktive HTML-Medien (.html) in Skript & Aufgaben
    (werden von markdown-renderer.js als Iframe gerendert, sandboxed) */
 .tutorai-applet {

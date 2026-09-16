@@ -32,6 +32,7 @@ AGENTS.md
 .env.production.example
 .zed/
 migrate_startbox.py
+migrate_twocol_to_columns.py
 
 # Environment (contains secrets!)
 .env

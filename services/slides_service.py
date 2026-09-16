@@ -10,7 +10,7 @@ Format „Markdown plus":
   <section><section>…</section></section>). Jeder Segment wird wie eine
   normale Folie geparsed (eigene Direktiven/Notiz/Hintergrund).
 - Pro Folie dürfen am Anfang (aufeinanderfolgende Zeilen) Richtlinien stehen:
-    layout: center | topleft | twocol
+    layout: center | topleft
     transition: fade | slide | zoom | none | autoanimate   (Default: autoanimate)
     class: [A-Za-z0-9_-]+
     notes: <eine Zeile>
@@ -20,8 +20,8 @@ Format „Markdown plus":
       skaliert das Applet um den Faktor X (Iframe selbst wird vergrößert,
       Layout-Box wird um 1/X verkleinert, damit der Applet-Inhalt scharf
       vergrößert wird statt gecropped)
-- Spaltentrenner: eine eigene Zeile ``||`` (nur mit ``layout: twocol``,
-  höchstens einmal pro Folie).
+- Spalten: Renderer-Seite (markdown-renderer.js) — ``@startcolumn[:gewicht]`` …
+  ``@nextcolumn[:gewicht]`` … ``@endcolumn``, nicht Teil des Folien-Parsers.
 
 Das Theme (Design) pro Kurs ist ein JSON-Objekt (eine DB-Zeile pro Kurs):
     {
@@ -39,7 +39,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-LAYOUTS = ("center", "topleft", "twocol")
+LAYOUTS = ("center", "topleft")
 # "autoanimate" ist die Standard-Transition (Reveal-Auto-Animate: Inhalte
 # animieren zwischen den Folien ineinander); fade/slide/zoom/none sind die
 # klassischen Reveal-Transitions.
@@ -93,7 +93,7 @@ class SlideError(ValueError):
 
 @dataclass
 class Slide:
-    """Eingeparste Folie: Direktiven + Spalten (Markdown je Spalte).
+    """Eingeparste Folie: Direktiven + Folientext.
 
     Ein Block mit ≥2 ``--``-Segmenten wird zu einem Stack: ``children`` ist
     dann die Liste der (vertikalen) Unterfolien, der Stack selbst ist ein
@@ -104,10 +104,10 @@ class Slide:
     css_class: Optional[str] = None
     notes: Optional[str] = None
     background: Optional[str] = None  # Rohwert der background:-Richtlinie (![Titel](…))
+    # Immer genau 1 Eintrag: der Folientext (Markdown).
+    # Spalten (@startcolumn … @nextcolumn … @endcolumn) sind Renderer-Seite
+    # (markdown-renderer.js) und Teil des Texts, kein eigener Parser-Begriff.
     columns: list[str] = field(default_factory=lambda: [""])
-    # twocol: Überschrift der ersten (nicht-leeren) Zeile der linken Spalte
-    # wird als eigener, vollbreiter Header über beiden Spalten gerendert.
-    header: Optional[str] = None
     children: list["Slide"] = field(default_factory=list)  # nur bei Stacks (`--`)
 
 
@@ -118,7 +118,6 @@ class Slide:
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _DIRECTIVE = re.compile(r"^(layout|transition|class|notes|background):\s*(\S.*)$")
 _CLASS = re.compile(r"^[A-Za-z0-9_-]+$")
-_HEADING_LINE = re.compile(r"^#{1,6}[ \t]\S")
 # background: Markdown-Bild-/Applet-Snippet ![Titel](/media/…) ohne Zusätze
 # (kein Label/Attribute) — der Pfad darf kein Whitespace enthalten.
 # Optionales {zoom=X} am Ende (Punkt optional) — wird serverseitig nur auf
@@ -191,7 +190,7 @@ def _split_vertical(block: str) -> list[str]:
 
 
 def _parse_block(block: str, index: int) -> Slide:
-    """Parsert ein Folien-Block (Richtlinien + Spaltentrenner) streng."""
+    """Parsert ein Folien-Block (Richtlinien + Folientext) streng."""
     lines = block.splitlines()
     slide = Slide()
     seen: set[str] = set()
@@ -241,34 +240,9 @@ def _parse_block(block: str, index: int) -> Slide:
             slide.notes = value
         i += 1
 
-    body_lines = lines[i:]
-    col_positions = [j for j, line in enumerate(body_lines) if line.strip() == "||"]
-
-    if len(col_positions) > 1:
-        raise SlideError(f"Folie {index}: '||' (Spaltentrenner) darf pro Folie höchstens einmal vorkommen.")
-    if len(col_positions) == 1:
-        if slide.layout != "twocol":
-            raise SlideError(f"Folie {index}: '||' (Spaltentrenner) ist nur mit 'layout: twocol' erlaubt.")
-        p = col_positions[0]
-        left_lines = body_lines[:p]
-        # Überschrift auf der ersten nicht-leeren Zeile der linken Spalte →
-        # eigener, vollbreiter Header über beiden Spalten (Client rendert
-        # ihn vor dem 2-Spalten-Grid; s. renderSlideInto in slides.js).
-        k = 0
-        while k < len(left_lines) and not left_lines[k].strip():
-            k += 1
-        if k < len(left_lines) and _HEADING_LINE.match(left_lines[k].strip()):
-            slide.header = left_lines[k].strip()
-            left_lines = left_lines[k + 1 :]
-        slide.columns = [
-            "\n".join(left_lines).strip(),
-            "\n".join(body_lines[p + 1 :]).strip(),
-        ]
-    else:
-        if slide.layout == "twocol":
-            raise SlideError(f"Folie {index}: 'layout: twocol' benötigt einen Spaltentrenner '||'.")
-        slide.columns = ["\n".join(body_lines).strip()]
-
+    # Spalten (@startcolumn … @nextcolumn … @endcolumn) sind Renderer-Seite
+    # (markdown-renderer.js) — der Folientext bleibt ein einziger Part.
+    slide.columns = ["\n".join(lines[i:]).strip()]
     return slide
 
 

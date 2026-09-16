@@ -97,22 +97,6 @@
   margin-inline: auto;
 }
 
-/* Zweispaltige Folien (layout: twocol). Die Überschrift (falls vorhanden)
-   steht als .slides-twocol-header VOR dem Grid und spannt so über beide
-   Spalten (renderSlideInto in slides.js). */
-.slides-twocol {
-  display: flex;
-  gap: 2.5em;
-  width: 100%;
-  align-items: flex-start;
-  text-align: left;
-}
-
-.slides-twocol .slides-col {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
 /* ─── Fußzeile & Logo ─────────────────────────────────────────── */
 
 /* Fußzeile am .slides-Canvas statt am Section: Reveal skaliert das
@@ -639,19 +623,8 @@ html.print-pdf .reveal .slides .markdown-preview pre {
   text-align: left;
 }
 
-/* twocol: wie in der Präsentation linksbündig (sonst erbt die Kachel die
-   .slides-canvas-Zentrierung — der Vollbreiten-Header würde anders
-   ausgerichtet als in der Präsentation). */
-.slides-canvas.layout-twocol {
-  text-align: left;
-}
-
 .slides-canvas .markdown-preview {
   width: 100%;
-}
-
-.slides-canvas .slides-twocol {
-  align-items: center;
 }
 
 /* Deck-Editor (course/slides_edit.html): Zweispaltige Vorschau-Karte */

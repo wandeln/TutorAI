@@ -66,6 +66,12 @@
  *                                                            die Boxfarbe (#hex/rgb()/CSS-Farbname)
  *                                                            code: dunkle Code-Box mit 💻-Kopf
  *                                                            (Inhalt = fenced Code-Block)
+ * Spalten:             @startcolumn[:gewicht] … @nextcolumn[:gewicht] … @endcolumn
+ *                                                            → Spaltenzeile (CSS Grid; Gewicht = positive Zahl,
+ *                                                            Default 1 → fr-Breitenanteil; Marker je eigene Zeile
+ *                                                            am Zeilenanfang; Inhalt VOR @startcolumn (z. B.
+ *                                                            Überschrift) bleibt vollbreit über der Zeile);
+ *                                                            NESTBAR (beliebige Tiefe) — Slides UND Skript
  * Code-Blöcke:        ```<sprache> … ```           → Syntax-Highlighting (hljs, alle Sprachen;
  *                                                            ohne Sprache = Auto-Detection)
  *                                                            Öffnende Zeile: Sprache + optionale Tokens in
@@ -249,6 +255,107 @@ const CALLOUT_TYPES = {
 // Zeilenanfang wirksam — den Check macht _findBoxClose; Parität zum alten
 // 1d-Regex \r?\n@endbox).
 const BOX_EVENT_RE = /@startbox:([\p{L}0-9_-]+)|@endbox/gu;
+
+// ─── Spalten: @startcolumn … @nextcolumn … @endcolumn ──────────────────
+// Spaltenzeile als CSS Grid (Styling: main.css .tutorai-cols/.tutorai-col).
+// @startcolumn öffnet die Zeile (1. Spalte), jedes @nextcolumn startet die
+// nächste Spalte, @endcolumn (nur am Zeilenanfang) schließt die Zeile.
+// Gewicht = positive Zahl nach ":" (Default 1) → fr-Breitenanteil (z. B.
+// @startcolumn:2 … @nextcolumn:1 = 2:1). NESTBAR (beliebige Tiefe).
+// Die Marker wirken NUR am Zeilenanfang; hinter dem Marker ist nur
+// optionales :gewicht + Leerraum erlaubt (sonst bleibt die Zeile literal).
+// Code-Blöcke sind zu diesem Zeitpunkt bereits extrahiert (1a–1c) →
+// in Code bleiben die Marker literal. Ungepaarte/ungeschlossene Marker
+// bleiben sichtbar (Tippfehler fallen auf).
+const COLUMN_EVENT_RE = /@startcolumn(?::([0-9]+(?:\.[0-9]+)?))?|@nextcolumn(?::([0-9]+(?:\.[0-9]+)?))?|@endcolumn/gu;
+
+// Head nach einem Column-Marker (Index direkt nach dem gematchten Marker +
+// optionalem :gewicht): nur Leerraum erlaubt, Gewicht (falls vorhanden)
+// muss > 0 sein → Gewicht oder null (Marker bleibt literal).
+function _columnHeadWeight(text, markerEnd, weightRaw) {
+  const nl = text.indexOf('\n', markerEnd);
+  const head = nl === -1 ? '' : text.slice(markerEnd, nl);
+  if (!/^[ \t]*\r?$/.test(head)) return null;
+  const weight = weightRaw === undefined ? 1 : parseFloat(weightRaw);
+  return Number.isFinite(weight) && weight > 0 ? weight : null;
+}
+
+// Nächste gültige @startcolumn (Zeilenanfang, gültige Head-Zeile) ab pos
+// → { start, end (Index nach der Head-Zeile), weight } oder null.
+function _nextColumnOpen(text, pos) {
+  const re = /@startcolumn(?::([0-9]+(?:\.[0-9]+)?))?/gu;
+  re.lastIndex = pos;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > 0 && text[m.index - 1] !== '\n') continue; // nur Zeilenanfang
+    const weight = _columnHeadWeight(text, m.index + m[0].length, m[1]);
+    if (weight === null) continue;
+    const nl = text.indexOf('\n', m.index + m[0].length);
+    return { start: m.index, end: nl === -1 ? text.length : nl + 1, weight };
+  }
+  return null;
+}
+
+// Zeile ab from (Index NACH der @startcolumn-Head-Zeile) mit Depth-Zählung
+// scannen (1 = äußere Zeile offen): gültiges @startcolumn (Zeilenanfang)
+// öffnet eine verschachtelte Zeile (Depth+1), @endcolumn (Zeilenanfang)
+// schließt (Depth−1; bei 0 = Ende der äußeren Zeile). @nextcolumn zählt
+// NUR auf Depth 1 (Split der äußeren Zeile) — tiefere @nextcolumn gehören
+// zu verschachtelten Zeilen. → { close, closeEnd, splits } oder null
+// (ungeschlossen).
+function _scanColumnBlock(text, from) {
+  COLUMN_EVENT_RE.lastIndex = from;
+  let depth = 1;
+  const splits = []; // @nextcolumn auf Depth 1: { start, weight, headEnd }
+  let m;
+  while ((m = COLUMN_EVENT_RE.exec(text)) !== null) {
+    if (m.index > 0 && text[m.index - 1] !== '\n') continue; // nur Zeilenanfang
+    const isNext = m[0].startsWith('@nextcolumn');
+    const weight = _columnHeadWeight(text, m.index + m[0].length, isNext ? m[2] : m[1]);
+    if (isNext) {
+      if (weight !== null && depth === 1) {
+        const nl = text.indexOf('\n', m.index + m[0].length);
+        splits.push({ start: m.index, weight, headEnd: nl === -1 ? text.length : nl + 1 });
+      }
+      continue;
+    }
+    if (m[0].startsWith('@startcolumn')) {
+      if (weight !== null) depth += 1;
+      continue;
+    }
+    // @endcolumn — wie @endbox: ohne Head-Check (Parität); ein
+    // FALSCH geschriebener Marker matcht den Regex nicht und hält die
+    // Zeile geöffnet → bleibt literal sichtbar (Tippfehler fällt auf).
+    depth -= 1;
+    if (depth === 0) return { close: m.index, closeEnd: m.index + '@endcolumn'.length, splits };
+  }
+  return null;
+}
+
+function _convertColumnBlocks(text) {
+  const open = _nextColumnOpen(text, 0);
+  if (open === null) return text;
+  const scan = _scanColumnBlock(text, open.end);
+  if (scan === null) {
+    // ungeschlossene Zeile → bleibt literal, ab nach der Head-Zeile weiter
+    return text.slice(0, open.end) + _convertColumnBlocks(text.slice(open.end));
+  }
+  const weights = [open.weight];
+  // Zellen-Grenzen paarweise: [offen, @nextcolumn-Start), [@nextcolumn-Ende,
+  // @nextcolumn-Start), … — die @nextcolumn-Zeilen gehören zu KEINER Zelle
+  // (Marker-Text wird verworfen, nur das Gewicht zählt).
+  const bounds = [open.end];
+  for (const s of scan.splits) { bounds.push(s.start, s.headEnd); weights.push(s.weight); }
+  bounds.push(scan.close);
+  let html = '\n\n<div class="tutorai-cols" style="grid-template-columns:' +
+    weights.map((w) => w + 'fr').join(' ') + '">';
+  for (let i = 0; i < weights.length; i++) {
+    const body = _convertColumnBlocks(text.slice(bounds[i * 2], bounds[i * 2 + 1])).trim();
+    html += '\n<div class="tutorai-col">\n\n' + body + '\n\n</div>';
+  }
+  html += '\n</div>\n\n';
+  return text.slice(0, open.start) + html + _convertColumnBlocks(text.slice(scan.closeEnd));
+}
 
 // ─── Highlight-Box: @boxcolor:<farbe> ───────────────────────────────────
 // @startbox:highlight ist die headless Variante der Hinweis-Boxen (kein
@@ -641,6 +748,12 @@ async function renderMarkdown(text, targetElement, options = {}) {
   // Slide-Decks: slide-eigene Box-Labels → S1, S2, … (wie eq/fig/code).
   let slideBoxCount = 0;
   processed = _convertBoxBlocks(processed);
+  // 1d2. Convert columns: @startcolumn … @nextcolumn … @endcolumn →
+  //      Spalten-Grid (s. _convertColumnBlocks). Läuft NACH den Boxen:
+  //      Boxen in Spalten sind dann bereits konvertiert, Spalten in Boxen
+  //      (die Marker überleben die Box-Konversion als literal) werden
+  //      hier im Box-Body umgewandelt.
+  processed = _convertColumnBlocks(processed);
 
   // Erste Box-Öffnung ab pos: gültiges @startbox:{typ} (Typ direkt nach dem
   // Doppelpunkt, s. BOX_EVENT_RE) → { start, type, typeEnd } oder null.
@@ -2198,8 +2311,8 @@ function _cleanupBlockArtifacts(root) {
 //      Hosts markieren (group/normal aus der ID-Klasse) — die inerten
 //      tutorai-katex-frag*-Klassen werden entfernt, „enclosing“ bleibt.
 //   2: Alle [data-frag]-Elemente + Top-Level-Elemente der Folie (direkte
-//      Kinder der .markdown-preview-Wrapper, bei twocol je ein Wrapper pro
-//      Spalte) in Dokumentreihenfolge sammeln.
+//      Kinder der .markdown-preview-Wrapper, bei Boxen/Spaltenzeilen der
+//      Wrapper-<div>) in Dokumentreihenfolge sammeln.
 //   3: Reveal data-fragment-index vergeben (gleicher Index = gleichzeitig
 //      eingeblendet): ID-Gruppen teilen sich den Schritt des ersten
 //      Vorkommens; ein Gate ("reveal") bekommt einen neuen Schritt, und
@@ -2319,7 +2432,8 @@ function _collectFragmentEls(container, fragEls) {
 // katex-Frag-Elemente derselben Gleichung (gleiche .katex-Root) per
 // Bounding-Box (top, dann left; Toleranz 2px) neu sortieren. Stabiler Sort
 // hält bei Ties die DOM-Reihenfolge. Nicht global visuell: würde z. B.
-// Twocol-Spaltenreihenfolge brechen. Ungelayoutete Slides (Rects=0) → no-op.
+// die Spaltenreihenfolge einer Spaltenzeile brechen. Ungelayoutete Slides
+// (Rects=0) → no-op.
 function _visualKatexRunSort(allEls) {
   for (let i = 0; i < allEls.length; ) {
     const first = allEls[i];
@@ -2863,7 +2977,12 @@ async function renderMermaid(diagramText) {
   diagramText = sanitizeFlowchartLabels(diagramText);
 
   try {
-    const { svg } = await mermaid.render(`mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, diagramText);
+    const { svg: rawSvg } = await mermaid.render(`mermaid-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, diagramText);
+    // securityLevel 'loose' rendert HTML in Labels ungefiltert, und die SVG-
+    // Einsetzung in renderMarkdown (Schritt 11) erfolgt NACH dem zentralen
+    // DOMPurify-Pass (Schritt 10) — hier daher das SVG selbst sanitisieren
+    // (entfernt on*-Handler/javascript:-URIs, behält foreignObject + KaTeX).
+    const svg = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(rawSvg) : rawSvg;
     const temp = document.createElement('div');
     temp.innerHTML = svg;
     const svgEl = temp.querySelector('svg');

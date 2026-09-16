@@ -84,15 +84,10 @@ def _logo_url(session: Session, course_id: int, theme: dict) -> Optional[str]:
 
 
 def _slide_md_parts(slide) -> list[str]:
-    """Markdown-Parts eines Leaf-Slides in Visu-Reihenfolge
-    (Header, linke Spalte, rechte Spalte) — für die Label-Zählung."""
-    parts: list[str] = []
-    if slide.header:
-        parts.append(slide.header)
-    for col in slide.columns:
-        if col:
-            parts.append(col)
-    return parts
+    """Markdown-Parts eines Leaf-Slides in Visu-Reihenfolge (höchstens ein
+    Part: der nicht-leere Folientext; Spalten sind Renderer-Seite) —
+    für die Label-Zählung."""
+    return [col for col in slide.columns if col]
 
 
 @router.get("/courses/{course_id}/slides-theme")
@@ -350,8 +345,8 @@ async def slides_refmap(
                     ungespeicherte Labels in der Editor-Vorschau
         figures:  [{deckId, h, v, p, num}] — NUR unlabeled Subfigure-Komplexe
                     (gelabelte Inners, kein äußeres {#fig:label}) mit ihrer
-                    S-Nummer + Position (p = Teil-Index innerhalb der Folie:
-                    Header, Spalten, s. _slide_md_parts). Der Client
+                    S-Nummer + Position (p = Teil-Index innerhalb der
+                    Folie, s. _slide_md_parts). Der Client
                     (markdown-renderer.js) rendert pro Teil und bekommt so
                     die exakte Server-Nummer per Positions-Zip (Parität zur
                     Skript-Refmap `figures`); ohne die Liste müsste er nach

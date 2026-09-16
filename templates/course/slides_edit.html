@@ -162,6 +162,11 @@
               Noch keine Folien. Trenne Folien durch eine eigene Zeile <code>---</code>.
             </div>
           </div>
+          {# Sprechernotiz der aktuellen Vorschau-Folie (per JS gefüllt) #}
+          <div id="slide-notes" class="hidden mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <div class="text-xs font-semibold text-amber-700">🎤 Sprechernotiz</div>
+            <div id="slide-notes-text" class="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-gray-700"></div>
+          </div>
         </div>
       </div>
 
@@ -318,6 +323,8 @@
   const previewSlidesEl = document.getElementById("slide-preview-slides");
   const previewEmptyEl = document.getElementById("slide-preview-empty");
   const countEl = document.getElementById("slide-count");
+  const notesEl = document.getElementById("slide-notes");
+  const notesTextEl = document.getElementById("slide-notes-text");
 
   // Fußzeile wie in der Präsentation (Theme-Default: aus → null)
   const FOOTER_TEXT = {{ slides_footer_text | tojson }};
@@ -523,6 +530,30 @@
   // (CM's setValue() feuert change → schedulePreview) rendern nicht erneut.
   let lastRenderedContent = null;
 
+  // Sprechernotiz der aktuellen Vorschau-Folie unter der Preview anzeigen.
+  // Liest das aside.notes des aktuellen <section> (bei Stacks der aktiven
+  // Unterfolie) — plain text via textContent, kein HTML.
+  function updatePreviewNotes() {
+    let section = null;
+    if (previewReveal) {
+      try {
+        const idx = previewReveal.getIndices();
+        const top = previewSlidesEl.children[idx.h];
+        section = top && top.classList.contains("slides-stack")
+          ? (top.children[idx.v] || null)
+          : (top || null);
+      } catch (e) { /* Instanz im Umbau */ }
+    }
+    const notes = section ? section.querySelector(":scope > .notes") : null;
+    const text = notes ? notes.textContent : "";
+    if (text.trim()) {
+      notesTextEl.textContent = text;
+      notesEl.classList.remove("hidden");
+    } else {
+      notesEl.classList.add("hidden");
+    }
+  }
+
   async function renderPreview(content) {
     // Doppelte Anfrage mit unverändertem Inhalt → kein zweiter Re-Render
     if (previewReveal && content === lastRenderedContent) return;
@@ -555,6 +586,7 @@
       previewEmptyEl.innerHTML =
         'Noch keine Folien. Trenne Folien durch eine eigene Zeile <code>---</code>.';
       previewEmptyEl.classList.remove("hidden");
+      updatePreviewNotes();
       return;
     }
     previewEmptyEl.classList.add("hidden");
@@ -607,6 +639,7 @@
       const v = ev.indexv ?? (ev.detail && ev.detail.indexv);
       // Ereignisse einer älteren Instanz (überlappende Renders) ignorieren
       if (seq !== previewSeq) return;
+      updatePreviewNotes();
       // Unsere eigene Folien-Wiederherstellung nach einem Re-Render (unten)
       // ist keine bewusste Navigation → keinen Jump. v kann je nach
       // Reveal-Version fehlen (undefined) → dann nur h vergleichen.
@@ -649,6 +682,10 @@
       pendingSkipSlide = { h: prevIndex.h, v: prevIndex.v };
       try { inst.slide(prevIndex.h, prevIndex.v, prevIndex.f); } catch (e) { /* ignore */ }
     }
+    // Das initiale slidechanged feuert vor der Listener-Registrierung und
+    // der Restore-Jump oben wird per pendingSkipSlide verworfen → Notiz-Panel
+    // hier einmalig auf den aktuellen Stand bringen.
+    updatePreviewNotes();
   }
 
   // ─── LLM: Deck generieren / überarbeiten ────────────────────

@@ -74,15 +74,16 @@ HTML-Struktur:
 - Mathematische Formeln: KaTeX verwenden (gleiche Library wie die Kursplattform für LaTeX), z. B. katex.renderToString("H(X) = -\\\\sum_i p_i \\\\log_2 p_i", { throwOnError: false, displayMode: true }) in ein Element einbauen — niemals rohen LaTeX-Quelltext anzeigen.
 
 Design:
-- PLATZSPAREND (Applets werden als „Bild“ in Skripte/Folien eingebettet):
+- PLATZSPAREND (Applets werden ohne Rahmen und mit transparenten Hintergrund in Skripte/Folien eingebettet - evtl brauchen Elemente im Applet also selbst einen eigenen Hintergrund und Boundary):
   - KEINE Karten/Rahmen-Blöcke mit großem Padding um den Inhalt; minimales Padding am Root-Element (≤ 8 px, ideal 0).
   - Das Haupt-Visualisierungs-Fenster (Canvas/SVG/Chart/3D) soll möglichst bis direkt an die Ränder des Applet-Fensters reichen.
   - Steuerungselemente sparsam platzieren: als kompaktes Overlay über der Visualisierung (z. B. halbtransparente Leiste mit backdrop-blur, per kleinem Toggle ein-/ausblendbar) ODER als schmale Steuerleiste (1–2 Zeilen) unmittelbar angrenzend (oberhalb/unterhalb) der Visualisierung — keine großen, abgesetzten Bedienbereiche.
   - Kompakte Typografie (12–14 px) und enge Abstände; die Gesamtgröße des Applets soll für die Einbettung in Text/Folien angemessen klein ausfallen.
 - Responsiv: 100% Breite des Containers; das Applet muss auch in kleinen Größen (ca. 300x150 px, z. B. als Karten-Vorschau) sowie in der Großansicht gut aussehen. Canvas/Chart/Three.js-Renderer dynamisch auf die Containergröße anpassen (z. B. ResizeObserver oder window-resize-Listener) — KEINE festen Pixelmaße für das Root-Layout.
 - Höhe ist inhaltsgetrieben (das einbettende Iframe passt sich automatisch an den Dokument-Inhalt an): KEINE 100vh/vh-Einheiten und KEIN min-height am Root-Element. Canvas-/3D-/Chart-Bereiche bekommen stattdessen eine feste Pixelhöhe (300–450 px) bei dynamischer Breite; statische SVG-Figuren erhalten ihre Höhe über das Seitenverhältnis (viewBox).
-- Heller, klarer Look (weißer/hellgrauer Hintergrund, gut lesbare Typografie), modern und aufgeräumt, passend zu einer Plattform im Tailwind-Stil.
-- ALLE UI-Texte auf Deutsch.
+- Heller, klarer Look, gut lesbare Typografie, modern und aufgeräumt, passend zu einer Plattform im Tailwind-Stil.
+- Wichtige Elemente sollten einen eigenen Hintergrund bekommen, damit der Hintergrund des Skripts oder der Slides nicht störend durchscheint.
+- ALLE UI-Texte am besten mit ein bisschen padding und margin (trotzdem platzsparend).
 - Lehrbuch-Qualität: präzise Beschriftungen, Legenden, sinnvolle Default-Werte, flüssige Interaktion (z. B. Slider, Buttons, Hover-Tooltips; bei Three.js OrbitControls).
 - Performance: requestAnimationFrame für Animationen, keine Busy-Loops.
 - Bei Three.js: WebGLRenderer mit antialias, sinnvolle Kamera/Lichter/Scene, OrbitControls, korrekte Resize-Behandlung (Renderer-Größe + Kamera-Aspect aktualisieren).

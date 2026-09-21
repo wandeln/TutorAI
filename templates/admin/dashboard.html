@@ -12,14 +12,20 @@
       <button onclick="showSection('courses')" class="admin-nav w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition" data-section="courses">
         📋 Kurse verwalten
       </button>
-      <button onclick="showSection('users')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="users">
+      <button onclick="showSection('users')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-section="users">
         👥 User verwalten
       </button>
-      <button onclick="showSection('settings')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="settings">
-        ⚙️ Systemeinstellungen
+      <button onclick="showSection('ldap')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-section="ldap">
+        🔐 LDAP-Einrichtung
       </button>
-      <button onclick="showSection('llm-debug')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-section="llm-debug">
+      <button onclick="showSection('llm')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-section="llm">
+        🤖 LLM-Konfiguration
+      </button>
+      <button onclick="showSection('llm-debug')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-section="llm-debug">
         🐛 LLM-Debug-Log
+      </button>
+      <button onclick="showSection('compute')" class="admin-nav w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-section="compute">
+        🐳 Compute / Workspace
       </button>
     </div>
 
@@ -128,23 +134,11 @@
         </div>
       </div>
 
-      <!-- ═══ SETTINGS ═══ -->
-      <div id="section-settings" class="admin-section hidden">
-        <h2 class="text-xl font-semibold text-gray-800 mb-4">Systemeinstellungen</h2>
+      <!-- ═══ LLM CONFIG ═══ -->
+      <div id="section-llm" class="admin-section hidden">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">LLM-Konfiguration</h2>
 
-        <!-- Tabs -->
-        <div class="flex gap-2 mb-6 border-b">
-          <button onclick="showSettingsTab('llm')" class="settings-tab px-4 py-2 text-sm font-medium text-blue-600 border-b-2 border-blue-600" data-tab="llm">
-            🤖 LLM-Konfiguration
-          </button>
-          <button onclick="showSettingsTab('ldap')" class="settings-tab px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700" data-tab="ldap">
-            🔐 LDAP-Einrichtung
-          </button>
-        </div>
-
-        <!-- LLM Config -->
-        <div id="settings-tab-llm" class="settings-panel">
-          <div class="card">
+        <div class="card">
             <div class="space-y-4">
               <div>
                 <h3 class="text-sm font-semibold text-gray-700">Private Endpoint</h3>
@@ -229,11 +223,13 @@
               </div>
             </div>
           </div>
-        </div>
+      </div>
 
-        <!-- LDAP Config -->
-        <div id="settings-tab-ldap" class="settings-panel hidden">
-          <div class="card">
+      <!-- ═══ LDAP ═══ -->
+      <div id="section-ldap" class="admin-section hidden">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">LDAP-Einrichtung</h2>
+
+        <div class="card">
             <div class="space-y-4">
               <div>
                 <label class="flex items-center gap-2 cursor-pointer">
@@ -287,8 +283,57 @@
               </div>
             </div>
           </div>
-        </div>
       </div>
+
+      <!-- ═══ COMPUTE / WORKSPACE ═══ -->
+      <div id="section-compute" class="admin-section hidden">
+        <h2 class="text-xl font-semibold text-gray-800 mb-4">Compute / Workspace</h2>
+
+        <div class="card">
+            <div class="space-y-4">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-700">Workspace-Aufgaben</h3>
+                <p class="text-xs text-gray-400 mt-1">
+                  Komplexe Coding-Aufgaben (NN-Training, C++, Assembler, Server) in per-Student-
+                  Docker-Containern. Ausführungen laufen auf den unten konfigurierten Compute-Engines.
+                </p>
+              </div>
+
+              <!-- ─── Globale Compute-Engines ─── -->
+              <div class="border-t border-gray-200 pt-4">
+                <div class="flex items-center justify-between mb-2">
+                  <h3 class="text-sm font-semibold text-gray-700">Globale Compute-Engines</h3>
+                  <button onclick="refreshEngineStatus()" class="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition">
+                    ⟳ Status aktualisieren
+                  </button>
+                </div>
+                <p class="text-xs text-gray-400 mb-3">
+                  Änderungen werden direkt gespeichert. Routing: erste gesunde Engine des
+                  Aufgaben-Pools (ohne Pool: „local“, sonst erste gesunde). GPU-Fähigkeit wird
+                  automatisch erkannt (Engine-Health) — der GPU-Bedarf einer Aufgabe kommt aus der
+                  Image-Spec. Remote-Engines sind per SSH-Tunnel auf einem lokalen Port erreichbar
+                  (s. <code class="font-mono">deploy/README.md</code>).
+                </p>
+                <style>
+                  /* Chevron der Compute-Engine-Zeilen: animiert (analog Kurs-Material-Import) */
+                  .eng-details .eng-chevron { transition: transform 0.2s ease; }
+                  .eng-details[open] .eng-chevron { transform: rotate(180deg); }
+                </style>
+                <div id="compute-engine-list"></div>
+                <button type="button" onclick="addComputeEngine()" class="mt-2 text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition">
+                  ＋ Engine hinzufügen
+                </button>
+              </div>
+
+              <!-- ─── Globale Image-Specs ─── -->
+              <div class="border-t border-gray-200 pt-4">
+                <div id="admin-specs-section"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <script src="{{ asset('js/image-specs-ui.js') }}"></script>
 
       <!-- ═══ LLM-DEBUG-LOG ═══ -->
       <div id="section-llm-debug" class="admin-section hidden">
@@ -443,23 +488,16 @@
     document.querySelector(`.admin-nav[data-section="${section}"]`).classList.add('bg-blue-50', 'text-blue-700', 'font-medium');
     document.querySelector(`.admin-nav[data-section="${section}"]`).classList.remove('text-gray-600');
 
-    // Beim Aufruf der Systemeinstellungen: Settings vom Server laden
-    if (section === 'settings') loadSettings();
+    // Beim Aufruf der Settings-Sektionen (früher „Systemeinstellungen“):
+    // Settings vom Server laden (betrifft LLM, LDAP + Compute gemeinsam)
+    if (section === 'llm' || section === 'ldap' || section === 'compute') loadSettings();
+    // Beim Aufruf des Compute-Bereichs: Engine-Status aktualisieren
+    if (section === 'compute') refreshEngineStatus();
     // Beim Aufruf des LLM-Debug-Logs: Log vom Server laden
     if (section === 'llm-debug') loadLlmDebugLog();
-  }
 
-  // ─── Settings Tabs ───────────────────────────────────────────
-  function showSettingsTab(tab) {
-    document.querySelectorAll('.settings-panel').forEach(el => el.classList.add('hidden'));
-    document.getElementById(`settings-tab-${tab}`).classList.remove('hidden');
-
-    document.querySelectorAll('.settings-tab').forEach(btn => {
-      btn.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
-      btn.classList.add('text-gray-500', 'hover:text-gray-700');
-    });
-    document.querySelector(`.settings-tab[data-tab="${tab}"]`).classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
-    document.querySelector(`.settings-tab[data-tab="${tab}"]`).classList.remove('text-gray-500', 'hover:text-gray-700');
+    // Hash synchron halten (z. B. Deep-Link /admin#compute)
+    history.replaceState(null, '', '#' + section);
   }
 
   // ─── Create Course ───────────────────────────────────────────
@@ -716,9 +754,465 @@
 
       // LDAP-Felder ein/ausblenden
       document.getElementById('ldap-fields').classList.toggle('hidden', !data.use_ldap);
+
+      // Compute/Workspace-Felder befüllen
+      envDefault = null;
+      if (data.compute_env_default && data.compute_env_default.url) {
+        envDefault = {
+          name: String(data.compute_env_default.name || 'local'),
+          url: String(data.compute_env_default.url).replace(/\/$/, ''),
+          key: String(data.compute_env_default.key || ''),
+          env: true,
+        };
+      }
+      computeEngines = [];
+      if (data.compute_agents) {
+        try {
+          const arr = JSON.parse(data.compute_agents);
+          if (Array.isArray(arr)) {
+            computeEngines = arr.filter(a => a && a.url).map(a => ({
+              name: String(a.name || a.url),
+              url: String(a.url).replace(/\/$/, ''),
+              key: String(a.key || ''),
+              gpus: a.gpus !== undefined && a.gpus !== null ? a.gpus : undefined,
+            }));
+          }
+        } catch (e) {
+          showToast('Engine-Registry (JSON) ist ungültig — bitte korrigieren.', 'error');
+        }
+      }
+      // Keine gespeicherten Engines + .env/Compose deklariert lokalen Agent
+      // → als "local"-Zeile anzeigen (statt unsichtbarem .env-Fallback)
+      if (!computeEngines.length && envDefault) {
+        computeEngines = [{ ...envDefault }];
+      }
+      renderComputeEngines();
+      refreshEngineStatus();
     } catch (err) {
       console.error('Settings laden fehlgeschlagen:', err);
     }
+  }
+
+  // ─── Compute / Workspace (Globale Compute-Engines) ─────────────
+  let computeEngines = [];     // [{name, url, key}] (env: true = .env/Compose-Engine)
+  let envDefault = null;       // .env/Compose-Engine (aktiv, solange Liste leer)
+  let engineStatus = {};       // name → {healthy, gpu, gpu_info, error, url}
+  let globalSpecsCache = null;
+
+  function escHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  async function saveEngines() {
+    const valid = computeEngines.filter(a => a.url).map(a => {
+      const o = { name: a.name, url: a.url, key: a.key };
+      if (a.gpus !== undefined && a.gpus !== null) { o.gpus = a.gpus; }
+      return o;
+    });
+    try {
+      const res = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ compute_agents: valid.length ? JSON.stringify(valid) : '' }),
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        showToast(data.detail || 'Fehler beim Speichern der Engines.', 'error');
+        return false;
+      }
+      showToast('Engines gespeichert.', 'success');
+      // Leere Liste + .env/Compose-Agent: Fallback bleibt aktiv → Zeile wiederherstellen
+      if (!valid.length && envDefault) {
+        computeEngines = [{ ...envDefault }];
+        renderComputeEngines();
+      }
+      refreshEngineStatus();
+      return true;
+    } catch (err) {
+      showToast('Fehler: ' + err.message, 'error');
+      return false;
+    }
+  }
+
+  function updateEngineStatus(wrap, st, i) {
+    const dot = wrap.querySelector('.eng-dot');
+    const gpu = wrap.querySelector('.eng-gpu');
+    if (!dot) return;
+    dot.textContent = st ? (st.healthy ? '🟢' : '🔴') : '⚪';
+    dot.title = st && !st.healthy ? (st.error || 'offline') : 'Engine-Status';
+    gpu.textContent = st ? (st.gpu_info || (st.gpu ? 'GPU' : '')) : '';
+    gpu.classList.toggle('hidden', !gpu.textContent);
+    renderEngineGpus(wrap.querySelector('.eng-gpus'), i, st);
+  }
+
+  // GPU-Regel je Engine (Checkboxen, Auto-Save): null/undefined = alle,
+  // "none" = nur CPU, [0, 2] = nur diese Devices. Alle Container der Engine
+  // starten automatisch mit den erlaubten GPUs.
+  function renderEngineGpus(box, i, st) {
+    if (!box) { return; }
+    box.innerHTML = '';
+    const a = computeEngines[i];
+    if (!a) { return; }
+    const label = '<div class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">GPU-Zugang</div>';
+    const note = (txt) => {
+      box.innerHTML = label + '<div class="text-xs text-gray-400">' + escHtml(txt) + '</div>';
+    };
+    const setGpus = (v) => { computeEngines[i].gpus = v; saveEngines(); };
+    if (!st) { note('Verbindung testen, um GPU-Details zu sehen.'); return; }
+    const gpus = st.gpus || [];
+    if (st.gpu && gpus.length) {
+      const cur = a.gpus;
+      const isAllowed = (n) => (cur === undefined || cur === null || cur === 'all'
+        || (Array.isArray(cur) && cur.includes(n)));
+      box.innerHTML = label;
+      const row = document.createElement('div');
+      row.className = 'flex flex-wrap gap-x-3 gap-y-1 mt-1';
+      gpus.forEach(n => {
+        const l = document.createElement('label');
+        l.className = 'inline-flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'eng-gpu-cb';
+        cb.value = String(n);
+        cb.checked = isAllowed(n);
+        cb.addEventListener('change', () => {
+          const on = Array.from(box.querySelectorAll('.eng-gpu-cb'))
+            .filter(c => c.checked).map(c => parseInt(c.value, 10));
+          setGpus(on.length === gpus.length ? undefined : (on.length ? on : 'none'));
+        });
+        l.appendChild(cb);
+        l.appendChild(document.createTextNode('GPU ' + n));
+        row.appendChild(l);
+      });
+      box.appendChild(row);
+      const hint = document.createElement('div');
+      hint.className = 'text-[10px] text-gray-400 mt-1';
+      hint.textContent = 'Alle Container dieser Engine starten mit den erlaubten GPUs (keine = nur CPU).';
+      box.appendChild(hint);
+    } else if (st.gpu) {
+      // GPU da, aber Liste nicht sichtbar (Agent ohne nvidia-smi-Sichtbarkeit)
+      const allowed = a.gpus !== 'none';
+      box.innerHTML = label;
+      const l = document.createElement('label');
+      l.className = 'inline-flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer mt-1';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = allowed;
+      cb.addEventListener('change', () => setGpus(cb.checked ? undefined : 'none'));
+      l.appendChild(cb);
+      l.appendChild(document.createTextNode('GPU-Zugang: alle GPUs erlauben'));
+      box.appendChild(l);
+    } else {
+      note('Keine GPUs auf dieser Engine (nur CPU).');
+    }
+  }
+
+  function renderComputeEngines() {
+    const list = document.getElementById('compute-engine-list');
+    // Offen-Zustand pro Engine (per Name) vor dem DOM-Tausch aus dem Live-DOM
+    // übernehmen — wie im Kurs-Material-Import: toggle-Events beim
+    // innerHTML-Tausch feuern unzuverlässig, das DOM-Lesen ist eindeutig.
+    const openByName = {};
+    list.querySelectorAll('details.eng-details').forEach(d => {
+      if (d.dataset.name) openByName[d.dataset.name] = d.open;
+    });
+    list.innerHTML = '';
+    if (!computeEngines.length) {
+      list.innerHTML = '<div class="text-xs text-gray-400">Noch keine Engines vorhanden.</div>';
+      return;
+    }
+    computeEngines.forEach((a, i) => {
+      const d = document.createElement('details');
+      d.className = 'eng-details border border-gray-200 rounded-lg bg-white mb-3';
+      d.dataset.idx = i;
+      d.dataset.name = a.name || '';
+      d.open = !!openByName[a.name];
+      d.innerHTML =
+        '<summary class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">' +
+        '<span class="eng-dot text-sm flex-shrink-0" title="Engine-Status">⚪</span>' +
+        '<input class="eng-name w-full min-w-0 sm:w-52 border border-gray-300 rounded px-2 py-1 text-sm font-medium" placeholder="Name (z.B. local)" value="' + escHtml(a.name) + '" title="Engine-Name — speichert sich bei Enter/Tab/Blur">' +
+        (a.env ? '<span class="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 whitespace-nowrap flex-shrink-0" title="Wird von .env/Compose deklariert (COMPUTE_AGENT_URL) — gilt, solange die Engine-Liste leer ist">.env</span>' : '') +
+        '<span class="eng-gpu hidden text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 whitespace-nowrap flex-shrink-0"></span>' +
+        '<span class="ml-auto flex items-center gap-2 flex-shrink-0">' +
+        '<button class="eng-test text-xs px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50" title="Verbindung testen">🧪</button>' +
+        '<svg class="eng-chevron h-5 w-5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+        '</span>' +
+        '</summary>' +
+        '<div class="px-4 pb-4 pt-3 border-t border-gray-100">' +
+        '<div class="grid gap-2 sm:grid-cols-2 mb-3">' +
+        '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">URL</label>' +
+        '<input class="eng-url w-full border border-gray-300 rounded px-2 py-1.5 text-xs font-mono" placeholder="http://127.0.0.1:8700" value="' + escHtml(a.url) + '"></div>' +
+        '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">HMAC-Key</label>' +
+        '<input class="eng-key w-full border border-gray-300 rounded px-2 py-1.5 text-xs font-mono" type="password" placeholder="HMAC-Key (leer = offen/Dev)" value="' + escHtml(a.key) + '"></div>' +
+        '</div>' +
+        '<div class="eng-gpus mb-3"></div>' +
+        '<div class="flex items-center justify-between mb-1">' +
+        '<span class="text-xs font-medium text-gray-600">Images auf „' + escHtml(a.name || a.url) + '“</span>' +
+        '<button class="eng-imgs-refresh px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-100" title="Images neu laden">⟳</button>' +
+        '</div>' +
+        '<div class="eng-imgs-list border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-500 min-h-[2rem]">…</div>' +
+        '<div class="flex flex-wrap gap-2 items-center mt-2">' +
+        '<select class="eng-imgs-spec flex-1 min-w-[10rem] border border-gray-300 rounded px-2 py-1 text-xs bg-white"><option value="">(Globale Image-Spec wählen …)</option></select>' +
+        '<button class="eng-imgs-add px-2 py-1 rounded bg-purple-600 text-white hover:bg-purple-700 whitespace-nowrap text-xs">＋ Image installieren</button>' +
+        '</div>' +
+        '<div class="mt-3 pt-3 border-t border-gray-100 flex justify-end">' +
+        '<button class="eng-del text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50" title="' + (a.env ? '.env/Compose-Engine — kann hier nicht entfernt werden' : 'Nur die Verbindung in TutorAI löschen — die Images bleiben auf der Engine') + '">🗑 Engine entfernen…</button>' +
+        '</div>' +
+        '</div>';
+      // Interaktive Elemente im Summary dürfen das Details nicht umklappen
+      // (Fokus/Typing bleiben erhalten — Focus passiert per mousedown, das
+      // preventDefault hier betrifft nur die Click-Default-Aktion).
+      d.querySelector('summary').addEventListener('click', (e) => {
+        if (e.target.closest('input,button,select,label,a')) e.preventDefault();
+      });
+      d.querySelector('.eng-name').onchange = () => {
+        computeEngines[i].name = d.querySelector('.eng-name').value.trim();
+        d.dataset.name = computeEngines[i].name;
+        saveEngines();
+      };
+      d.querySelector('.eng-url').onchange = () => {
+        computeEngines[i].url = d.querySelector('.eng-url').value.trim().replace(/\/$/, '');
+        saveEngines();
+      };
+      d.querySelector('.eng-key').onchange = () => {
+        computeEngines[i].key = d.querySelector('.eng-key').value;
+        saveEngines();
+      };
+      d.querySelector('.eng-test').onclick = () => testComputeEngine(i);
+      d.querySelector('.eng-del').onclick = () => removeComputeEngine(i);
+      d.querySelector('.eng-imgs-refresh').onclick = () => loadEngineImages(d, i);
+      d.querySelector('.eng-imgs-add').onclick = () => installEngineImage(d, i);
+      // Images lazy laden: erst beim ersten Aufklappen der Zeile
+      d.addEventListener('toggle', () => {
+        if (d.open && !d.dataset.imgsLoaded) { loadEngineImages(d, i); }
+      });
+      updateEngineSpecOptions(d, {});
+      updateEngineStatus(d, a.name ? engineStatus[a.name] : null, i);
+      list.appendChild(d);
+    });
+  }
+
+  function addComputeEngine() {
+    computeEngines.push({ name: 'engine-' + (computeEngines.length + 1), url: '', key: '', gpus: undefined });
+    renderComputeEngines();
+    const list = document.getElementById('compute-engine-list');
+    const last = list.children[list.children.length - 1];
+    if (last) {
+      last.open = true;
+      const inp = last.querySelector('.eng-name');
+      if (inp) { inp.focus(); inp.select(); }
+    }
+  }
+
+  async function removeComputeEngine(i) {
+    const a = computeEngines[i];
+    if (a.env) {
+      showToast('„' + a.name + '“ wird von .env/Compose deklariert (COMPUTE_AGENT_URL) und ' +
+                'kann hier nicht entfernt werden. Füge eigene Engines hinzu, um sie zu ' +
+                'verdrängen — die gespeicherte Liste hat dann Vorrang.', 'warning');
+      return;
+    }
+    if (!confirm('Engine „' + a.name + '“ entfernen?\n\nDie Images auf der Engine bleiben dabei erhalten — ' +
+                 'es wird nur die Verbindung in TutorAI gelöscht.')) { return; }
+    computeEngines.splice(i, 1);
+    renderComputeEngines();
+    await saveEngines();
+  }
+
+  async function testComputeEngine(i) {
+    const a = computeEngines[i];
+    if (!a.url) { showToast('Bitte zuerst eine URL eingeben.', 'warning'); return; }
+    const wrap = document.getElementById('compute-engine-list').children[i];
+    const btn = wrap && wrap.querySelector('.eng-test');
+    if (!btn) { return; }
+    btn.disabled = true;
+    btn.textContent = '⏳';
+    try {
+      const res = await fetch('/api/admin/compute/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: a.url, key: a.key }),
+        credentials: 'same-origin',
+      });
+      const data = await res.json();
+      if (data.ok) {
+        btn.textContent = '✅';
+        showToast('Engine erreichbar' + (data.gpu ? ' (GPU)' : ' (keine GPU)') + '.', 'success');
+      } else {
+        btn.textContent = '❌';
+        showToast('Engine nicht erreichbar: ' + (data.error || 'unbekannter Fehler'), 'error');
+      }
+    } catch (err) {
+      btn.textContent = '❌';
+      showToast('Test fehlgeschlagen: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = '🧪'; }, 4000);
+    }
+  }
+
+  async function refreshEngineStatus() {
+    try {
+      const res = await fetch('/api/admin/compute/status', { credentials: 'same-origin' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      engineStatus = {};
+      (data.agents || []).forEach(a => { engineStatus[a.name] = a; });
+    } catch (err) {
+      engineStatus = {};
+    }
+    const list = document.getElementById('compute-engine-list');
+    if (!list) { return; }
+    Array.from(list.children).forEach(wrap => {
+      const i = parseInt(wrap.dataset.idx || '0', 10);
+      const a = computeEngines[i];
+      updateEngineStatus(wrap, a && a.name ? engineStatus[a.name] : null, i);
+    });
+  }
+
+  // ─── Images je Engine (im Dropdown der Engine-Zeile) ───────────
+
+  // Spec-Dropdown befüllen — NUR globale Specs (auf globalen Engines sind
+  // keine Kurs-Images zulässig); bereits installierte Specs werden
+  // ausgeblendet, laufende Builds deaktiviert (Status aus spec_status).
+  function updateEngineSpecOptions(panel, specStatus) {
+    panel._specStatus = specStatus || {}; // letzter bekannter Status gewinnt
+    const sel = panel.querySelector('.eng-imgs-spec');
+    if (!sel) { return; }
+    if (!globalSpecsCache) {
+      globalSpecsCache = fetch('/api/admin/image-specs', { credentials: 'same-origin' })
+        .then(r => { if (!r.ok) { throw new Error(r.status); } return r.json(); })
+        .then(d => d.specs || [])
+        .catch(() => []);
+    }
+    globalSpecsCache.then(specs => {
+      if (!panel.querySelector('.eng-imgs-spec')) { return; } // Panel weg
+      const st = panel._specStatus || {};
+      sel.innerHTML = '<option value="">(Globale Image-Spec wählen …)</option>';
+      specs.filter(s => s.scope === 'global').forEach(s => {
+        const status = st[s.id];
+        if (status && status.installed) { return; } // bereits installiert
+        const opt = document.createElement('option');
+        opt.value = String(s.id);
+        opt.textContent = s.name +
+          (s.base ? ' · ' + s.base : '') +
+          (status && status.building ? ' (Build läuft …)' : '');
+        if (status && status.building) { opt.disabled = true; }
+        sel.appendChild(opt);
+      });
+    });
+  }
+
+  async function installEngineImage(d, i) {
+    const eng = computeEngines[i];
+    const sel = d.querySelector('.eng-imgs-spec');
+    const specId = sel.value;
+    if (!specId) { showToast('Bitte eine Image-Spec wählen.', 'warning'); return; }
+    const specLabel = sel.options[sel.selectedIndex]
+      ? sel.options[sel.selectedIndex].textContent
+      : 'Spec ' + specId;
+    const btn = d.querySelector('.eng-imgs-add');
+    btn.disabled = true;
+    btn.textContent = '⏳';
+    try {
+      const res = await fetch('/api/admin/image-specs/' + specId + '/install', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: eng.name }),
+      });
+      const data = await res.json();
+      if (!res.ok) { throw new Error(data.detail || res.status); }
+      if (data.status === 'ready') {
+        showToast('„' + specLabel + '“ ist auf „' + eng.name + '“ bereits installiert.', 'success');
+      } else {
+        showToast('Build auf „' + eng.name + '“ gestartet — Fortschritt in der Image-Liste.', 'success');
+      }
+      loadEngineImages(d, i);
+    } catch (err) {
+      showToast('Installation fehlgeschlagen: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '＋ Image installieren';
+    }
+  }
+
+  async function loadEngineImages(d, i) {
+    const a = computeEngines[i];
+    d.dataset.imgsLoaded = '1';
+    const listEl = d.querySelector('.eng-imgs-list');
+    if (!a || !a.name || !a.url) { listEl.innerHTML = 'Engine unvollständig (Name + URL nötig).'; return; }
+    listEl.innerHTML = 'Lade …';
+    let images;
+    let specStatus = {};
+    try {
+      const res = await fetch('/api/admin/compute/engines/' + encodeURIComponent(a.name) + '/images',
+        { credentials: 'same-origin' });
+      const data = await res.json();
+      if (!res.ok) { throw new Error(data.detail || res.status); }
+      images = data.images || [];
+      specStatus = data.spec_status || {};
+    } catch (err) {
+      listEl.innerHTML = '<span class="text-red-500">Images nicht ladbar: ' + escHtml(err.message) + '</span>';
+      return;
+    }
+    updateEngineSpecOptions(d, specStatus);
+    if (!images.length) {
+      listEl.innerHTML = '<span class="text-gray-400">(keine Images auf dieser Engine)</span>';
+      return;
+    }
+    listEl.innerHTML = '';
+    images.forEach(img => {
+      let status = '';
+      if (img.building) { status = '<span class="px-1.5 rounded bg-blue-50 text-blue-600">🔄 buildet</span>'; }
+      else if (img.build_failed) { status = '<span class="px-1.5 rounded bg-red-50 text-red-600">❌ build fehlgeschlagen</span>'; }
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2 py-0.5';
+      row.innerHTML =
+        '<span class="font-mono text-gray-700">' + escHtml(img.ref) + '</span>' +
+        (img.spec_name ? '<span class="text-[10px] px-1 rounded bg-indigo-50 text-indigo-600" title="Spec-Name">spec: ' + escHtml(img.spec_name) + '</span>' : '') +
+        status +
+        '<span class="text-gray-400 ml-auto">' + escHtml(img.size || '') + '</span>' +
+        '<button class="eng-imgs-del text-red-500 hover:text-red-700 px-1" title="Image von der Engine löschen (macht Speicher frei)">🗑</button>';
+      row.querySelector('.eng-imgs-del').onclick = async () => {
+        const doDelete = async (force) => {
+          const res = await fetch('/api/admin/compute/engines/' + encodeURIComponent(computeEngines[i].name) + '/images', {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ref: img.ref, force: force }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) { throw new Error(data.detail || res.status); }
+          return data;
+        };
+        if (!confirm('Image „' + img.ref + '“ von Engine „' + a.name + '“ löschen?')) { return; }
+        try {
+          let data;
+          try {
+            data = await doDelete(false);
+          } catch (err) {
+            if (!/genutzt/.test(err.message || '')) { throw err; }
+            if (!confirm('Dieses Image wird von Workspace-Container(s) genutzt.\n\nGewaltsam löschen? Die betroffenen Container werden beendet und entfernt.\nWorkspace-Dateien bleiben in ihrem Volume erhalten; die Umgebungen sind danach\nnicht mehr startbar, bis ein neues Image für die Aufgabenstellung gesetzt ist —\ndanach sind die Daten wieder verfügbar.')) { throw err; }
+            data = await doDelete(true);
+          }
+          showToast('Image gelöscht.' + (data.removed_containers ? ' (' + data.removed_containers + ' Container beendet)' : ''), 'success');
+          loadEngineImages(d, i);
+        } catch (err) {
+          showToast('Löschen fehlgeschlagen: ' + err.message, 'error');
+        }
+      };
+      listEl.appendChild(row);
+      if (img.build_log && (img.building || img.build_failed)) {
+        const pre = document.createElement('pre');
+        pre.className = 'mt-0.5 mb-1 max-h-24 overflow-y-auto bg-white border border-gray-200 rounded p-1.5 whitespace-pre-wrap text-[10px] text-gray-500';
+        pre.textContent = img.build_log;
+        listEl.appendChild(pre);
+      }
+    });
   }
 
   // ─── LDAP Toggle ─────────────────────────────────────────────
@@ -851,6 +1345,7 @@
         credentials: 'same-origin',
       });
 
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — App nicht erreichbar (gerade neu gestartet? Bitte erneut versuchen).');
       const data = await res.json();
 
       if (data.success) {
@@ -1140,5 +1635,24 @@
     updateLlmDebugSentinel();
     maybeLoadMoreLlmDebug();
   }
+
+  // ─── Globale Image-Specs (Shared-Modul) ──────────────────────
+  (function () {
+    if (!window.TutorAIImageSpecs) { return; }
+    window.TutorAIImageSpecs.init({
+      mount: document.getElementById('admin-specs-section'),
+      specsUrl: '/api/admin/image-specs',
+      title: '📦 Globale Image-Specs (für alle Kurse)',
+      // Image-Installation/Löschung erfolgt pro Engine (📦 in der Engine-Liste oben)
+      installModal: false,
+      onSpecSaved: () => { globalSpecsCache = null; },
+    });
+  })();
+
+  // Section aus URL-Hash öffnen (z. B. /admin#compute — Deep-Link aus Kurs/Task-UI)
+  (function () {
+    const h = (location.hash || '').slice(1);
+    if (h && document.getElementById('section-' + h)) showSection(h);
+  })();
 </script>
 {% endblock %}

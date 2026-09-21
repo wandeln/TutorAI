@@ -8,8 +8,11 @@
       <button onclick="showSettingsTab('settings')" class="settings-tab w-full text-left px-4 py-3 rounded-lg bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition" data-tab="settings">
         📝 Kurs-Einstellungen
       </button>
-      <button onclick="showSettingsTab('import')" class="settings-tab w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-gray-50 transition" data-tab="import">
+      <button onclick="showSettingsTab('import')" class="settings-tab w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-tab="import">
         📦 Kurs-Material Import
+      </button>
+      <button onclick="showSettingsTab('compute')" class="settings-tab w-full text-left px-4 py-3 rounded-lg text-gray-600 hover:bg-blue-100 transition" data-tab="compute">
+        🐳 Compute / Workspace
       </button>
     </div>
 
@@ -50,6 +53,7 @@
           </div>
         </form>
       </div>
+
     </div>
   </div>
 
@@ -67,21 +71,68 @@
     </div>
   </div>
 
+  <!-- Tab: Compute / Workspace (Kurs-Engines + globale read-only) -->
+  <div id="settings-tab-compute" class="settings-panel hidden">
+    <div class="max-w-3xl">
+      <div class="card">
+        <div class="space-y-4">
+          <div>
+            <h3 class="text-sm font-semibold text-gray-700">Workspace-Aufgaben</h3>
+            <p class="text-xs text-gray-400 mt-1">
+              Komplexe Coding-Aufgaben (NN-Training, C++, Assembler, Server) laufen in
+              per-Student-Docker-Containern auf den Compute-Engines unten.
+            </p>
+          </div>
+
+          <!-- ─── Compute-Engines (Kurs + global) ─── -->
+          <div class="border-t border-gray-200 pt-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-sm font-semibold text-gray-700">Compute-Engines (Kurs + global)</h3>
+              <button onclick="refreshCourseEngineStatus()" class="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition">
+                ⟳ Status aktualisieren
+              </button>
+            </div>
+            <p class="text-xs text-gray-400 mb-3">
+              Kurs-Engines ergänzen die globalen (Admin-Konsole); bei Namenskonflikt hat der
+              Kurs Vorrang. Änderungen an Kurs-Engines werden direkt gespeichert. Globale Engines
+              sind hier read-only.
+            </p>
+            <style>
+              /* Chevron der Compute-Engine-Zeilen: animiert (analog Kurs-Material-Import) */
+              .eng-details .eng-chevron { transition: transform 0.2s ease; }
+              .eng-details[open] .eng-chevron { transform: rotate(180deg); }
+            </style>
+            <div id="course-engine-list"></div>
+            <button type="button" onclick="addCourseEngine()" class="mt-2 text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition">
+              ＋ Engine hinzufügen
+            </button>
+          </div>
+
+          <!-- ─── Image-Specs (Kurs + global) ─── -->
+          <div class="border-t border-gray-200 pt-4">
+            <div id="course-specs-section"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
   function showSettingsTab(tab) {
-    if (tab !== 'settings' && tab !== 'import') tab = 'settings';
+    if (tab !== 'settings' && tab !== 'import' && tab !== 'compute') tab = 'settings';
     document.querySelectorAll('.settings-panel').forEach((el) => el.classList.add('hidden'));
     document.getElementById('settings-tab-' + tab).classList.remove('hidden');
 
+    // Aktiv-Klassen wechseln — Hover-Klassen bleiben statisch (wie Admin-Nav)
     document.querySelectorAll('.settings-tab').forEach((btn) => {
-      btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-medium', 'hover:bg-blue-100');
-      btn.classList.add('text-gray-600', 'hover:bg-gray-50');
+      btn.classList.remove('bg-blue-50', 'text-blue-700', 'font-medium');
+      btn.classList.add('text-gray-600');
     });
     const activeBtn = document.querySelector('.settings-tab[data-tab="' + tab + '"]');
-    activeBtn.classList.add('bg-blue-50', 'text-blue-700', 'font-medium', 'hover:bg-blue-100');
-    activeBtn.classList.remove('text-gray-600', 'hover:bg-gray-50');
+    activeBtn.classList.add('bg-blue-50', 'text-blue-700', 'font-medium');
+    activeBtn.classList.remove('text-gray-600');
 
-    history.replaceState(null, '', tab === 'import' ? '#import' : location.pathname);
+    history.replaceState(null, '', tab === 'settings' ? location.pathname : '#' + tab);
   }
   showSettingsTab(location.hash.slice(1));
   </script>
@@ -128,6 +179,538 @@
       showToast('Fehler: ' + err.message, 'error');
     }
   });
+  </script>
+
+  <script src="{{ asset('js/image-specs-ui.js') }}"></script>
+  <script>
+  // ─── Compute / Workspace: Kurs-Engines (editierbar) + globale (read-only)
+  (function () {
+    'use strict';
+    const api = '/api/courses/' + courseId;
+    let engines = [];       // effektive Liste: [{name,url,key,gpus,scope,editable,healthy,…}]
+                           // gpus = GPU-Regel der Engine (editierbar, Kurs nur)
+    let engineStatus = {};  // name → Health-Dict (gpus = detektierte GPUs)
+    let specsCache = null;  // Promise: Kurs- + globale Specs für den Install-Picker
+    let saving = false;
+
+    function escHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+        { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+      ));
+    }
+
+    // ─── Laden: Overrides (Keys/GPU-Regeln) + effektive Health-Liste ──
+    async function loadEngines() {
+      try {
+        const [resCs, resEng] = await Promise.all([
+          fetch(api + '/compute-settings', { credentials: 'same-origin' }),
+          fetch(api + '/compute/engines', { credentials: 'same-origin' }),
+        ]);
+        if (!resEng.ok) throw new Error(resEng.status);
+        const eng = await resEng.json();
+        let keys = {};
+        let rules = {};
+        if (resCs.ok) {
+          const cs = await resCs.json();
+          const raw = (cs.overrides || {}).compute_agents;
+          if (raw) {
+            try {
+              (JSON.parse(raw) || []).forEach(a => {
+                if (a && a.name) {
+                  keys[a.name] = String(a.key || '');
+                  rules[a.name] = (a.gpus !== undefined && a.gpus !== null) ? a.gpus : undefined;
+                }
+              });
+            } catch (e) { /* ignorieren */ }
+          }
+        }
+        engineStatus = {};
+        engines = (eng.agents || []).map(a => {
+          const isCourse = a.scope === 'course';
+          engineStatus[a.name] = a;
+          const e = Object.assign({}, a);
+          e.scope = a.scope || 'global';
+          e.editable = isCourse;
+          e.key = isCourse ? (keys[a.name] || '') : '';
+          e.gpus = isCourse ? (rules[a.name] !== undefined ? rules[a.name] : undefined) : undefined;
+          return e;
+        });
+        renderCourseEngines();
+      } catch (err) {
+        showToast('Compute-Engines konnten nicht geladen werden: ' + err.message, 'error');
+      }
+    }
+
+    // ─── Speichern: nur die Kurs-Engines (null = Reset auf Global) ────
+    async function saveCourseEngines() {
+      if (saving) { return; }
+      saving = true;
+      const valid = engines
+        .filter(e => e.scope === 'course' && e.url)
+        .map(e => {
+          const o = { name: e.name, url: e.url, key: e.key };
+          if (e.gpus !== undefined && e.gpus !== null) { o.gpus = e.gpus; }
+          return o;
+        });
+      try {
+        const res = await fetch(api + '/compute-settings', {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ compute_agents: valid.length ? JSON.stringify(valid) : null }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showToast(data.detail || 'Fehler beim Speichern der Engines.', 'error');
+          return;
+        }
+        showToast('Engines gespeichert.', 'success');
+        await refreshCourseEngineStatus();
+      } catch (err) {
+        showToast('Fehler: ' + err.message, 'error');
+      } finally {
+        saving = false;
+      }
+    }
+
+    // ─── Status-Refresh (30s-Health-Cache des Backends) ───────────────
+    async function refreshCourseEngineStatus() {
+      try {
+        const res = await fetch(api + '/compute/engines', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.status);
+        engineStatus = {};
+        (data.agents || []).forEach(a => { engineStatus[a.name] = a; });
+      } catch (err) {
+        engineStatus = {};
+      }
+      const list = document.getElementById('course-engine-list');
+      if (!list) { return; }
+      Array.from(list.children).forEach(wrap => {
+        const i = parseInt(wrap.dataset.idx || '0', 10);
+        const a = engines[i];
+        updateEngineStatus(wrap, a && a.name ? engineStatus[a.name] : null, i);
+      });
+    }
+
+    function updateEngineStatus(wrap, st, i) {
+      const dot = wrap.querySelector('.eng-dot');
+      const gpu = wrap.querySelector('.eng-gpu');
+      if (!dot) { return; }
+      dot.textContent = st ? (st.healthy ? '🟢' : '🔴') : '⚪';
+      dot.title = st && !st.healthy ? (st.error || 'offline') : 'Engine-Status';
+      gpu.textContent = st ? (st.gpu_info || (st.gpu ? 'GPU' : '')) : '';
+      gpu.classList.toggle('hidden', !gpu.textContent);
+      renderEngineGpus(wrap.querySelector('.eng-gpus'), i, st);
+    }
+
+    // GPU-Regel je Kurs-Engine (Checkboxen, Auto-Save): undefined = alle,
+    // "none" = nur CPU, [0, 2] = nur diese Devices. Globale Engines:
+    // read-only-Hinweis (Regel liegt in der Admin-Konsole).
+    function renderEngineGpus(box, i, st) {
+      if (!box) { return; }
+      box.innerHTML = '';
+      const a = engines[i];
+      if (!a) { return; }
+      const label = '<div class="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">GPU-Zugang</div>';
+      const note = (txt) => {
+        box.innerHTML = label + '<div class="text-xs text-gray-400">' + escHtml(txt) + '</div>';
+      };
+      if (!a.editable) {
+        if (!st) { note('GPU-Zugang wird in der Admin-Konsole verwaltet.'); return; }
+        if (st.gpu) {
+          note('GPUs erkannt: ' + (st.gpu_info || (st.gpus || []).map(n => 'GPU ' + n).join(', ')) +
+               ' — Zugangs-Regel in der Admin-Konsole.');
+        } else {
+          note('Keine GPUs auf dieser Engine (nur CPU).');
+        }
+        return;
+      }
+      const setGpus = (v) => { engines[i].gpus = v; saveCourseEngines(); };
+      if (!st) { note('Verbindung testen, um GPU-Details zu sehen.'); return; }
+      const gpus = st.gpus || [];
+      if (st.gpu && gpus.length) {
+        const cur = a.gpus;
+        const isAllowed = (n) => (cur === undefined || cur === null || cur === 'all'
+          || (Array.isArray(cur) && cur.includes(n)));
+        box.innerHTML = label;
+        const row = document.createElement('div');
+        row.className = 'flex flex-wrap gap-x-3 gap-y-1 mt-1';
+        gpus.forEach(n => {
+          const l = document.createElement('label');
+          l.className = 'inline-flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.className = 'eng-gpu-cb';
+          cb.value = String(n);
+          cb.checked = isAllowed(n);
+          cb.addEventListener('change', () => {
+            const on = Array.from(box.querySelectorAll('.eng-gpu-cb'))
+              .filter(c => c.checked).map(c => parseInt(c.value, 10));
+            setGpus(on.length === gpus.length ? undefined : (on.length ? on : 'none'));
+          });
+          l.appendChild(cb);
+          l.appendChild(document.createTextNode('GPU ' + n));
+          row.appendChild(l);
+        });
+        box.appendChild(row);
+        const hint = document.createElement('div');
+        hint.className = 'text-[10px] text-gray-400 mt-1';
+        hint.textContent = 'Alle Container dieser Engine starten mit den erlaubten GPUs (keine = nur CPU).';
+        box.appendChild(hint);
+      } else if (st.gpu) {
+        const allowed = a.gpus !== 'none';
+        box.innerHTML = label;
+        const l = document.createElement('label');
+        l.className = 'inline-flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer mt-1';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = allowed;
+        cb.addEventListener('change', () => setGpus(cb.checked ? undefined : 'none'));
+        l.appendChild(cb);
+        l.appendChild(document.createTextNode('GPU-Zugang: alle GPUs erlauben'));
+        box.appendChild(l);
+      } else {
+        note('Keine GPUs auf dieser Engine (nur CPU).');
+      }
+    }
+
+    function renderCourseEngines() {
+      const list = document.getElementById('course-engine-list');
+      // Offen-Zustand pro Engine (per Name) vor dem DOM-Tausch übernehmen
+      const openByName = {};
+      list.querySelectorAll('details.eng-details').forEach(d => {
+        if (d.dataset.name) openByName[d.dataset.name] = d.open;
+      });
+      list.innerHTML = '';
+      if (!engines.length) {
+        list.innerHTML = '<div class="text-xs text-gray-400">Noch keine Engines vorhanden — bitte eine hinzufügen (globale Engines aus der Admin-Konsole würden hier ebenfalls gelistet).</div>';
+        return;
+      }
+      engines.forEach((a, i) => {
+        const isCourse = a.scope === 'course';
+        const d = document.createElement('details');
+        d.className = 'eng-details border border-gray-200 rounded-lg bg-white mb-3';
+        d.dataset.idx = i;
+        d.dataset.name = a.name || '';
+        d.open = !!openByName[a.name];
+        const badge = a.scope === 'global'
+          ? '<span class="text-[9px] px-1 py-0.5 rounded bg-gray-100 text-gray-500 whitespace-nowrap flex-shrink-0" title="Wird von der Admin-Konsole bereitgestellt (global) — hier read-only">global</span>'
+          : (a.scope === 'env'
+            ? '<span class="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 whitespace-nowrap flex-shrink-0" title="Wird von .env/Compose deklariert (COMPUTE_AGENT_URL)">.env</span>'
+            : '');
+        const nameField = isCourse
+          ? '<input class="eng-name w-full min-w-0 sm:w-52 border border-gray-300 rounded px-2 py-1 text-sm font-medium" placeholder="Name (z.B. gpu-1)" value="' + escHtml(a.name) + '" title="Engine-Name — speichert sich bei Enter/Tab/Blur">'
+          : '<span class="text-sm font-medium text-gray-700 min-w-0 truncate">' + escHtml(a.name) + '</span>';
+        const urlField = isCourse
+          ? '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">URL</label>' +
+            '<input class="eng-url w-full border border-gray-300 rounded px-2 py-1.5 text-xs font-mono" placeholder="http://127.0.0.1:8700" value="' + escHtml(a.url) + '"></div>'
+          : '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">URL (global)</label>' +
+            '<div class="text-xs font-mono text-gray-600">' + escHtml(a.url) + '</div></div>';
+        const keyField = isCourse
+          ? '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">HMAC-Key</label>' +
+            '<input class="eng-key w-full border border-gray-300 rounded px-2 py-1.5 text-xs font-mono" type="password" placeholder="HMAC-Key (leer = offen/Dev)" value="' + escHtml(a.key) + '"></div>'
+          : '<div><label class="block text-[10px] uppercase tracking-wide text-gray-400 font-semibold mb-1">HMAC-Key</label>' +
+            '<div class="text-xs text-gray-400">in der Admin-Konsole verwaltet</div></div>';
+        const installRow = isCourse
+          ? '<div class="flex flex-wrap gap-2 items-center mt-2">' +
+            '<select class="eng-imgs-spec flex-1 min-w-[10rem] border border-gray-300 rounded px-2 py-1 text-xs bg-white"><option value="">(Image-Spec wählen …)</option></select>' +
+            '<button class="eng-imgs-add px-2 py-1 rounded bg-purple-600 text-white hover:bg-purple-700 whitespace-nowrap text-xs">＋ Image installieren</button>' +
+            '</div>'
+          : '';
+        const delRow = isCourse
+          ? '<div class="mt-3 pt-3 border-t border-gray-100 flex justify-end">' +
+            '<button class="eng-del text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50" title="Nur die Verbindung in diesem Kurs löschen — die Images bleiben auf der Engine">🗑 Engine entfernen…</button>' +
+            '</div>'
+          : '';
+        d.innerHTML =
+          '<summary class="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">' +
+          '<span class="eng-dot text-sm flex-shrink-0" title="Engine-Status">⚪</span>' +
+          nameField +
+          badge +
+          '<span class="eng-gpu hidden text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 whitespace-nowrap flex-shrink-0"></span>' +
+          '<span class="ml-auto flex items-center gap-2 flex-shrink-0">' +
+          '<button class="eng-test text-xs px-2 py-1 rounded border border-blue-200 text-blue-600 hover:bg-blue-50" title="Verbindung testen">🧪</button>' +
+          '<svg class="eng-chevron h-5 w-5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>' +
+          '</span>' +
+          '</summary>' +
+          '<div class="px-4 pb-4 pt-3 border-t border-gray-100">' +
+          '<div class="grid gap-2 sm:grid-cols-2 mb-3">' + urlField + keyField + '</div>' +
+          '<div class="eng-gpus mb-3"></div>' +
+          '<div class="flex items-center justify-between mb-1">' +
+          '<span class="text-xs font-medium text-gray-600">Images auf „' + escHtml(a.name || a.url) + '“' + (isCourse ? '' : ' (read-only)') + '</span>' +
+          '<button class="eng-imgs-refresh px-1.5 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-100" title="Images neu laden">⟳</button>' +
+          '</div>' +
+          '<div class="eng-imgs-list border border-gray-200 rounded bg-gray-50 p-2 text-xs text-gray-500 min-h-[2rem]">…</div>' +
+          installRow +
+          delRow +
+          '</div>';
+        // Interaktive Elemente im Summary dürfen das Details nicht umklappen
+        d.querySelector('summary').addEventListener('click', (e) => {
+          if (e.target.closest('input,button,select,label,a')) e.preventDefault();
+        });
+        if (isCourse) {
+          d.querySelector('.eng-name').onchange = () => {
+            engines[i].name = d.querySelector('.eng-name').value.trim();
+            d.dataset.name = engines[i].name;
+            saveCourseEngines();
+          };
+          d.querySelector('.eng-url').onchange = () => {
+            engines[i].url = d.querySelector('.eng-url').value.trim().replace(/\/$/, '');
+            saveCourseEngines();
+          };
+          d.querySelector('.eng-key').onchange = () => {
+            engines[i].key = d.querySelector('.eng-key').value;
+            saveCourseEngines();
+          };
+          d.querySelector('.eng-del').onclick = () => removeCourseEngine(i);
+          d.querySelector('.eng-imgs-add').onclick = () => installEngineImage(d, i);
+        }
+        d.querySelector('.eng-test').onclick = () => testCourseEngine(i);
+        d.querySelector('.eng-imgs-refresh').onclick = () => loadEngineImages(d, i);
+        // Images lazy laden: erst beim ersten Aufklappen der Zeile
+        d.addEventListener('toggle', () => {
+          if (d.open && !d.dataset.imgsLoaded) { loadEngineImages(d, i); }
+        });
+        updateEngineSpecOptions(d, {});
+        updateEngineStatus(d, engineStatus[a.name] || null, i);
+        list.appendChild(d);
+      });
+    }
+
+    function addCourseEngine() {
+      const n = engines.filter(e => e.scope === 'course').length + 1;
+      engines.push({ name: 'engine-' + n, url: '', key: '', gpus: undefined,
+                     scope: 'course', editable: true });
+      renderCourseEngines();
+      const list = document.getElementById('course-engine-list');
+      const last = list.children[list.children.length - 1];
+      if (last) {
+        last.open = true;
+        const inp = last.querySelector('.eng-name');
+        if (inp) { inp.focus(); inp.select(); }
+      }
+    }
+
+    async function removeCourseEngine(i) {
+      const a = engines[i];
+      if (!a.editable) { return; }
+      if (!confirm('Engine „' + a.name + '“ entfernen?\n\nDie Images auf der Engine bleiben dabei erhalten — ' +
+                   'es wird nur die Verbindung in diesem Kurs gelöscht.')) { return; }
+      engines.splice(i, 1);
+      renderCourseEngines();
+      await saveCourseEngines();
+    }
+
+    async function testCourseEngine(i) {
+      const a = engines[i];
+      const wrap = document.getElementById('course-engine-list').children[i];
+      const btn = wrap && wrap.querySelector('.eng-test');
+      if (!btn) { return; }
+      let body;
+      if (a.editable) {
+        if (!a.url) { showToast('Bitte zuerst eine URL eingeben.', 'warning'); return; }
+        body = { url: a.url, key: a.key };
+      } else {
+        body = { name: a.name };  // Key bleibt serverseitig (read-only-Engine)
+      }
+      btn.disabled = true;
+      btn.textContent = '⏳';
+      try {
+        const res = await fetch(api + '/compute/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (data.ok) {
+          btn.textContent = '✅';
+          showToast('Engine erreichbar' + (data.gpu ? ' (GPU)' : ' (keine GPU)') + '.', 'success');
+          updateEngineStatus(wrap, {
+            healthy: true, gpu: data.gpu, gpus: data.gpus || [],
+            gpu_info: data.gpu_info || (data.gpu ? 'GPU' : ''),
+          }, i);
+        } else {
+          btn.textContent = '❌';
+          showToast('Engine nicht erreichbar: ' + (data.error || 'unbekannter Fehler'), 'error');
+        }
+      } catch (err) {
+        btn.textContent = '❌';
+        showToast('Test fehlgeschlagen: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = '🧪'; }, 4000);
+      }
+    }
+
+    // ─── Images je Engine (im Dropdown der Engine-Zeile) ───────────
+
+    // Spec-Dropdown befüllen — Kurs- + globale Specs; bereits installierte
+    // Specs werden ausgeblendet, laufende Builds deaktiviert.
+    function updateEngineSpecOptions(panel, specStatus) {
+      panel._specStatus = specStatus || {}; // letzter bekannter Status gewinnt
+      const sel = panel.querySelector('.eng-imgs-spec');
+      if (!sel) { return; }
+      if (!specsCache) {
+        specsCache = fetch(api + '/image-specs', { credentials: 'same-origin' })
+          .then(r => { if (!r.ok) { throw new Error(r.status); } return r.json(); })
+          .then(d => d.specs || [])
+          .catch(() => []);
+      }
+      specsCache.then(specs => {
+        if (!panel.querySelector('.eng-imgs-spec')) { return; } // Panel weg
+        const st = panel._specStatus || {};
+        sel.innerHTML = '<option value="">(Image-Spec wählen …)</option>';
+        specs.forEach(s => {
+          const status = st[s.id];
+          if (status && status.installed) { return; } // bereits installiert
+          const opt = document.createElement('option');
+          opt.value = String(s.id);
+          opt.textContent = s.name +
+            (s.base ? ' · ' + s.base : '') +
+            (s.scope === 'global' ? ' (global)' : '') +
+            (status && status.building ? ' (Build läuft …)' : '');
+          if (status && status.building) { opt.disabled = true; }
+          sel.appendChild(opt);
+        });
+      });
+    }
+
+    async function installEngineImage(d, i) {
+      const eng = engines[i];
+      const sel = d.querySelector('.eng-imgs-spec');
+      const specId = sel.value;
+      if (!specId) { showToast('Bitte eine Image-Spec wählen.', 'warning'); return; }
+      const specLabel = sel.options[sel.selectedIndex]
+        ? sel.options[sel.selectedIndex].textContent
+        : 'Spec ' + specId;
+      const btn = d.querySelector('.eng-imgs-add');
+      btn.disabled = true;
+      btn.textContent = '⏳';
+      try {
+        const res = await fetch(api + '/image-specs/' + specId + '/install', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engine: eng.name }),
+        });
+        const data = await res.json();
+        if (!res.ok) { throw new Error(data.detail || res.status); }
+        if (data.status === 'ready') {
+          showToast('„' + specLabel + '“ ist auf „' + eng.name + '“ bereits installiert.', 'success');
+        } else {
+          showToast('Build auf „' + eng.name + '“ gestartet — Fortschritt in der Image-Liste.', 'success');
+        }
+        loadEngineImages(d, i);
+      } catch (err) {
+        showToast('Installation fehlgeschlagen: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '＋ Image installieren';
+      }
+    }
+
+    async function loadEngineImages(d, i) {
+      const a = engines[i];
+      d.dataset.imgsLoaded = '1';
+      const listEl = d.querySelector('.eng-imgs-list');
+      if (!a || !a.name || !a.url) { listEl.innerHTML = 'Engine unvollständig (Name + URL nötig).'; return; }
+      listEl.innerHTML = 'Lade …';
+      let images;
+      let specStatus = {};
+      try {
+        const res = await fetch(api + '/compute/engines/' + encodeURIComponent(a.name) + '/images',
+          { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) { throw new Error(data.detail || res.status); }
+        images = data.images || [];
+        specStatus = data.spec_status || {};
+      } catch (err) {
+        listEl.innerHTML = '<span class="text-red-500">Images nicht ladbar: ' + escHtml(err.message) + '</span>';
+        return;
+      }
+      updateEngineSpecOptions(d, specStatus);
+      if (!images.length) {
+        listEl.innerHTML = '<span class="text-gray-400">(keine Images auf dieser Engine)</span>';
+        return;
+      }
+      const canDelete = !!(a && a.editable);
+      listEl.innerHTML = '';
+      images.forEach(img => {
+        let status = '';
+        if (img.building) { status = '<span class="px-1.5 rounded bg-blue-50 text-blue-600">🔄 buildet</span>'; }
+        else if (img.build_failed) { status = '<span class="px-1.5 rounded bg-red-50 text-red-600">❌ build fehlgeschlagen</span>'; }
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2 py-0.5';
+        row.innerHTML =
+          '<span class="font-mono text-gray-700">' + escHtml(img.ref) + '</span>' +
+          (img.spec_name ? '<span class="text-[10px] px-1 rounded bg-indigo-50 text-indigo-600" title="Spec-Name">spec: ' + escHtml(img.spec_name) + '</span>' : '') +
+          status +
+          '<span class="text-gray-400 ml-auto">' + escHtml(img.size || '') + '</span>' +
+          (canDelete ? '<button class="eng-imgs-del text-red-500 hover:text-red-700 px-1" title="Image von der Engine löschen (macht Speicher frei)">🗑</button>' : '');
+        if (canDelete) {
+          row.querySelector('.eng-imgs-del').onclick = async () => {
+            const doDelete = async (force) => {
+              const res = await fetch(api + '/compute/engines/' + encodeURIComponent(engines[i].name) + '/images', {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ref: img.ref, force: force }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) { throw new Error(data.detail || res.status); }
+              return data;
+            };
+            if (!confirm('Image „' + img.ref + '“ von Engine „' + a.name + '“ löschen?')) { return; }
+            try {
+              let data;
+              try {
+                data = await doDelete(false);
+              } catch (err) {
+                if (!/genutzt/.test(err.message || '')) { throw err; }
+                if (!confirm('Dieses Image wird von Workspace-Container(s) genutzt.\n\nGewaltsam löschen? Die betroffenen Container werden beendet und entfernt.\nWorkspace-Dateien bleiben in ihrem Volume erhalten; die Umgebungen sind danach\nnicht mehr startbar, bis ein neues Image für die Aufgabenstellung gesetzt ist —\ndanach sind die Daten wieder verfügbar.')) { throw err; }
+                data = await doDelete(true);
+              }
+              showToast('Image gelöscht.' + (data.removed_containers ? ' (' + data.removed_containers + ' Container beendet)' : ''), 'success');
+              loadEngineImages(d, i);
+            } catch (err) {
+              showToast('Löschen fehlgeschlagen: ' + err.message, 'error');
+            }
+          };
+        }
+        listEl.appendChild(row);
+        if (img.build_log && (img.building || img.build_failed)) {
+          const pre = document.createElement('pre');
+          pre.className = 'mt-0.5 mb-1 max-h-24 overflow-y-auto bg-white border border-gray-200 rounded p-1.5 whitespace-pre-wrap text-[10px] text-gray-500';
+          pre.textContent = img.build_log;
+          listEl.appendChild(pre);
+        }
+      });
+    }
+
+    // Für die onclick-Attribute in der Engine-Sektion
+    window.refreshCourseEngineStatus = refreshCourseEngineStatus;
+    window.addCourseEngine = addCourseEngine;
+
+    loadEngines();
+  })();
+  </script>
+  <script>
+  // ─── Image-Specs (Kurs) via Shared-Modul ──────────────────────
+  (function () {
+    'use strict';
+    const api = '/api/courses/' + courseId;
+    window.TutorAIImageSpecs.init({
+      mount: document.getElementById('course-specs-section'),
+      specsUrl: api + '/image-specs',
+      title: '📦 Image-Specs (Kurs + global, global read-only)',
+      readonlyScopes: ['global'],
+      // Image-Installation/Löschung erfolgt pro Engine (in der
+      // Engine-Liste oben) → kein 📦-Button/Install-Modal an der Spec
+      installModal: false,
+    });
+  })();
   </script>
 
   <script>

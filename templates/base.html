@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   {# Browser-Chrom (insb. mobile Addressleiste) passend zur Nav (bg-blue-700) #}
   <meta name="theme-color" content="#1d4ed8">
+  <!-- Favicon (Inline-SVG — verhindert /favicon.ico-404) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
   <title>TutorAI{% block title %} - {{ page_title or "Übungsaufgaben" }}{% endblock %}</title>
 
   <!-- HTMX (BSD-3) — lokal gespiegelt -->
@@ -68,7 +70,13 @@
   <script src="{{ asset('vendor/codemirror/addon/mode/overlay.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/mode/markdown/markdown.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/mode/gfm/gfm.min.js') }}"></script>
+  <!-- Workspace-Presets: C/C++/C++, Shell, YAML, Nginx -->
+  <script src="{{ asset('vendor/codemirror/mode/clike/clike.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/shell/shell.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/yaml/yaml.min.js') }}"></script>
+  <script src="{{ asset('vendor/codemirror/mode/nginx/nginx.min.js') }}"></script>
   <script src="{{ asset('js/codemirror-mode-tutorai.js') }}"></script>
+  <script src="{{ asset('js/codemirror-mode-nasm.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/addon/edit/closebrackets.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/addon/dialog/dialog.min.js') }}"></script>
   <script src="{{ asset('vendor/codemirror/addon/search/searchcursor.min.js') }}"></script>

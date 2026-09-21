@@ -68,9 +68,10 @@
       } %}
       <span class="px-2 py-0.5 rounded text-xs font-medium
         {% if task.task_type == 'code' %}bg-orange-100 text-orange-700
+        {% elif task.task_type == 'workspace' %}bg-indigo-100 text-indigo-700
         {% else %}bg-gray-100 text-gray-600
         {% endif %}" style="align-content: center;">
-        {{ '💻 Code' if task.task_type == 'code' else '📄 Text' }}
+        {{ '💻 Code' if task.task_type == 'code' else '🐳 Workspace' if task.task_type == 'workspace' else '📄 Text' }}
       </span>
       <span class="badge px-2 py-0.5 rounded bg-gray-100 text-gray-600">
         {{ latest_points }} /  {{ task.max_points }} Punkte
@@ -223,222 +224,9 @@
             </div>
         </div>
 
-      {% if task.task_type == 'code' %}
-        <!-- ─── CODE-AUFGABE ─────────────────────────────────── -->
-        <div class="card">
-          <h2 class="font-semibold text-gray-800 mb-3 flex items-baseline gap-2">
-            Deine Lösung
-            <span id="solve-timer" class="text-sm font-mono text-blue-600 ml-auto tabular-nums">00:00</span>
-          </h2>
-
-          <!-- Code-Editor -->
-          <textarea id="code-editor"
-                    class="w-full font-mono text-sm"
-                    spellcheck="false">{{ task.code_template or '# Dein Code hier:' }}</textarea>
-
-          <!-- Buttons -->
-          <div class="flex gap-3 mt-4" style="overflow-x:scroll;scrollbar-width:none">
-            <button id="run-code-btn"
-                    class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition flex items-center gap-2">
-              <span>▶</span> Run
-              <span class="htmx-indicator text-sm">⏳</span>
-            </button>
-
-            <button id="run-tests-btn"
-                    class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2">
-              <span>▶</span> Public Tests ausführen
-              <span class="htmx-indicator text-sm">⏳</span>
-            </button>
-
-            <button id="submit-btn"
-                    class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition flex items-center gap-2">
-              <span>📤</span> Lösung einreichen
-              <span class="htmx-indicator text-sm">⏳</span>
-            </button>
-          </div>
-
-          <!-- ─── Grading Progress ──────────────────────────────── -->
-          <div id="grading-progress" class="hidden mt-3">
-            <div class="flex items-center gap-2 text-sm text-green-700">
-              <span class="animate-spin">⏳</span>
-              <span>LLM korrigiert deine Loesung...</span>
-              <span id="grading-timer" class="font-mono">0s</span>
-            </div>
-            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
-              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
-            </div>
-            <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – wende dich bei Fragen an deinen Tutor.</p>
-          </div>
-
-          <!-- ─── Console Output ──────────────────────────────────── -->
-          <div id="console-output" class="hidden mt-3">
-            <div class="bg-gray-900 text-green-400 rounded-lg p-3 font-mono text-sm">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-gray-400 text-xs">Konsolen-Ausgabe</span>
-                <button id="clear-console-btn" type="button" class="text-gray-500 hover:text-gray-300 text-xs">✕</button>
-              </div>
-              <pre id="console-text" class="whitespace-pre-wrap text-xs text-green-300 overflow-y-auto max-h-64"></pre>
-            </div>
-            <!-- ─── Plot Images ─────────────────────────────────── -->
-            <div id="plot-images" class="hidden mt-3">
-              <div class="bg-white border border-gray-200 rounded-lg p-3">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-gray-600 text-xs font-semibold">Gefertigte Plots</span>
-                </div>
-                <div id="plot-gallery" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      {% elif task.task_type == 'text' %}
-        <!-- ─── TEXTAUFGABE ─────────────────────────────────── -->
-        <div id="text-editor-container" class="card">
-          <div class="flex items-center justify-between mb-3">
-            <h2 class="font-semibold text-gray-800">Deine Lösung</h2>
-            <span id="solve-timer" class="text-sm font-mono text-blue-600 tabular-nums">00:00</span>
-          </div>
-          <textarea id="text-solution"
-                    class="w-full h-64 border border-gray-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Schreibe hier deine Lösung...&#10;&#10;Du kannst Markdown verwenden: **fett**, *kursiv*, - Listen, $Math$, $$Display-Math$$"></textarea>
-
-          <!-- Unified toolbar: Preview + LaTeX-Upload -->
-          <div id="text-editor-toolbar" class="flex items-center gap-2 mt-2">
-            <!-- Preview button injected by createMarkdownEditor (anchor: text-editor-toolbar) -->
-            <!-- Toggle buttons: Foto / Zeichnen -->
-            <div id="latex-toggle-group" class="flex items-center rounded-lg border border-gray-300 overflow-hidden">
-              <button id="latex-toggle-photo" type="button"
-                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 transition inline-flex items-center gap-1.5"
-                      title="Foto einer handgeschriebenen Formel in LaTeX umwandeln">
-                <span>📷</span> Foto
-              </button>
-              <button id="latex-toggle-draw" type="button"
-                      class="text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 border-l border-gray-300 transition inline-flex items-center gap-1.5"
-                      title="Formel zeichnen und in LaTeX umwandeln">
-                <span>✏️</span> Zeichnen
-              </button>
-            </div>
-          </div>
-
-          <!-- Latex Upload Area -->
-          <div id="latex-upload-area" class="hidden mt-3">
-
-            <!-- Photo mode -->
-            <div id="latex-photo-mode">
-              <div class="border-2 border-dashed border-indigo-300 rounded-lg p-4 text-center bg-indigo-50/50">
-                <div id="latex-drop-zone" class="cursor-pointer" onclick="document.getElementById('latex-file-input').click()">
-                  <div class="text-2xl mb-1">📸</div>
-                  <p class="text-xs text-indigo-600 font-medium">Klicke oder ziehe ein Foto herein</p>
-                  <p class="text-xs text-gray-500">PNG, JPEG, WebP — max. 10 MB</p>
-                </div>
-                <input type="file" id="latex-file-input" accept="image/png,image/jpeg,image/webp" class="hidden" />
-                <input type="file" id="latex-camera-input" accept="image/*" capture="environment" class="hidden" />
-                <button id="latex-camera-btn" type="button" class="mt-3 w-full flex items-center justify-center gap-2 text-xs bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition">
-                  <span>📷</span><span>Foto mit Kamera machen</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Draw mode -->
-            <div id="latex-draw-mode" class="hidden">
-              <div class="border-2 border-dashed border-indigo-300 rounded-lg p-3 bg-indigo-50/50">
-                <!-- Progress bar above canvas -->
-                <div id="latex-canvas-progress" class="hidden mb-2">
-                  <div class="flex items-center gap-2 text-xs text-indigo-700 mb-1">
-                    <span class="animate-spin">⏳</span>
-                    <span>LLM erkennt Formel...</span>
-                    <span id="latex-canvas-timer" class="font-mono">0s</span>
-                  </div>
-                  <div class="w-full bg-indigo-200 rounded-full h-1.5">
-                    <div id="latex-canvas-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
-                  </div>
-                </div>
-                <!-- Canvas wrapper for overlay -->
-                <div class="relative w-full">
-                  <canvas id="latex-canvas" class="w-full bg-white rounded cursor-crosshair touch-none block object-cover" style="height:40vh;object-position:center"></canvas>
-                  <div id="latex-canvas-overlay" class="hidden absolute inset-0 bg-white/60 backdrop-blur-sm rounded pointer-events-auto"></div>
-                </div>
-                <div class="flex items-center justify-between mt-2">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <button id="latex-clear-canvas-btn" type="button" class="text-xs bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-200 transition">
-                      🗑️ Löschen
-                    </button>
-                    <button id="latex-eraser-btn" type="button" class="text-xs bg-gray-200 text-gray-600 px-2.5 py-1.5 rounded-lg transition">
-                      <span id="latex-eraser-icon">🧽</span> <span id="latex-eraser-label">Radierer</span>
-                    </button>
-                    <div id="latex-stroke-width-btns" class="flex items-center gap-0.5 bg-white border border-gray-300 rounded p-0.5">
-                      <button type="button" data-width="2" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
-                        <div class="rounded-full border-2 border-gray-800" style="width:12px;height:12px"></div>
-                      </button>
-                      <button type="button" data-width="4" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded bg-indigo-600">
-                        <div class="rounded-full border-2 border-white" style="width:18px;height:18px"></div>
-                      </button>
-                      <button type="button" data-width="6" class="stroke-width-btn w-8 h-8 flex items-center justify-center rounded hover:bg-gray-100">
-                        <div class="rounded-full border-2 border-gray-800" style="width:24px;height:24px"></div>
-                      </button>
-                    </div>
-                    <div id="latex-undo-redo-btns" class="flex items-center gap-0.5 bg-white border border-gray-300 rounded p-0.5">
-                      <button id="latex-undo-btn" type="button" class="text-gray-300 w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition cursor-default" title="Undo">
-                        <
-                      </button>
-                      <div class="w-px h-5 bg-gray-300"></div>
-                      <button id="latex-redo-btn" type="button" class="text-gray-300 w-8 h-8 flex items-center justify-center rounded text-sm font-bold transition cursor-default" title="Redo">
-                        >
-                      </button>
-                    </div>
-                  </div>
-                  <button id="latex-convert-canvas-btn" type="button" class="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 transition">
-                    📋 Einfügen
-                  </button>
-                </div>
-                <div id="latex-canvas-status" class="text-xs mt-1"></div>
-              </div>
-            </div>
-
-            <!-- Preview (shared) -->
-            <div id="latex-preview-container" class="hidden mt-2">
-              <div class="flex items-center gap-3">
-                <img id="latex-preview" class="max-h-28 rounded border border-gray-200" />
-                <div class="flex-1 min-w-0">
-                  <p id="latex-file-name" class="text-xs text-gray-500 truncate"></p>
-                  <div id="latex-conversion-status" class="text-xs text-indigo-600 mt-1"></div>
-                </div>
-                <button id="latex-cancel-btn" type="button" class="text-gray-400 hover:text-gray-600 text-lg flex-shrink-0" title="Abbrechen">✕</button>
-              </div>
-              <!-- Conversion progress bar -->
-              <div id="latex-progress" class="hidden mt-2">
-                <div class="flex items-center gap-2 text-xs text-indigo-700 mb-1">
-                  <span class="animate-spin">⏳</span>
-                  <span>LLM erkennt Formel...</span>
-                  <span id="latex-timer" class="font-mono">0s</span>
-                </div>
-                <div class="w-full bg-indigo-200 rounded-full h-1.5">
-                  <div id="latex-progress-bar" class="bg-indigo-600 h-1.5 rounded-full transition-all" style="width: 10%"></div>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-          <button id="submit-btn"
-                  class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition mt-4">
-            📤 Lösung einreichen
-          </button>
-
-          <!-- ─── Grading Progress ──────────────────────────────── -->
-          <div id="grading-progress" class="hidden mt-4">
-            <div class="flex items-center gap-2 text-sm text-green-700">
-              <span class="animate-spin">⏳</span>
-              <span>LLM korrigiert deine Lösung...</span>
-              <span id="grading-timer" class="font-mono">0s</span>
-            </div>
-            <div class="mt-2 w-full bg-green-200 rounded-full h-2">
-              <div id="grading-progress-bar" class="bg-green-600 h-2 rounded-full transition-all" style="width: 10%"></div>
-            </div>
-            <p class="mt-1.5 text-xs text-amber-600">⚠️ Warnung: LLMs können Fehler machen – wende dich bei Fragen an deinen Tutor.</p>
-          </div>
-        </div>
-      {% endif %}
+      {# Solution-Area je Aufgabentyp: %}
+      {# task_solve_text.html / task_solve_code.html / task_solve_workspace.html #}
+      {% block solution_area %}{% endblock %}
 
       <!-- ─── Test Results ─────────────────────────────────── -->
       <div id="test-results" class="hidden"></div>
@@ -465,6 +253,14 @@
                 <div class="solution-container">
                   <template class="markdown-solution" type="application/json">{{ (sub.code_solution or '') | tojson }}</template>
                 </div>
+              {% elif task.task_type == 'workspace' %}
+                {% if sub.workspace_snapshot %}
+                <div class="text-sm bg-indigo-50 border border-indigo-200 text-indigo-800 rounded-lg p-3">
+                  📦 Workspace-Abgabe (Snapshot des Containers: {{ (sub.solution or 'deine Dateien') }})
+                </div>
+                {% else %}
+                <p class="text-gray-400 text-sm italic">Kein Snapshot erhalten.</p>
+                {% endif %}
               {% else %}
                 <div class="solution-container">
                   <template class="markdown-solution" type="application/json">{{ (sub.solution or '') | tojson }}</template>
@@ -523,7 +319,6 @@
 
 </div>
 {% endblock %}
-
 {% block extra_head %}
 <style>
     :root {
@@ -591,7 +386,6 @@
   @keyframes encourageFadeIn { from{opacity:0; transform:translateY(8px);} to{opacity:1; transform:translateY(0);} }
 </style>
 {% endblock %}
-
 {% block extra_scripts %}
 <script>
   // Global für den Markdown-Renderer (kursweite Querverweise ins Skript).
@@ -729,226 +523,9 @@
     {% endif %}
   })();
 
-  // ─── CodeMirror Editor ──────────────────────────────────────
-  {% if task.task_type == 'code' %}
-  const editor = CodeMirror.fromTextArea(document.getElementById('code-editor'), {
-    mode: { name: 'python', version: 3 },
-    theme: 'dracula',
-    lineNumbers: true,
-    autoCloseBrackets: true,
-    indentUnit: 4,
-    tabSize: 4,
-    lineWrapping: true,
-    matchBrackets: true,
-  });
-  window._codeEditor = editor;
-  {% endif %}
-
-  // ─── Run Code (Console Output + Plots) ─────────────────────
-  document.getElementById("run-code-btn")?.addEventListener("click", async () => {
-    const btn = document.getElementById("run-code-btn");
-    const consoleDiv = document.getElementById("console-output");
-    const consoleText = document.getElementById("console-text");
-    const plotDiv = document.getElementById("plot-images");
-    const plotGallery = document.getElementById("plot-gallery");
-
-    const code = window._codeEditor ? window._codeEditor.getValue() : "";
-    if (!code.trim()) {
-      showToast("Bitte schreibe zuerst Code.", "warning");
-      return;
-    }
-
-    btn.disabled = true;
-    consoleDiv.classList.remove("hidden");
-    plotDiv.classList.add("hidden");
-    plotGallery.innerHTML = "";
-    consoleText.textContent = "Code wird ausgefuhrt...";
-    consoleText.style.color = "#9ca3af";
-
-    try {
-      const res = await fetch("/api/student/tasks/{{ task.id }}/run-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code_solution: code }),
-        credentials: "same-origin",
-      });
-
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = { detail: "Server-Fehler — bitte versuche es erneut." };
-      }
-
-      if (!res.ok) {
-        consoleText.textContent = data.detail || "Fehler";
-        consoleText.style.color = "#f87171";
-        return;
-      }
-
-      // Zeige stdout (immer sichtbar, auch bei Fehlern)
-      let output = data.stdout || "";
-      if (data.timeout) {
-        output += "\n[TIMEOUT: Code hat die Zeitueberschreitung erreicht.]"
-      }
-      // Fuege stderr/Anhang falls vorhanden
-      if (data.stderr && data.stderr.trim()) {
-        output += "\n\n--- FEHLER ---\n" + data.stderr.trim();
-      }
-      if (!output.trim()) {
-        output = "(Keine Ausgabe)"
-      }
-
-      consoleText.textContent = output;
-      consoleText.style.color = data.stderr ? "#f87171" : "#86efac";
-
-      // Zeige Matplotlib-Bilder falls vorhanden
-      if (data.images && data.images.length > 0) {
-        plotDiv.classList.remove("hidden");
-        data.images.forEach((img, idx) => {
-          const imgEl = document.createElement("img");
-          imgEl.src = "data:image/png;base64," + img.base64;
-          imgEl.className = "max-w-full rounded-lg border border-gray-200 shadow-sm";
-          imgEl.alt = "Plot " + (idx + 1);
-          imgEl.title = "Plot " + (idx + 1) + " (Klick zum Groeanzeigen)";
-          imgEl.style.cursor = "pointer";
-          imgEl.onclick = () => {
-            const overlay = document.createElement("div");
-            overlay.className = "fixed inset-0 z-50 bg-black bg-opacity-75 flex items-center justify-center p-4";
-            overlay.onclick = () => overlay.remove();
-            const bigImg = document.createElement("img");
-            bigImg.src = imgEl.src;
-            bigImg.className = "max-w-full max-h-full rounded-lg shadow-xl";
-            overlay.appendChild(bigImg);
-            document.body.appendChild(overlay);
-          };
-          plotGallery.appendChild(imgEl);
-        });
-      }
-
-    } catch (err) {
-      consoleText.textContent = "Fehler: " + err.message;
-      consoleText.style.color = "#f87171";
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  // Clear Console Button
-  document.getElementById("clear-console-btn")?.addEventListener("click", () => {
-    document.getElementById("console-output").classList.add("hidden");
-  });
-
-  // ─── Run Public Tests (Code Tasks) ─────────────────────────
-  document.getElementById("run-tests-btn")?.addEventListener("click", async () => {
-    const btn = document.getElementById("run-tests-btn");
-    const output = document.getElementById("test-results");
-
-    const code = window._codeEditor ? window._codeEditor.getValue() : "";
-    if (!code.trim()) {
-      showToast("Bitte schreibe zuerst Code.", "warning");
-      return;
-    }
-
-    btn.disabled = true;
-    output.classList.remove("hidden");
-    output.innerHTML = '<div class="flex items-center gap-2 text-blue-600"><span class="animate-spin">⏳</span> Tests werden ausgeführt...</div>';
-
-    try {
-      const res = await fetch("/api/student/tasks/{{ task.id }}/run-tests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code_solution: code }),
-        credentials: "same-origin",
-      });
-
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = { detail: "Server-Fehler — bitte versuche es erneut." };
-      }
-
-      if (!res.ok) {
-        output.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">${data.detail || "Fehler"}</div>`;
-        return;
-      }
-
-      // Render results
-      const passed = data.tests_passed || 0;
-      const total = data.tests_total || 0;
-      const allPassed = total === 0 ? true : data.passed;
-
-      let message, borderColor, textColor;
-      if (total === 0) {
-        message = '✅ Keine Tests vorhanden — Tests bestanden';
-        borderColor = 'border-l-green-500';
-        textColor = 'text-green-700';
-      } else if (allPassed) {
-        message = '✅ Alle Tests bestanden!';
-        borderColor = 'border-l-green-500';
-        textColor = 'text-green-700';
-      } else {
-        message = '❌ Tests nicht bestanden';
-        borderColor = 'border-l-red-500';
-        textColor = 'text-red-700';
-      }
-
-      let html = `
-        <div class="card border-l-4 ${borderColor}" style="overflow-x:scroll;scrollbar-width:none">
-          <div class="flex items-center justify-between mb-3">
-            <span class="font-semibold ${textColor}">
-              ${message}
-            </span>
-            <span class="text-sm text-gray-500">${passed}/${total} Tests</span>
-          </div>
-      `;
-
-      data.test_results.forEach(t => {
-        const icon = t.passed ? '✅' : '❌';
-        const color = t.passed ? 'text-green-600' : 'text-red-600';
-        let detailHtml = '';
-        if (!t.passed && t.error) {
-          // error kann ein String oder ein Objekt {summary, full} sein
-          let summary = '';
-          let fullTraceback = '';
-          if (typeof t.error === 'object' && t.error.summary) {
-            summary = t.error.summary;
-            fullTraceback = t.error.full;
-          } else {
-            summary = t.error;
-            fullTraceback = t.error;
-          }
-          detailHtml = '<div class="ml-4 mt-1">'
-          if (fullTraceback && fullTraceback.length > summary.length) {
-            detailHtml += `<details class="mt-1"><summary class="text-xs text-red-400 cursor-pointer">Traceback anzeigen</summary><pre class="text-xs text-red-500 bg-red-50 p-2 rounded whitespace-pre-wrap font-mono mt-1">${escapeHtml(fullTraceback)}</pre></details>`;
-          }
-          detailHtml += `</div>`;
-        }
-        html += `
-          <div class="flex items-start gap-2 text-sm mb-2 ${color}">
-            <span>${icon}</span>
-            <div>
-              <span class="font-mono font-medium">${t.name}</span>
-              ${detailHtml}
-            </div>
-          </div>
-        `;
-      });
-
-      if (data.stderr && data.stderr.trim()) {
-        html += `<div class="mt-2 text-xs text-red-400 font-mono bg-red-50 p-2 rounded">Stderr: ${escapeHtml(data.stderr.trim())}</div>`;
-      }
-
-      html += `</div>`;
-      output.innerHTML = html;
-
-    } catch (err) {
-      output.innerHTML = `<div class="text-red-600 p-3 bg-red-50 rounded">Fehler: ${err.message}</div>`;
-    } finally {
-      btn.disabled = false;
-    }
-  });
+    {# Typ-spezifisches JS (Code-Editor/Run/Tests bzw. LaTeX-Upload): #}
+    {# task_solve_code.html / task_solve_text.html #}
+    {% block solve_scripts %}{% endblock %}
 
   const LLM_TIMEOUT = {{ LLM_TIMEOUT | default(120) }};
 
@@ -1627,12 +1204,19 @@
       const textEd = window._textSolutionEditor;
       body.solution = textEd ? textEd.getValue() : document.getElementById("text-solution").value;
       submittedText = body.solution;
+    {% elif task.task_type == 'workspace' %}
+      // Workspace: Lösung = Container-Snapshot (serverseitig beim Submit).
+      // sub.solution dient nur als Kurzbeschreibung für die Historie-Anzeige.
+      submittedText = window._workspaceSubmitLabel ? window._workspaceSubmitLabel() : "Workspace-Abgabe";
+      body.solution = submittedText;
     {% endif %}
 
+    {% if task.task_type != 'workspace' %}
     if (!body.solution?.trim() && !body.code_solution?.trim()) {
       showToast("Bitte trage zuerst eine Lösung ein.", "warning");
       return;
     }
+    {% endif %}
 
     btn.disabled = true;
 

@@ -1,0 +1,825 @@
+{% extends "tutor/task_detail_base.html" %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ asset('css/workspace.css') }}">
+<script src="{{ asset('js/workspace.js') }}"></script>
+{% endblock %}
+
+{% block type_section %}
+
+  <!-- ─── [2] Arbeitsumgebung: Image/Engine + Simple-Fields + Status ─── -->
+  <div id="workspace-section" data-workspace-section class="card">
+    <h2 class="font-semibold text-gray-800 mb-1">Arbeitsumgebung <span class="text-xs text-gray-400">(Docker-Workspace je Student)</span></h2>
+    {% if task and task.task_type != 'workspace' %}
+    <p class="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3">
+      ℹ️ Diese Aufgabe ist aktuell als „{{ {'text': 'Text', 'code': 'Code'}.get(task.task_type, task.task_type) }}"
+      gespeichert. Nach dem Speichern wechselt sie auf den Workspace-Typ —
+      die Umgebung unten ist bereits jetzt einrichtbar.
+    </p>
+    {% endif %}
+
+    <p class="text-xs text-gray-400 mb-3">
+      Ausführen &amp; Testen laufen über <strong>Skript-Dateien</strong> (in „Dateien &amp; Workspace“ gepflegt, immer in der Wurzel):
+      <code class="font-mono">run.sh</code> → Button „▶ Ausführen“,
+      <code class="font-mono">test.sh</code> → Button „🧪 Tests“,
+      <code class="font-mono">.test_private.sh</code> → private Grading-Tests,
+      <code class="font-mono">.run_solution.sh</code> → Button „🧪 Musterlösung testen“ (Musterlösung liegt in <code class="font-mono">.solution/</code>),
+      <code class="font-mono">init.sh</code> → einmaliger Initialisierungs-Schritt beim
+      Task-Image-Build (z.&nbsp;B. Paket-Installation, Dataset-Downloads nach <code class="font-mono">data/</code>),
+      <code class="font-mono">.init_hidden.sh</code> → private Initialisierungs-Phase (darf in 👤 schreiben).
+    </p>
+
+    <!-- Image-Spec & Compute-Engine (s. plan-compute-engines-images.md) -->
+    <div class="border border-gray-200 rounded-lg p-3 mb-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-spec-select">Image-Spec <span class="text-gray-400">(Container-Image der Aufgabe)</span></label>
+          <select id="ws-spec-select" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
+            <option value="">— noch nicht gesetzt —</option>
+          </select>
+          {% if task and task.task_type == 'workspace' and not task.workspace_image %}
+          <p class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1">⚠️ Noch kein Image (Image-Spec) gesetzt — die Aufgabe ist für Studierende erst nach der Auswahl startbar.</p>
+          {% endif %}
+          <details id="ws-spec-info" class="hidden mt-1">
+            <summary class="cursor-pointer select-none px-2 py-1 rounded bg-white border border-gray-200 text-[11px] text-gray-600 hover:bg-gray-50">📄 Dockerfile ansehen</summary>
+            <pre id="ws-spec-dockerfile" class="mt-1 text-[11px] font-mono bg-gray-900 text-gray-200 rounded-lg p-2 max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
+          </details>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-engine-select">Compute-Engine <span class="text-gray-400">(wo die Aufgabe läuft)</span></label>
+          <select id="ws-engine-select" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white">
+            <option value="">— Engine wählen (Pflicht) —</option>
+          </select>
+          <p id="ws-engine-hint" class="text-[11px] text-gray-400 mt-1">Engine-Pool der Aufgabe — Volumes sind an die Engine gebunden.</p>
+        </div>
+      </div>
+      <p class="text-[11px] text-gray-400 mt-2">
+        🗂️ Image-Specs &amp; Engines verwalten:
+        <a href="/courses/{{ course.id }}/settings#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Kurs-Einstellungen → Compute/Workspace</a>
+        {% if is_admin %} · <a href="/admin#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Admin-Konsole → Compute/Workspace</a>{% endif %}
+      </p>
+    </div>
+
+    <!-- Simple-Fields: Umgebung -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-timeout">Timeout (s) <span class="text-gray-400">(1–7200)</span></label>
+        <input type="number" id="ws-env-timeout" min="1" max="7200" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="900">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-cpu">CPU (Kerne)</label>
+        <input type="number" id="ws-env-cpu" step="0.1" min="0.1" max="32" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="2">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-memory">Speicher (RAM) <span class="text-gray-400">(GB, z. B. 4)</span></label>
+        <input type="number" id="ws-env-memory" step="0.1" min="0.1" max="64" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="4">
+      </div>
+      <div class="flex items-end pb-1.5">
+        <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer"
+               title="Internet-Zugriff für den Student-Container zur Laufzeit (der init.sh-Build hat immer Internet)">
+          <input type="checkbox" id="ws-env-internet" class="rounded text-blue-600"> 🌐 Internet (Student-Container)
+        </label>
+      </div>
+    </div>
+
+    <!-- Umgebung-Status je Engine + Sync/Init-Buttons -->
+    <div class="mt-4 pt-3 border-t border-gray-200">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <span class="text-xs font-semibold text-gray-600">
+          📦 Umgebung-Status je Engine
+          <span class="font-normal text-gray-400">(Assets → Agent · Task-Image via init.sh · Basis-Image)</span>
+        </span>
+        <div class="flex gap-2">
+          <button type="button" id="ws-init-stop-btn"
+                  class="hidden text-xs px-2.5 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition">
+            ⏹ Init abbrechen
+          </button>
+          <button type="button" id="ws-sync-btn"
+                  class="text-xs px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 transition">
+            🔄 Sync &amp; Init jetzt ausführen
+          </button>
+        </div>
+      </div>
+      <div id="ws-asset-status-list" class="mt-2 flex flex-wrap gap-2"></div>
+      <div id="ws-init-log-wrap" class="hidden mt-2">
+        <div class="text-[11px] text-gray-500 mb-1">Init-Build-Log (Tail):</div>
+        <pre id="ws-init-log" class="text-[11px] font-mono bg-gray-900 rounded-lg p-2 max-h-40 overflow-y-auto whitespace-pre-wrap"></pre>
+      </div>
+    </div>
+
+    {% if task and task.id and task.task_type == 'workspace' %}
+    <div class="flex items-center gap-3 mt-4 pt-3 border-t border-gray-200">
+      <span class="text-xs text-gray-500">📦 Download:</span>
+      <a href="/api/tasks/{{ task.id }}/package"
+         class="text-indigo-700 hover:text-indigo-900 border border-indigo-300 hover:border-indigo-500 px-3 py-1.5 rounded-lg transition text-sm"
+         title="Vollpaket: Vorlage + Skripte + data/ + .solution/ + .tests/ + docker-compose (workspace + verify) — lokal lauffähig">
+        ⬇️ Gesamtpaket
+      </a>
+      <a href="/api/tasks/{{ task.id }}/package?role=student"
+         class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-1.5 rounded-lg transition text-sm"
+         title="Studenten-Version: ohne Musterlösung und private Tests">
+        ⬇️ Studenten-Version
+      </a>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ─── [3] Dateien & Workspace (Baum + Editor) ───────────────── -->
+  <div id="workspace-files-section" data-workspace-section class="card">
+    <div class="flex items-center justify-between gap-2 mb-1">
+      <h2 class="font-semibold text-gray-800">Dateien &amp; Workspace</h2>
+    </div>
+    <p class="text-xs text-gray-400 mb-3">
+      Zugriffsklassen (im Baum markiert, per Rechtsklick auf Datei/Ordner änderbar —
+      wirkt per Erbung auf alle darunter, restriktivste Klasse gewinnt):
+      <span title="Tutor + Student dürfen schreiben">✏️</span> editierbar (Standard),
+      <span title="Student darf nur lesen; eine geteilte Kopie für alle Studenten">🔒</span> read-only,
+      <span title="Student sieht es nie; nur Tutor + Korrektur">👤</span> versteckt,
+      <span title="Ergebnisse von init.sh im Task-Image — read-only">📦</span> init.sh-Ergebnis (read-only, nur per neuem Init-Build änderbar).
+    </p>
+
+    <!-- Gemeinsamer Container: Datei-Baum (Zugriffsklassen markiert) + Editor,
+         nahtlos aneinandergesetzt (Mobile: Baum oben, Editor unten).
+         Die Toolbar ist Geschwister des Tree-Elements — workspace.js
+         räumt treeEl.innerHTML bei jedem Render auf. -->
+    <div class="flex flex-col sm:flex-row h-[540px] sm:h-[480px] border border-gray-200 rounded-lg overflow-hidden bg-white">
+      <div class="flex flex-col h-[220px] sm:h-auto sm:w-64 shrink-0 border-b sm:border-b-0 sm:border-r border-gray-200 bg-gray-50">
+        <div class="flex items-center gap-1 p-1.5 border-b border-gray-200">
+          <button type="button" id="ws-files-refresh-btn" title="Aktualisieren" class="ws-tree-btn">⟳</button>
+          <button type="button" id="ws-files-new-btn" title="Neue Datei in der Wurzel anlegen" class="ws-tree-btn">＋ 📄</button>
+          <button type="button" id="ws-files-new-folder-btn" title="Neuen Ordner in der Wurzel anlegen" class="ws-tree-btn">＋ 📁</button>
+          <button type="button" id="ws-files-upload-btn" title="Datei hochladen (Dataset / Binär)" class="ws-tree-btn">⬆</button>
+          <span id="ws-file-save-state" class="ml-auto text-[10px] text-gray-400 truncate"></span>
+        </div>
+        <div id="ws-files-tree" class="flex-1 overflow-y-auto p-2 text-sm">
+          <div class="text-gray-400 text-xs p-1">Dateien werden geladen …</div>
+        </div>
+      </div>
+
+      <!-- Editor (CodeMirror, nahtlos — Name/Zugriffs-Klasse stehen im Dateibaum,
+           Speichern läuft automatisch, Löschen über Kontextmenü) -->
+      <div class="flex-1 min-h-0">
+        <div class="ws-editor w-full h-full min-h-0">
+          <textarea id="ws-file-editor" class="w-full h-full font-mono text-sm" spellcheck="false"
+                    placeholder="Datei links auswählen, um sie zu bearbeiten …"></textarea>
+        </div>
+      </div>
+    </div>
+    <input type="file" id="ws-files-upload-input" class="hidden">
+
+    <!-- Musterlösung-Testlauf: Button direkt über der Konsolen-Ausgabe -->
+    <div class="mt-3">
+      <button type="button" id="ws-test-solution-btn"
+              class="text-xs px-2.5 py-1 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50 transition"
+              title="Ephemere Umgebung: legt die Musterlösung aus .solution/ über die editierbaren Dateien und führt .run_solution.sh aus (öffentliche + private Tests)">
+        🧪 Musterlösung testen
+      </button>
+    </div>
+
+    <!-- ─── Musterlösung-Testlauf (Live-Log, ephemer) ─────────── -->
+    <div id="ws-test-run-terminal" class="hidden mt-3">
+      <div class="bg-gray-900 rounded-lg p-3 font-mono">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-gray-400 text-xs">Musterlösung-Testlauf (frische Umgebung — Musterlösung + öffentliche/private Tests)</span>
+          <div class="flex items-center gap-3">
+            <span id="ws-test-run-duration" class="text-gray-400 text-xs"></span>
+            <button id="ws-test-run-stop-btn" type="button"
+                    class="hidden text-red-400 hover:text-red-300 text-xs">⏹ Stoppen</button>
+          </div>
+        </div>
+        <pre id="ws-test-run-terminal-text" class="whitespace-pre-wrap text-xs text-green-300 overflow-y-auto max-h-80"></pre>
+      </div>
+    </div>
+  </div>
+
+{% endblock %}
+
+{% block type_scripts %}
+  // ══════════════════════════════════════════════════════════════
+  // Workspace-Typ: Umgebungsfelder, Engine/Image-Dropdowns,
+  // Status je Engine, Datei-Baum + Editor
+  // ══════════════════════════════════════════════════════════════
+  const WS_TASK_ID = {{ task.id if task else "null" }};
+  const WS_ASSETS_INIT = {{ (task.workspace_assets_status or "") | tojson }};
+  const WS_ENGINES_INIT = {{ (task.workspace_engines if task else []) | tojson }};
+  const WS_IMAGE_INIT = {{ ((task.workspace_image if task else None) or "") | tojson }};
+  const WS_TIMEOUT_INIT = {{ (task.workspace_timeout if task else None) | tojson }};
+  const WS_CPU_INIT = {{ (task.workspace_cpu if task else None) | tojson }};
+  const WS_MEMORY_INIT = {{ (task.workspace_memory if task else None) | tojson }};
+  const WS_INTERNET_INIT = {{ (task.workspace_internet if task else false) | tojson }};
+  const WS_MAIN_FILE_INIT = {{ ((task.workspace_main_file if task else None) or "") | tojson }};
+  const WS_TUTOR_FILES_API = WS_TASK_ID ? "/api/tasks/" + WS_TASK_ID + "/workspace" : null;
+
+  // ─── Umgebung (Simple-Fields) ─────────────────────────────────
+  // (Main-Datei: nur noch per ⭐ im Datei-Baum — State lebt in wsUI)
+  const wsTimeoutInput = document.getElementById("ws-env-timeout");
+  const wsCpuInput = document.getElementById("ws-env-cpu");
+  const wsMemoryInput = document.getElementById("ws-env-memory");
+  const wsInternetChk = document.getElementById("ws-env-internet");
+
+  // Speicher: DB/LLM liefern „4g“-Strings → UI zeigt eine GB-Zahl
+  function wsMemToGb(v) {
+    const s = String(v == null ? "" : v).trim().toLowerCase();
+    const n = parseFloat(s);
+    if (!isFinite(n)) return "";
+    let gb = n;
+    if (s.endsWith("m")) gb = n / 1000;
+    else if (s.endsWith("k")) gb = n / 1e6;
+    else if (s.endsWith("b")) gb = n / 1e9;
+    return String(Math.round(gb * 10) / 10);
+  }
+
+  (function initWsEnv() {
+    if (WS_TIMEOUT_INIT != null) wsTimeoutInput.value = WS_TIMEOUT_INIT;
+    if (WS_CPU_INIT != null) wsCpuInput.value = WS_CPU_INIT;
+    if (WS_MEMORY_INIT != null) wsMemoryInput.value = wsMemToGb(WS_MEMORY_INIT);
+    wsInternetChk.checked = !!WS_INTERNET_INIT;
+  })();
+
+  // Save-Hook: task_detail_base.html nimmt diese Felder in den Save-Body auf.
+  // Leere Werte werden übersprungen (bleibt beim gespeicherten Wert).
+  window._workspaceEnvFields = function () {
+    const out = {};
+    const t = parseInt(wsTimeoutInput.value, 10);
+    if (t > 0) out.workspace_timeout = t;
+    const c = parseFloat(wsCpuInput.value);
+    if (c > 0) out.workspace_cpu = c;
+    const memGb = parseFloat(wsMemoryInput.value);
+    if (memGb > 0) out.workspace_memory = memGb + "g";
+    out.workspace_internet = wsInternetChk.checked;
+    out.workspace_main_file = wsUI.getMainFile() || null;
+    return out;
+  };
+
+  // ─── Image-Spec & Compute-Engine (Dropdowns) ────────────────
+  const wsEngineSel = document.getElementById("ws-engine-select");
+  const wsSpecSel = document.getElementById("ws-spec-select");
+  const wsSpecInfoEl = document.getElementById("ws-spec-info");
+  const wsSpecDfEl = document.getElementById("ws-spec-dockerfile");
+  const wsEngineHintEl = document.getElementById("ws-engine-hint");
+  let WS_SPECS = [];    // [{id, scope, name, base, dockerfile}]
+  let WS_ENGINES = [];  // [{name, healthy, gpu, gpu_info, scope, …}]
+  let WS_INSTALLED = null; // Set(Engine-Namen) mit gewählter Spec installiert; null = kein Filter
+  let wsEngineRefreshP = Promise.resolve();
+
+  function wsEngineLabel(a) {
+    return (a.healthy ? "🟢" : "🔴") + " " + a.name +
+      (a.gpu_info ? " · " + a.gpu_info : (a.gpu ? " · GPU" : "")) +
+      (a.healthy ? "" : " (offline)");
+  }
+
+  // Engine-Optionen rendern (gefiltert auf Engines mit installiertem Image)
+  function wsRenderEngineOptions() {
+    const current = wsEngineSel.value;
+    wsEngineSel.innerHTML = '<option value="">— Engine wählen (Pflicht) —</option>';
+    let candidates = WS_ENGINES;
+    if (WS_INSTALLED) {
+      candidates = WS_ENGINES.filter(a => WS_INSTALLED.has(a.name));
+      if (!candidates.length) {
+        // Nur die 📭-Option anzeigen (disabled → value bleibt "" → Save-Hook liefert [])
+        wsEngineSel.innerHTML = "";
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.disabled = true;
+        opt.selected = true;
+        opt.textContent = "📭 Image wurde noch auf keiner Engine installiert";
+        wsEngineSel.appendChild(opt);
+        wsEngineHintEl.textContent =
+          "Bitte das Image zuerst auf einer Engine installieren (Kurs-Einstellungen oder Admin-Konsole → Compute/Workspace).";
+        return;
+      }
+    }
+    candidates.forEach(a => {
+      const opt = document.createElement("option");
+      opt.value = a.name;
+      opt.textContent = wsEngineLabel(a);
+      wsEngineSel.appendChild(opt);
+    });
+    // Gespeicherte Auswahl beibehalten, falls noch verfügbar
+    const initEng = (WS_ENGINES_INIT && WS_ENGINES_INIT.length) ? String(WS_ENGINES_INIT[0]) : "";
+    const wanted = candidates.some(a => a.name === current) ? current
+                 : (candidates.some(a => a.name === initEng) ? initEng : "");
+    if (wanted) wsEngineSel.value = wanted;
+    wsEngineHintEl.textContent = WS_INSTALLED
+      ? "Nur Engines mit installiertem Image der gewählten Spec · GPU wird automatisch erkannt."
+      : "Alle Engines verfügbar · GPU wird automatisch erkannt.";
+  }
+
+  async function wsLoadEngines() {
+    try {
+      const res = await fetch("/api/courses/" + courseId + "/compute/engines", { credentials: "same-origin" });
+      if (!res.ok) { return; }
+      const data = await res.json();
+      WS_ENGINES = data.agents || [];
+      wsRenderEngineOptions();
+    } catch (e) { /* Engine-Liste bleibt leer (degradiert) */ }
+  }
+
+  // Prüft, auf welchen Engines die gewählte Spec installiert ist
+  // (spec_status; Fallback: images[].spec_name).
+  // Offline Engines können nicht verifiziert werden → fallen im Filter-Fall weg.
+  function wsRefreshInstalled() {
+    wsEngineRefreshP = (async () => {
+      const spec = WS_SPECS.find(x => x.name === wsSpecSel.value);
+      if (!spec) { WS_INSTALLED = null; wsRenderEngineOptions(); return; }
+      const results = await Promise.all(WS_ENGINES.map(async (a) => {
+        try {
+          const res = await fetch(
+            "/api/courses/" + courseId + "/compute/engines/" + encodeURIComponent(a.name) + "/images",
+            { credentials: "same-origin" });
+          if (!res.ok) throw new Error(res.status);
+          const data = await res.json();
+          const st = (data.spec_status || {})[String(spec.id)];
+          if (st) return { name: a.name, installed: !!st.installed, ok: true };
+          // Fallback: spec_status leer (z. B. Agent ohne Support) → Image-Liste vergleichen
+          return { name: a.name, installed: (data.images || []).some(i => i.spec_name === spec.name), ok: true };
+        } catch (e) {
+          return { name: a.name, installed: false, ok: false }; // offline/unverfügbar
+        }
+      }));
+      WS_INSTALLED = new Set(results.filter(r => r.ok && r.installed).map(r => r.name));
+      wsRenderEngineOptions();
+    })();
+    return wsEngineRefreshP;
+  }
+
+  async function wsLoadSpecs(selectName) {
+    try {
+      const res = await fetch("/api/courses/" + courseId + "/image-specs", { credentials: "same-origin" });
+      if (!res.ok) { return; }
+      const data = await res.json();
+      WS_SPECS = data.specs || [];
+      const current = selectName != null ? selectName : wsSpecSel.value;
+      wsSpecSel.innerHTML = '<option value="">— noch nicht gesetzt —</option>';
+      WS_SPECS.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s.name;
+        const scope = s.scope !== "global" ? "" : " (global)";
+        opt.textContent = s.name + scope;
+        wsSpecSel.appendChild(opt);
+      });
+      if (current && Array.from(wsSpecSel.options).some(o => o.value === current)) {
+        wsSpecSel.value = current;
+      }
+      wsUpdateSpecInfo();
+      wsRefreshInstalled();
+    } catch (e) { /* Spec-Liste bleibt leer (degradiert) */ }
+  }
+
+  function wsUpdateSpecInfo() {
+    const s = WS_SPECS.find(x => x.name === wsSpecSel.value);
+    if (!s || !wsSpecSel.value) {
+      wsSpecInfoEl.classList.add("hidden");
+      return;
+    }
+    wsSpecDfEl.textContent = s.dockerfile || "(kein Dockerfile)";
+    wsSpecInfoEl.classList.remove("hidden");
+  }
+  wsSpecSel.addEventListener("change", () => {
+    wsUpdateSpecInfo();
+    wsRefreshInstalled();
+  });
+
+  // Save-Hooks (task_detail_base.html liest diese bei task_type=workspace)
+  window._workspaceEngineNames = function () {
+    return wsEngineSel.value ? [wsEngineSel.value] : [];
+  };
+  window._workspaceImageName = function () {
+    return wsSpecSel.value || null;
+  };
+
+  // Init: zuerst Engines, dann Specs (der Engine-Filter hängt an beidem)
+  wsLoadEngines().then(() => wsLoadSpecs(WS_IMAGE_INIT || null));
+
+  // ─── Umgebung-Status je Engine (Assets/Task-Image/IMAGE) ──────
+  // Format: {agent_url: {assets, task_image, image, error?}}
+  function wsChip(label, val) {
+    let icon = "❓", cls = "bg-gray-50 border-gray-200 text-gray-500";
+    if (val === "ready") { icon = "✅"; cls = "bg-green-50 border-green-200 text-green-700"; }
+    else if (val === "pending") { icon = "⏳"; cls = "bg-amber-50 border-amber-200 text-amber-700"; }
+    else if (val === "building") { icon = "🏗"; cls = "bg-amber-50 border-amber-200 text-amber-700"; }
+    else if (val === "failed") { icon = "❌"; cls = "bg-red-50 border-red-200 text-red-700"; }
+    else if (val === "none" || val === "skipped") { icon = "·"; cls = "bg-gray-50 border-gray-200 text-gray-400"; }
+    return '<span class="text-[11px] px-1.5 py-0.5 rounded border ' + cls + '">' + icon + " " + label + "</span>";
+  }
+
+  // Rendert die Status-Chips; liefert true, solange noch „pending" ist.
+  function wsRenderAssetStatus(jsonStr) {
+    const list = document.getElementById("ws-asset-status-list");
+    let status = null;
+    if (jsonStr) {
+      try { status = JSON.parse(jsonStr); } catch (e) { status = null; }
+    }
+    if (!status || Object.keys(status).length === 0) {
+      list.innerHTML = '<span class="text-[11px] text-gray-400">(noch kein Status — nach dem Speichern mit „🔄 Sync &amp; Init" auffüllen)</span>';
+      return false;
+    }
+    list.innerHTML = "";
+    let pending = false;
+    Object.entries(status).forEach(([url, st]) => {
+      const name = url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+      const stObj = (typeof st === "object" && st) ? st
+                   : { assets: st, task_image: null, image: null };
+      const wrap = document.createElement("div");
+      wrap.className = "flex items-center gap-1.5 flex-wrap border border-gray-200 rounded-lg px-2 py-1 bg-white";
+      wrap.innerHTML = '<span class="text-xs font-medium text-gray-700">' + escapeHtml(name) + "</span>" +
+        wsChip("Assets", stObj.assets) +
+        wsChip("Task-Image", stObj.task_image) +
+        wsChip("Image", stObj.image);
+      if (stObj.error) wrap.title = stObj.error;
+      if (JSON.stringify(stObj).includes("pending")) pending = true;
+      list.appendChild(wrap);
+    });
+    return pending;
+  }
+
+  // Init-Log bleibt nach dem Build sichtbar (fertig = grau) und wird erst
+  // bei einem neuen Build zurückgesetzt — sonst "verschwindet" es sofort.
+  const wsInitLog = { text: "", building: false };
+
+  function wsRenderInitLog(state, log) {
+    const wrap = document.getElementById("ws-init-log-wrap");
+    const pre = document.getElementById("ws-init-log");
+    if (state === "building") {
+      if (!wsInitLog.building) wsInitLog.text = "";  // neuer Build → Log klar
+      wsInitLog.building = true;
+      if (log) wsInitLog.text = log;
+      pre.style.color = "#fcd34d";
+      pre.textContent = wsInitLog.text || "(noch keine Ausgabe)";
+    } else {
+      wsInitLog.building = false;
+      if (state === "failed") {
+        wsInitLog.text = "❌ " + (log || "Init fehlgeschlagen");
+        pre.style.color = "#f87171";
+      } else if (state === "ready" && log) {
+        wsInitLog.text = log;
+        pre.style.color = "#86efac";
+      } else if (wsInitLog.text) {
+        pre.style.color = "#9ca3af";  // fertig ohne Tail: letzten Text behalten
+      }
+    }
+    if (wsInitLog.text) {
+      wrap.classList.remove("hidden");
+      pre.textContent = wsInitLog.text;
+      pre.scrollTop = pre.scrollHeight;
+    } else {
+      wrap.classList.add("hidden");
+    }
+    const stopBtn = document.getElementById("ws-init-stop-btn");
+    if (stopBtn) stopBtn.classList.toggle("hidden", state !== "building");
+  }
+
+  let wsPollTimer = null;
+  let wsPollTries = 0;
+  let wsPrevInit = null;  // letzter Init-Status (für den Baum-Refresh)
+  async function wsPollTick() {
+    if (!WS_TASK_ID) { wsStopPolling(); return; }
+    wsPollTries++;
+    let assetsPending = false;
+    let building = false;
+    try {
+      const r = await fetch("/api/tasks/" + WS_TASK_ID, { credentials: "same-origin" });
+      const task = await r.json();
+      assetsPending = wsRenderAssetStatus(task.workspace_assets_status || "");
+    } catch (e) { /* weiter pollen */ }
+    let log = "";
+    let initState = "none";
+    try {
+      const r = await fetch(WS_TUTOR_FILES_API + "/init-status", { credentials: "same-origin" });
+      const data = await r.json();
+      const b = (data.agents || []).find(a => a.status === "building");
+      const f = (data.agents || []).find(a => a.status === "failed");
+      const rdy = (data.agents || []).find(a => a.status === "ready");
+      if (b) { initState = "building"; log = b.log_tail || ""; }
+      else if (f) { initState = "failed"; log = f.error || ""; }
+      else if (rdy) { initState = "ready"; log = rdy.log_tail || ""; }
+      building = (initState === "building");
+      wsRenderInitLog(initState, log);
+      // Init-Build gerade beendet (building → ready/failed/none) ODER der
+      // erste Check zeigt schon „ready" (schneller Build) → [init]-Einträge
+      // können neu/geändert sein → Datei-Baum aktualisieren (sonst erst
+      // nach einem Seite-Reload).
+      if ((wsPrevInit === "building" &&
+           (initState === "ready" || initState === "failed" ||
+            initState === "none")) ||
+          (wsPrevInit === null && initState === "ready")) {
+        wsUI.refresh();
+      }
+      wsPrevInit = initState;
+    } catch (e) { /* Agent kurz down — weiter pollen */ }
+    if ((!assetsPending && !building) || wsPollTries >= 120) {
+      wsStopPolling();
+      const syncBtn = document.getElementById("ws-sync-btn");
+      if (syncBtn) { syncBtn.disabled = false; syncBtn.textContent = "🔄 Sync & Init jetzt ausführen"; }
+    }
+  }
+  function wsStopPolling() {
+    if (wsPollTimer) { clearInterval(wsPollTimer); wsPollTimer = null; }
+  }
+  function wsStartPolling() {
+    if (!WS_TASK_ID) return;
+    if (wsPollTimer) { wsPollTick(); return; }
+    wsPollTries = 0;
+    wsPollTimer = setInterval(wsPollTick, 3000);
+    wsPollTick();
+  }
+
+  // Init-Status am Seitenanfang: Status-Chips rendern; bei pending/building pollen.
+  wsRenderAssetStatus(WS_ASSETS_INIT);
+  if (WS_ASSETS_INIT && /"pending"|"building"/.test(WS_ASSETS_INIT)) {
+    wsStartPolling();
+  }
+
+  document.getElementById("ws-sync-btn").addEventListener("click", async () => {
+    if (!WS_TASK_ID) {
+      showToast("Erst die Aufgabe erstellen (speichern), dann Sync/Init ausführen.", "warning");
+      return;
+    }
+    const btn = document.getElementById("ws-sync-btn");
+    btn.disabled = true;
+    btn.textContent = "⏳ Sync & Init läuft …";
+    try {
+      const res = await fetch(WS_TUTOR_FILES_API + "/sync", { method: "POST", credentials: "same-origin" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      wsStartPolling();
+    } catch (err) {
+      showToast("Sync fehlgeschlagen: " + err.message, "error");
+      btn.disabled = false;
+      btn.textContent = "🔄 Sync & Init jetzt ausführen";
+    }
+  });
+
+  document.getElementById("ws-init-stop-btn").addEventListener("click", async () => {
+    if (!confirm("Init-Build abbrechen? (Halb-fertige Init-Daten werden bereinigt.)")) return;
+    try {
+      const res = await fetch(WS_TUTOR_FILES_API + "/init/stop", { method: "POST", credentials: "same-origin" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      showToast("Abbruch angefordert — der Status aktualisiert sich in wenigen Sekunden.", "success");
+      wsStartPolling();
+    } catch (err) {
+      showToast("Abbruch fehlgeschlagen: " + err.message, "error");
+    }
+  });
+
+  // ─── Musterlösung-Testlauf (ephemer, Live-Log) ────────────────
+  const wsTestRun = { active: null };
+
+  function wsTestRunSetEnabled(enabled) {
+    const btn = document.getElementById("ws-test-solution-btn");
+    if (btn) btn.disabled = !enabled;
+  }
+
+  async function wsTestRunStart() {
+    if (wsTestRun.active) return;
+    if (!WS_TASK_ID) {
+      showToast("Erst die Aufgabe erstellen (speichern), dann die Musterlösung testen.", "warning");
+      return;
+    }
+    const stopBtn = document.getElementById("ws-test-run-stop-btn");
+    const terminal = document.getElementById("ws-test-run-terminal");
+    const termText = document.getElementById("ws-test-run-terminal-text");
+    wsTestRunSetEnabled(false);
+    stopBtn.classList.add("hidden");
+    terminal.classList.remove("hidden");
+    termText.textContent = "Testlauf wird gestartet (frische ephemere Umgebung) …";
+    termText.style.color = "#9ca3af";
+    try {
+      const res = await fetch(WS_TUTOR_FILES_API + "/test-run", {
+        method: "POST", credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      wsTestRun.active = { runId: data.run_id, startedAt: Date.now() };
+      stopBtn.classList.remove("hidden");
+      wsTestRunPoll();
+    } catch (err) {
+      termText.textContent = "Fehler: " + err.message;
+      termText.style.color = "#f87171";
+      wsTestRunSetEnabled(true);
+    }
+  }
+
+  function wsTestRunPoll() {
+    const active = wsTestRun.active;
+    if (!active) return;
+    const runId = active.runId;
+    (async () => {
+      try {
+        const res = await fetch(WS_TUTOR_FILES_API + "/test-runs/" + runId, { credentials: "same-origin" });
+        const st = await res.json();
+        if (!res.ok) throw new Error(st.detail || res.status);
+        const norm = (v) => Array.isArray(v) ? v.join("\n") : String(v || "");
+        const out = norm(st.stdout);
+        const err = norm(st.stderr);
+        const combined = [out, err].filter(Boolean).join("\n");
+        const termText = document.getElementById("ws-test-run-terminal-text");
+        if (st.status === "running" || st.status === "queued") {
+          const s = Math.floor((Date.now() - active.startedAt) / 1000);
+          const mm = String(Math.floor(s / 60)).padStart(2, "0");
+          const ss = String(s % 60).padStart(2, "0");
+          document.getElementById("ws-test-run-duration").textContent =
+            (st.status === "queued") ? "⏳ wartet auf Start (GPU-Queue) …" : "⏳ läuft seit " + mm + ":" + ss;
+          termText.textContent = combined || "⏳ Läuft … (noch keine Ausgabe)";
+          termText.style.color = combined ? "#86efac" : "#9ca3af";
+          if (combined) termText.scrollTop = termText.scrollHeight;
+          wsTestRun.active.timer = setTimeout(wsTestRunPoll, 2500);
+        } else {
+          wsTestRunFinish({
+            status: st.status,
+            exit_code: st.exit_code,
+            stdout: st.stdout,
+            stderr: st.stderr,
+            timed_out: st.status === "timeout",
+          });
+        }
+      } catch (err) {
+        // Agent kurz down? Weiter pollen (Backend fällt auf DB zurück).
+        wsTestRun.active.timer = setTimeout(wsTestRunPoll, 5000);
+      }
+    })();
+  }
+
+  function wsTestRunFinish(data) {
+    const active = wsTestRun.active;
+    wsTestRun.active = null;
+    if (active && active.timer) clearTimeout(active.timer);
+    document.getElementById("ws-test-run-stop-btn").classList.add("hidden");
+    wsTestRunSetEnabled(true);
+    const termText = document.getElementById("ws-test-run-terminal-text");
+    const durationEl = document.getElementById("ws-test-run-duration");
+    let output = "";
+    if (data.stdout && String(data.stdout).trim()) output += String(data.stdout);
+    if (data.stderr && String(data.stderr).trim()) {
+      if (output) output += "\n\n";
+      output += "--- FEHLER ---\n" + data.stderr.trim();
+    }
+    if (!output.trim()) output = "(Keine Ausgabe)";
+    if (data.timed_out || data.status === "timeout") {
+      output += "\n\n[⏰ TIMEOUT: Zeitlimit erreicht]";
+    }
+    termText.textContent = output;
+    const failed = (data.exit_code != null && data.exit_code !== 0) || data.timed_out;
+    termText.style.color = failed ? "#f87171" : "#86efac";
+    termText.scrollTop = termText.scrollHeight;
+    const s = active ? Math.floor((Date.now() - active.startedAt) / 1000) : 0;
+    durationEl.textContent = "⏱ " + s + " s · Exit-Code: " + (data.exit_code != null ? data.exit_code : "—");
+  }
+
+  async function wsTestRunStop() {
+    if (!wsTestRun.active) return;
+    const runId = wsTestRun.active.runId;
+    try {
+      const res = await fetch(WS_TUTOR_FILES_API + "/test-runs/" + runId + "/stop", {
+        method: "POST", credentials: "same-origin",
+      });
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json();
+        showToast("Stoppen fehlgeschlagen: " + (data.detail || res.status), "error");
+      }
+    } catch (err) {
+      showToast("Stoppen fehlgeschlagen: " + err.message, "error");
+    }
+  }
+
+  document.getElementById("ws-test-solution-btn").addEventListener("click", wsTestRunStart);
+  document.getElementById("ws-test-run-stop-btn").addEventListener("click", wsTestRunStop);
+
+  // ─── Datei-Baum + Editor (gemeinsame Komponente workspace.js) ──
+  const wsUI = WorkspaceUI.init({
+    treeEl: document.getElementById("ws-files-tree"),
+    editorEl: document.getElementById("ws-file-editor"),
+    apiBase: WS_TUTOR_FILES_API,
+    mainFile: WS_MAIN_FILE_INIT || "",
+    allowMain: true,
+    // Der Tutor/Prof bearbeitet alle Bereiche (Zugriffsklassen bestimmen
+    // nur die Sichtbarkeit für Studenten). Einzige Ausnahme: die
+    // init.sh/.init_hidden.sh-Ergebnisse (📦, am realen Pfad markiert)
+    // sind read-only — sie entstehen nur per neuem Init-Build.
+    readOnlyCheck: (p) => wsUI.isInitPath(p),
+    canCreate: true,
+    canDelete: true,
+    canMove: true,
+    allowBulk: true,
+    canReorder: true,
+    canSetAccess: true,
+    folderMove: true,
+    saveStateEl: document.getElementById("ws-file-save-state"),
+    emptyMsg: "(noch keine Dateien — mit „＋ 📄“, „＋ 📁“ oder „⬆“ in der Tree-Toolbar beginnen)",
+    noTaskMsg: "Erst die Aufgabe erstellen (speichern) — danach können Dateien hier gepflegt werden.",
+    moveGate: (src, dst) => {
+      if (wsUI.isInitPath(src) || wsUI.isInitPath(dst))
+        return { ok: false, reason: "init.sh-Ergebnisse sind read-only (per neuem Init-Build änderbar)." };
+      const systemScripts = ["run.sh", "init.sh", "test.sh",
+                             ".init_hidden.sh", ".test_private.sh", ".run_solution.sh"];
+      if (systemScripts.includes(src))
+        return { ok: false, reason: src + " ist ein System-Skript und muss in der Wurzel bleiben." };
+      return { ok: true };
+    },
+  });
+
+  document.getElementById("ws-files-refresh-btn").addEventListener("click", () => wsUI.refresh());
+
+  // Datei-/Ordner-Buttons legen in der Wurzel an; für Unterverzeichnisse
+  // (z. B. .tests/) per Kontextmenü auf der Ordner-Zeile.
+  document.getElementById("ws-files-new-btn").addEventListener("click", () => {
+    if (!WS_TASK_ID) {
+      showToast("Erst die Aufgabe speichern.", "warning");
+      return;
+    }
+    wsUI.newFileIn("");
+  });
+
+  document.getElementById("ws-files-new-folder-btn").addEventListener("click", () => {
+    if (!WS_TASK_ID) {
+      showToast("Erst die Aufgabe speichern.", "warning");
+      return;
+    }
+    wsUI.newFolderIn("");
+  });
+
+  document.getElementById("ws-files-upload-btn").addEventListener("click", () => {
+    if (!WS_TASK_ID) {
+      showToast("Erst die Aufgabe speichern.", "warning");
+      return;
+    }
+    document.getElementById("ws-files-upload-input").click();
+  });
+  document.getElementById("ws-files-upload-input").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const defaultPath = "data/" + file.name;
+    const path = prompt("Zielpfad für den Upload (Vorschlag: " + defaultPath + ")", defaultPath);
+    if (!path || !path.trim()) return;
+    await wsUI.uploadFile(file, path.trim());
+  });
+
+  // ─── LLM-Generierung: Hooks für die AI-Box im Base-Template ───
+  // (task_detail_base.html ruft window._workspaceAiApply(data) auf,
+  //  wenn die Workspace-Checkboxen aktiv waren.)
+  window._workspaceAiApply = function (data) {
+    const applied = [];
+    // Umgebungsfelder (flache Keys aus der LLM-Antwort)
+    const envKeys = ["workspace_timeout", "workspace_cpu", "workspace_memory",
+                     "workspace_internet", "workspace_main_file"];
+    if (envKeys.some(k => data[k] !== undefined)) {
+      if (data.workspace_timeout != null) wsTimeoutInput.value = data.workspace_timeout;
+      if (data.workspace_cpu != null) wsCpuInput.value = data.workspace_cpu;
+      if (data.workspace_memory != null) wsMemoryInput.value = wsMemToGb(data.workspace_memory);
+      if (data.workspace_internet !== undefined) wsInternetChk.checked = !!data.workspace_internet;
+      if (data.workspace_main_file !== undefined) wsUI.setMainFile(data.workspace_main_file || "");
+      applied.push("Umgebung");
+    }
+    // Engine + Image-Spec (LLM wählt aus registrierten Engines/Specs)
+    // Erst die Spec setzen (triggert das asynchrone Re-Filtern der Engine-Optionen),
+    // dann die Engine — sonst würde die Engine gegen den alten Filter geprüft.
+    let specChanged = false;
+    if (data.workspace_image !== undefined) {
+      const newImage = data.workspace_image || "";
+      if (newImage && Array.from(wsSpecSel.options).some(o => o.value === newImage)) {
+        wsSpecSel.value = newImage;
+        applied.push("Image-Spec");
+        specChanged = true;
+      } else if (!newImage) {
+        wsSpecSel.value = "";
+        specChanged = true;
+      }
+      if (specChanged) {
+        wsUpdateSpecInfo();
+        wsRefreshInstalled();
+      }
+    }
+    if (data.workspace_engines !== undefined) {
+      const eng = (data.workspace_engines || [])[0];
+      const tryApplyEngine = () => {
+        if (eng && Array.from(wsEngineSel.options).some(o => o.value === eng)) {
+          wsEngineSel.value = eng;
+          return true;
+        }
+        return false;
+      };
+      if (tryApplyEngine()) {
+        applied.push("Engine");
+      } else if (eng && specChanged) {
+        // Engine-Optionen werden gerade neu gefiltert → nach Abschluss erneut versuchen
+        wsEngineRefreshP.then(tryApplyEngine);
+      }
+    }
+    // Neuartige Image-Spec vorgeschlagen (keine passende vorhanden) — Specs
+    // werden in den Einstellungen (Kurs/Admin → Compute/Workspace) angelegt.
+    if (data.proposed_image_spec && data.proposed_image_spec.dockerfile) {
+      showToast("Das LLM hat eine neue Image-Spec („" + (data.proposed_image_spec.name || "ohne Name") +
+        "“) vorgeschlagen — bitte in den Einstellungen → Compute/Workspace anlegen.", "warning");
+    }
+    if (data.workspace_files && data.workspace_files.length) {
+      wsUI.refresh();
+      applied.push(data.workspace_files.length + " Dateien");
+    }
+    return applied;
+  };
+
+  // Init
+  wsUI.refresh();
+{% endblock %}

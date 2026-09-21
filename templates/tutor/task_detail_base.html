@@ -77,13 +77,21 @@
           <input type="checkbox" id="field-solution" checked class="rounded text-purple-600">
           Musterlösung
         </label>
-        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if not task or task.task_type != 'code' %}hidden{% endif %}">
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if tpl_type != 'code' %}hidden{% endif %}">
           <input type="checkbox" id="field-template" checked class="rounded text-purple-600">
           Code-Vorlage
         </label>
-        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if not task or task.task_type != 'code' %}hidden{% endif %}">
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-code-field {% if tpl_type != 'code' %}hidden{% endif %}">
           <input type="checkbox" id="field-tests" checked class="rounded text-purple-600">
           Tests (Public + Private)
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-workspace-field {% if tpl_type != 'workspace' %}hidden{% endif %}">
+          <input type="checkbox" id="field-ws-env" checked class="rounded text-purple-600">
+          Umgebung (Timeout, Limits, Internet, Artefakte)
+        </label>
+        <label class="flex items-center gap-1.5 text-sm text-gray-800 cursor-pointer ai-workspace-field {% if tpl_type != 'workspace' %}hidden{% endif %}">
+          <input type="checkbox" id="field-ws-files" checked class="rounded text-purple-600">
+          Dateien (Starter, Skripte, Tests, Lösung)
         </label>
       </div>
 
@@ -141,8 +149,9 @@
           </label>
           <select name="task_type" required id="task_type_select"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500">
-            <option value="text" {% if task and task.task_type == 'text' %}selected{% endif %}>Textaufgabe</option>
-            <option value="code" {% if task and task.task_type == 'code' %}selected{% endif %}>Codeaufgabe</option>
+            <option value="text" {% if tpl_type == 'text' %}selected{% endif %}>Textaufgabe</option>
+            <option value="code" {% if tpl_type == 'code' %}selected{% endif %}>Codeaufgabe</option>
+            <option value="workspace" {% if tpl_type == 'workspace' %}selected{% endif %}>Workspace-Aufgabe (Container)</option>
           </select>
         </div>
       </div>
@@ -205,24 +214,10 @@
       </div>
     </div>
 
-    <!-- ─── Code Template (for Code tasks) ─────────────────────── -->
-    <div id="code-section" class="card {% if not task or task.task_type != 'code' %}hidden{% endif %}">
-      <h2 class="font-semibold text-gray-800 mb-4">Code-Vorlage <span class="text-xs text-gray-400">(Gerüst für Studenten)</span></h2>
-      <textarea id="code-template-editor" name="code_template" rows="8"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono"
-                placeholder="def meinedefinition(...):&#10;    pass">{{ task.code_template if task else '' }}</textarea>
-    </div>
-
-    <!-- ─── Unit Tests (for Code tasks) ────────────────────────── -->
-    <div id="tests-section" class="card {% if not task or task.task_type != 'code' %}hidden{% endif %}">
-      <h2 class="font-semibold text-gray-800 mb-2">Unit-Tests</h2>
-      <p class="text-xs text-gray-400 mb-3">
-        Verwende <code>PublicTest</code> für Tests, die Studenten sehen, und <code>PrivateTest</code> für verborgene Tests.
-      </p>
-      <textarea id="test-code-editor" name="test_code" rows="12"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-blue-500"
-                placeholder="import unittest&#10;&#10;class PublicTest(unittest.TestCase):&#10;    def test_example_public(self):&#10;        self.assertEqual(my_function(1), 2)&#10;&#10;class PrivateTest(unittest.TestCase):&#10;    def test_example_private(self):&#10;        self.assertEqual(my_function(99), 100)">{% if task and task.test_code %}{{ task.test_code }}{% else %}{% endif %}</textarea>
-    </div>
+    {# Typspezifische Sektionen: #}
+    {# task_detail_code.html (Code-Vorlage + Unit-Tests) #}
+    {# task_detail_workspace.html (Umgebung + Dateien/Workspace) #}
+    {% block type_section %}{% endblock %}
 
     <!-- ─── Actions ────────────────────────────────────────────── -->
     <div class="flex items-center justify-between">
@@ -289,25 +284,16 @@ class PrivateTest(unittest.TestCase):
         # self.assertEqual(my_function(99), 100)
         pass`;
 
-  // Code-Template Editor (nur bei Code-Aufgaben)
+  // Code-Template Editor (Element existiert nur im Code-Template)
   const codeTemplateEditor = document.getElementById("code-template-editor");
   let codeTemplateCM = null;
-  {% if task and task.task_type == 'code' %}
-  codeTemplateCM = CodeMirror.fromTextArea(codeTemplateEditor, codeMirrorConfig);
-  {% endif %}
 
-  // Test-Code Editor (nur bei Code-Aufgaben)
+  // Test-Code Editor (Element existiert nur im Code-Template)
   const testCodeEditor = document.getElementById("test-code-editor");
   let testCodeCM = null;
-  {% if task and task.task_type == 'code' %}
-  testCodeCM = CodeMirror.fromTextArea(testCodeEditor, codeMirrorConfig);
-  {% if not task or not task.test_code %}
-  // Set default template for new code tasks without existing tests
-  if (!testCodeCM.getValue().trim()) {
-    testCodeCM.setValue(defaultTestCode);
-  }
-  {% endif %}
-  {% endif %}
+
+  {# Typspezifisches JS: task_detail_code.html initialisiert CodeMirror #}
+  {% block type_scripts %}{% endblock %}
 
   // ─── Initialize Markdown Editors ─────────────────────────
   // Description editor (immer) — bibliography: Ganze Aufgabe → „Quellen“-Liste für @cite:-Zitationen
@@ -318,11 +304,38 @@ class PrivateTest(unittest.TestCase):
   // ─── Toggle Code Section based on Task Type ─────────────────
   document.getElementById("task_type_select").addEventListener("change", (e) => {
     const isCode = e.target.value === "code";
-    document.getElementById("code-section").classList.toggle("hidden", !isCode);
-    document.getElementById("tests-section").classList.toggle("hidden", !isCode);
+    const isWorkspace = e.target.value === "workspace";
+
+    // Code-Sektionen fehlen in diesem Template (Text-Variante)?
+    // → Navigation auf das Code-Template. (Ungespeicherte Änderungen an
+    //   den Grundfeldern gehen dabei verloren.)
+    if (isCode && !document.getElementById("code-section")) {
+      const url = new URL(location.href);
+      url.searchParams.set("task_type", "code");
+      location.href = url.toString();
+      return;
+    }
+
+    // Workspace-Sektionen fehlen (Text/Code-Variante)? → Workspace-Template
+    if (isWorkspace && !document.getElementById("workspace-section")) {
+      const url = new URL(location.href);
+      url.searchParams.set("task_type", "workspace");
+      location.href = url.toString();
+      return;
+    }
+
+    const codeSection = document.getElementById("code-section");
+    const testsSection = document.getElementById("tests-section");
+    if (codeSection) codeSection.classList.toggle("hidden", !isCode);
+    if (testsSection) testsSection.classList.toggle("hidden", !isCode);
+
+    const wsSections = document.querySelectorAll("[data-workspace-section]");
+    wsSections.forEach(el => el.classList.toggle("hidden", !isWorkspace));
 
     // Show/hide AI code checkboxes (only for code tasks)
     document.querySelectorAll(".ai-code-field").forEach(el => el.classList.toggle("hidden", !isCode));
+    // Show/hide AI workspace checkboxes (only for workspace tasks)
+    document.querySelectorAll(".ai-workspace-field").forEach(el => el.classList.toggle("hidden", !isWorkspace));
 
     // Model-Solution ist immer Markdown Editor — kein CodeMirror mehr
     const solHint = document.getElementById('model-solution-hint');
@@ -377,6 +390,7 @@ class PrivateTest(unittest.TestCase):
   document.getElementById("ai-generate-btn").addEventListener("click", async () => {
     const taskType = document.getElementById("task_type_select").value;
     const isCode = taskType === "code";
+    const isWorkspace = taskType === "workspace";
     const title = document.querySelector('input[name="title"]').value;
     // CodeMirror-Editoren: Inhalte über die Editor-API lesen (das
     // versteckte Textarea enthält bei aktivem Editor nicht den Inhalt)
@@ -391,6 +405,8 @@ class PrivateTest(unittest.TestCase):
       solution: document.getElementById("field-solution").checked,
       template: isCode && document.getElementById("field-template").checked,
       tests: isCode && document.getElementById("field-tests").checked,
+      env: isWorkspace && document.getElementById("field-ws-env").checked,
+      files: isWorkspace && document.getElementById("field-ws-files").checked,
     };
 
     if (!Object.values(generateFields).some(v => v)) {
@@ -400,6 +416,17 @@ class PrivateTest(unittest.TestCase):
 
     // Thema: Seed für Neu-Generierung und Änderungs-Vorschläge
     const topic = document.getElementById("ai-topic").value.trim();
+
+    // Workspace from scratch (Aufgabe noch nicht gespeichert, Titel leer):
+    // LLM soll den Titel selbst erstellen → Checkbox auto-aktivieren, damit
+    // die Aufgabe mit der Generierung automatisch gespeichert wird.
+    const hasTaskId = !!document.querySelector('input[name="task_id"]');
+    if (isWorkspace && !hasTaskId && !title.trim()
+        && (generateFields.env || generateFields.files)) {
+      generateFields.title = true;
+      document.getElementById("field-title").checked = true;
+    }
+
     const wantTextFields = generateFields.title || generateFields.description || generateFields.solution;
     if (wantTextFields && !topic && !title.trim() && !description.trim() && !modelSolution.trim()) {
       showToast("Bitte ein Thema angeben, damit das LLM die Aufgabe generieren kann.", "error");
@@ -439,6 +466,10 @@ class PrivateTest(unittest.TestCase):
           model_solution: modelSolution,
           code_template: codeTemplate,
           generate_fields: generateFields,
+          task_id: (function () {
+            const el = document.querySelector('input[name="task_id"]');
+            return el ? parseInt(el.value, 10) : null;
+          })(),
         }),
         credentials: "same-origin",
       });
@@ -499,6 +530,12 @@ class PrivateTest(unittest.TestCase):
         populated.push("Tests (Public + Private)");
       }
 
+      // Workspace-Felder (Umgebung/Dateien) übernimmt das
+      // Workspace-Template via Hook (task_detail_workspace.html).
+      if (isWorkspace && typeof window._workspaceAiApply === "function") {
+        populated.push(...window._workspaceAiApply(data));
+      }
+
       progressDiv.classList.add("hidden");
       btn.disabled = false;
 
@@ -506,6 +543,22 @@ class PrivateTest(unittest.TestCase):
         showToast(`Felder generiert: ${populated.join(", ")}`, "success");
       } else {
         showToast("LLM hat keine brauchbare Antwort geliefert. Bitte erneut versuchen.", "error");
+      }
+
+      if (isWorkspace && data.proposed_image_spec) {
+        showToast("⚠️ Passende Image-Spec fehlt — LLM-Vorschlag \u201e" + data.proposed_image_spec.name +
+          "\u201c öffnet im Modal (prüfen + speichern, um sie zu verwenden).", "warning");
+      }
+
+      // Aufgabe wurde durch die Generierung neu angelegt (from scratch) →
+      // Seite neu laden: Task-ID, Datei-Manager, Spec-Editor & Save-Modus
+      // (Update statt Create) sind danach konsistent.
+      if (data.task_created && data.task_id) {
+        showToast(`Aufgabe angelegt und gespeichert (ID ${data.task_id}) — lade neu …`, "success");
+        setTimeout(() => {
+          location.href = `/courses/{{ course.id }}/tasks/${data.task_id}`;
+        }, 900);
+        return;
       }
 
     } catch (err) {
@@ -571,9 +624,10 @@ class PrivateTest(unittest.TestCase):
 
     // Code-Vorlage & Unit-Tests: CodeMirror versteckt die Textareas (display:none),
     // daher Werte direkt aus den Textareas lesen, nicht aus der FormData.
+    // (Elemente existieren nur im Code-Template → null-sicher lesen.)
     const taskTypeVal = formData.get("task_type");
-    const codeTemplateRaw = document.getElementById("code-template-editor").value;
-    const testCodeRaw = document.getElementById("test-code-editor").value;
+    const codeTemplateRaw = document.getElementById("code-template-editor")?.value ?? "";
+    const testCodeRaw = document.getElementById("test-code-editor")?.value ?? "";
 
     // Leere Vorlage → null (Template wird geleert); Text-Aufgabe → Vorlage entfernen
     if (taskTypeVal === "code") {
@@ -586,6 +640,21 @@ class PrivateTest(unittest.TestCase):
     if (taskTypeVal === "code") {
       // Leerer Wert leert die Tests bewusst
       body.test_code = testCodeRaw.trim();
+    }
+
+    // Workspace: Umgebungsfelder (Simple-Fields) — der Hook liefert nur
+    // die gesetzten Werte; leere Felder bleiben beim gespeicherten Wert.
+    if (taskTypeVal === "workspace") {
+      Object.assign(body, (typeof window._workspaceEnvFields === "function")
+        ? window._workspaceEnvFields()
+        : {});
+      // Compute-Engine-Pool + Image-Spec (s. plan-compute-engines-images.md)
+      body.workspace_engines = (typeof window._workspaceEngineNames === "function")
+        ? window._workspaceEngineNames()
+        : [];
+      body.workspace_image = (typeof window._workspaceImageName === "function")
+        ? window._workspaceImageName()
+        : null;
     }
 
     // Visibility - after clicking toggle, title is reversed, so we invert

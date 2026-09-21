@@ -27,6 +27,15 @@ MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 AVATAR_DIR = BASE_DIR / "data" / "avatars"
 AVATAR_DIR.mkdir(parents=True, exist_ok=True)
 
+# Workspace-Aufgaben: Dateibäume der Aufgaben (public + privat in .private/)
+# data/workspaces/{task_id}/<pfad> bzw. data/workspaces/{task_id}/.private/<pfad>
+WORKSPACE_DIR = BASE_DIR / "data" / "workspaces"
+WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+
+# Einreichungs-Snapshots: data/submissions/{submission_id}/workspace.tar.gz
+SUBMISSION_DIR = BASE_DIR / "data" / "submissions"
+SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+
 # ─── Server ──────────────────────────────────────────────────────
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
@@ -79,6 +88,18 @@ SANDBOX_ALLOWED_MODULES = [
     "operator", "copy", "enum", "abc", "numbers", "fractions",
     "decimal", "statistics", "time", "os", "pathlib", "hashlib",
 ]
+
+# ─── Compute / Workspaces ──────────────────────────────────────────
+# Anbindung an Compute-Engines für Workspace-Aufgaben (per-Student-Docker-Container
+# auf einem separaten oder lokalen Server, s. docs/plan-workspace-tasks.md).
+# Workspace-Aufgaben sind immer verfügbar; ohne erreichbare Engine degradieren
+# die Views sauber (kein Feature-Flag mehr).
+COMPUTE_AGENT_URL = os.getenv("COMPUTE_AGENT_URL", "http://127.0.0.1:8700")
+COMPUTE_AGENT_KEY = os.getenv("COMPUTE_AGENT_KEY", "")
+# True nur, wenn ein lokaler Agent EXPLIZIT deklariert ist (Compose `environment`
+# oder .env) — dann erscheint er in der Admin-Registry als "local"-Engine.
+# Der nackte Hardcoded-Default oben gilt nicht als Deklaration.
+COMPUTE_AGENT_URL_EXPLICIT = "COMPUTE_AGENT_URL" in os.environ
 
 # ─── Frontend ───────────────────────────────────────────────────
 CODEMIRROR_THEME = os.getenv("CODEMIRROR_THEME", "dracula")

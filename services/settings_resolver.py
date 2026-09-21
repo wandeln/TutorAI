@@ -8,6 +8,7 @@ Prioritaet ( hoechste → tiefste ):
     4. config.py Default  (hardcoded Fallback)
 """
 
+import json
 from typing import Optional
 from sqlmodel import Session, select
 
@@ -16,6 +17,7 @@ from config import (
     LLM_API_URL_PUBLIC, LLM_API_KEY_PUBLIC, LLM_MODEL_PUBLIC,
     LDAP_ENABLED, LDAP_SERVER, LDAP_BASE_DN,
     LDAP_BIND_DN, LDAP_BIND_PW, LDAP_USER_SEARCH,
+    COMPUTE_AGENT_URL, COMPUTE_AGENT_KEY,
 )
 from database.models import GlobalSettings, CourseSettings
 
@@ -95,6 +97,103 @@ def get_effective_llm_config(
         "api_url_public": api_url_public,
         "api_key_public": api_key_public,
         "model_public": model_public,
+    }
+
+
+def _parse_agent_list(raw) -> list[dict]:
+    """JSON-Agent-Liste parsen (ungültig/leer → [])."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [a for a in parsed if isinstance(a, dict) and a.get("url")]
+
+
+def _merge_agents(base: list[dict], override: list[dict]) -> list[dict]:
+    """Engine-Listen vereinigen (Merge statt Replace): Override-Engines
+    ersetzen bei Namensgleichheit die Base-Engine an derselben Position,
+    neue Namen werden angehängt. Basis: global/.env, Override: Kurs —
+    so bleiben globale Engines auch für Kurse verfügbar."""
+    def _name(a: dict) -> str:
+        return str(a.get("name") or a.get("url") or "")
+
+    merged = list(base)
+    for o in override:
+        target = next((b for b in merged if _name(b) == _name(o)), None)
+        if target is not None:
+            merged[merged.index(target)] = o
+        else:
+            merged.append(o)
+    return merged
+
+
+# ─── Compute Config (Workspace-Aufgaben) ─────────────────────────
+
+def get_effective_compute_config(
+    session: Session,
+    course_id: Optional[int] = None,
+) -> dict:
+    """
+    Effektive Compute-Konfiguration (per-Student-Docker-Container).
+
+    Engines werden gemergt: globale Engines (Admin) sind immer verfügbar,
+    Kurs-Engines ergänzen sie; bei Namenskonflikt hat der Kurs Vorrang.
+    .env-Local-Engine gilt nur, solange keine globalen Engines gesetzt sind.
+    Jeder Agent trägt sein Herkunftsfeld `scope` ("global" | "course" | "env")
+    für die UI (read-only-Anzeige).
+
+    Workspace-Aufgaben sind immer verfügbar (kein Feature-Flag mehr);
+    ohne erreichbare Engine degradieren die Views sauber.
+
+    Returns:
+        {
+            "enabled": bool,        # immer True (kompatibel für alte Aufrufer)
+            "gpu_enabled": bool,    # Legacy (UI/Routing ignoriert es)
+            "agents": list[dict],   # roh (name,url,key,gpus,scope) — Normalisierung in workspace_service
+            "source": "course" | "global" | "env",   # höchste beteiligte Schicht
+        }
+    """
+    enabled = True
+    gpu_enabled = False
+    agents: list[dict] = []
+    source = "env"
+
+    gs = session.exec(select(GlobalSettings)).first()
+    if gs:
+        gpu_enabled = bool(getattr(gs, "workspace_gpu_enabled", False))
+        agents = _parse_agent_list(getattr(gs, "compute_agents", None))
+        for a in agents:
+            a["scope"] = "global"
+        if agents:
+            source = "global"
+
+    if not agents:
+        agents = [{"name": "local", "url": COMPUTE_AGENT_URL,
+                   "key": COMPUTE_AGENT_KEY, "gpu": False, "scope": "env"}]
+
+    if course_id:
+        cs = session.exec(
+            select(CourseSettings).where(CourseSettings.course_id == course_id)
+        ).first()
+        if cs:
+            if cs.compute_gpu_enabled is not None:
+                gpu_enabled = bool(cs.compute_gpu_enabled)
+            course_agents = _parse_agent_list(cs.compute_agents)
+            if course_agents:
+                for a in course_agents:
+                    a["scope"] = "course"
+                agents = _merge_agents(agents, course_agents)
+                source = "course"
+
+    return {
+        "enabled": enabled,
+        "gpu_enabled": gpu_enabled,
+        "agents": agents,
+        "source": source,
     }
 
 

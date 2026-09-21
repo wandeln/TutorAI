@@ -26,8 +26,16 @@ from config import LLM_API_URL, LLM_API_KEY, LLM_MODEL, LLM_TEMPERATURE, LLM_TIM
 from database.base import engine
 from database.models import LLMDebugEntry, User
 from services.auth_service import get_current_user_id
-from prompts.grading_prompt import GRADING_TEXT_PROMPT_TEMPLATE, GRADING_CODE_PROMPT_TEMPLATE
+from prompts.grading_prompt import (
+    GRADING_TEXT_PROMPT_TEMPLATE,
+    GRADING_CODE_PROMPT_TEMPLATE,
+    GRADING_WORKSPACE_PROMPT_TEMPLATE,
+)
 from prompts.creation_prompt import UNIFIED_TASK_PROMPT_TEMPLATE
+from prompts.workspace_task_prompt import (
+    WORKSPACE_TASK_PROMPT_TEMPLATE,
+    DATASET_CATALOG,
+)
 from prompts.script_prompt import SCRIPT_SECTION_PROMPT_TEMPLATE
 from prompts.slides_prompt import SLIDES_PROMPT_TEMPLATE
 from prompts.markdown_manual import (
@@ -36,7 +44,7 @@ from prompts.markdown_manual import (
     SCRIPT_CONTENT_EDITS_SPEC,
     SLIDES_CONTENT_EDITS_SPEC,
 )
-from prompts.solution_prompt import CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE
+from prompts.code_task_prompt import CODE_TASK_PROMPT_TEMPLATE
 from prompts.hint_prompt import SOCRATIC_HINT_PROMPT_TEMPLATE
 from prompts.script_question_prompt import SCRIPT_QUESTION_PROMPT_TEMPLATE
 from prompts.report_prompt import COURSE_REPORT_PROMPT_TEMPLATE, STUDENT_REPORT_PROMPT_TEMPLATE
@@ -432,6 +440,30 @@ class LLMService:
 
         return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
 
+    async def grade_workspace_task(
+        self,
+        task_description: str,
+        private_files: str,
+        student_files: str,
+        test_results: str,
+        max_points: int,
+        custom_prompt: Optional[str] = None,
+        config: Optional[dict] = None,
+    ):
+        """Korrigiert eine Workspace-Aufgabe via LLM
+        (Dateien + Test-Ausführung inkl. Test-Output-Metriken)."""
+
+        prompt = self._render_prompt(
+            custom_prompt or GRADING_WORKSPACE_PROMPT_TEMPLATE,
+            task_description=task_description,
+            private_files=private_files,
+            student_solution=student_files,
+            test_results=test_results,
+            max_points=max_points,
+        )
+
+        return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
+
     async def generate_task_fields(
         self,
         topic: str,
@@ -448,13 +480,16 @@ class LLMService:
         references: str = "",
         config: Optional[dict] = None,
     ):
-        """Generiert/ändert die angeforderten Felder einer Aufgabe via LLM.
+        """Generiert/ändert die angeforderten Felder einer Text-Aufgabe via LLM.
 
         generate_fields: Untermenge von ["title", "description", "model_solution"].
         Das LLM liefert JSON mit EXAKT diesen Schlüsseln — nicht angeforderte
         Felder werden nicht zurückgegeben.
         references: Kurs-Quellenverzeichnis als Text (Zitations-Keys) — leer,
         wenn der Kurs kein Quellenverzeichnis hat.
+
+        Code- und Workspace-Aufgaben laufen je über EINEN eigenen
+        Single-Prompt: generate_code_task_fields / generate_workspace_task_fields.
 
         Enthält keine sensitive Studentendaten — nutzt daher den Public
         Endpoint, falls konfiguriert.
@@ -480,6 +515,181 @@ class LLMService:
         return await self._call_with_json(
             prompt, response_format={"type": "json_object"}, config=self._public_config(config)
         )
+
+    async def generate_code_task_fields(
+        self,
+        topic: str,
+        difficulty: str,
+        max_points: int,
+        generate_fields: list[str],
+        current_title: str = "",
+        current_description: str = "",
+        current_model_solution: str = "",
+        current_code_template: str = "",
+        script_chapters: Optional[list[dict]] = None,
+        course_media: Optional[list[dict]] = None,
+        references: str = "",
+        config: Optional[dict] = None,
+    ):
+        """Generiert/ändert die angeforderten Felder einer CODE-Aufgabe in
+        EINEM LLM-Call (Single-Prompt): code_template, public_tests,
+        private_tests, model_solution, description, title (Untermenge).
+
+        generate_fields ist in der Abarbeitungs-REIHENFOLGE übergeben
+        (Implementierung zuerst, dann Lösung/Kriterien, dann Beschreibung/Titel)
+        — das Template weist das LLM darauf hin, genau dieser Reihenfolge zu
+        folgen, damit sich spätere Felder (Kriterien/Aufgabenstellung) auf
+        die konkrete Implementierung beziehen können.
+
+        Enthält keine sensitive Studentendaten — nutzt daher den Public
+        Endpoint, falls konfiguriert.
+        """
+        generate_list = ", ".join(f'"{f}"' for f in generate_fields)
+
+        prompt = Template(CODE_TASK_PROMPT_TEMPLATE).render(
+            topic=topic,
+            difficulty=difficulty,
+            max_points=max_points,
+            generate_list=generate_list,
+            script_chapters=script_chapters or [],
+            course_media=course_media or [],
+            references=references,
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_model_solution,
+            current_code_template=current_code_template,
+        )
+
+        return await self._call_with_json(
+            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
+
+    async def generate_workspace_task_fields(
+        self,
+        topic: str,
+        difficulty: str,
+        max_points: int,
+        generate_fields: list[str],
+        current_title: str = "",
+        current_description: str = "",
+        current_model_solution: str = "",
+        current_env: Optional[dict] = None,
+        current_files: Optional[list[dict]] = None,
+        engines: Optional[list[dict]] = None,
+        image_specs: Optional[list[dict]] = None,
+        script_chapters: Optional[list[dict]] = None,
+        course_media: Optional[list[dict]] = None,
+        references: str = "",
+        require_image_selection: bool = True,
+        config: Optional[dict] = None,
+    ):
+        """Generiert/ändert die angeforderten Felder einer Workspace-Aufgabe
+        in EINEM LLM-Call (Single-Prompt): title, description,
+        model_solution (Skizze + Bewertungskriterien), env, files, folders —
+        plus workspace_image/workspace_engines/proposed_image_spec, wenn
+        require_image_selection (s. Plan §7.1 — das LLM schlägt vor, die
+        Infrastruktur befehligt nie; Validierung serverseitig).
+
+        generate_fields ist in der Abarbeitungs-REIHENFOLGE übergeben
+        (Implementierung zuerst, dann Lösungsskizze/Kriterien, dann
+        Beschreibung/Titel) — das Template weist das LLM darauf hin, genau
+        dieser Reihenfolge zu folgen.
+        current_env: bestehende Umgebungsfelder
+        {workspace_timeout, workspace_cpu, workspace_memory, workspace_internet,
+        workspace_main_file} als Prompt-Kontext (JSON).
+        current_files: bestehende Task-Dateien [{path, content}] als Kontext.
+        engines: Compute-Engines des Kurses [{name, healthy, gpu_info,
+        installed_specs: [{name, dockerfile}]}] (Prompt-Kontext für
+        workspace_engines + das passende Image+Engine-Paar).
+        image_specs: Image-Specs [{name, scope, base, dockerfile}]
+        (Prompt-Kontext für workspace_image/proposed_image_spec).
+
+        Enthält keine Studentendaten — nutzt den Public Endpoint, falls konfiguriert.
+        """
+        import json as _json
+        mandatory = (
+            ["workspace_image", "workspace_engines", "proposed_image_spec"]
+            if require_image_selection else []
+        )
+        generate_list = ", ".join(
+            f'"{f}"' for f in generate_fields + mandatory
+        )
+
+        prompt = Template(WORKSPACE_TASK_PROMPT_TEMPLATE).render(
+            topic=topic or "(Kein Thema angegeben — überarbeite die Aufgabe sinnvoll.)",
+            difficulty=difficulty,
+            max_points=max_points,
+            generate_list=generate_list,
+            dataset_catalog=DATASET_CATALOG,
+            engines=engines or [],
+            image_specs=image_specs or [],
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_model_solution,
+            current_env=_json.dumps(current_env or {}, ensure_ascii=False, indent=2),
+            current_files=current_files or [],
+            script_chapters=script_chapters or [],
+            course_media=course_media or [],
+            references=references,
+            require_image_selection=require_image_selection,
+        )
+
+        return await self._call_with_json(
+            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
+        )
+
+    async def generate_image_spec(
+        self,
+        description: str,
+        name: Optional[str] = None,
+        current_dockerfile: Optional[str] = None,
+        config: Optional[dict] = None,
+    ):
+        """LLM generiert ein komplettes Dockerfile (Image-Spec) aus einer
+        Beschreibung (s. plan-compute-engines-images.md). Das Ergebnis ist
+        ein ENTWURF: validiert hier (Dockerfile-Regeln), bestätigt vom
+        Tutor/Prof in der UI, erst dann gespeichert/installiert.
+
+        Mit current_dockerfile: LLM passt das bestehende Dockerfile an
+        (description = Änderungswunsch) statt eines neuen zu erzeugen.
+
+        Der Name kommt aus dem vorgegebenen name-Param (das Dockerfile
+        selbst enthält keinen Namen).
+
+        Liefert {success, dockerfile?, name?, error?}.
+        """
+        from prompts.image_spec_prompt import IMAGE_SPEC_PROMPT_TEMPLATE
+        from compute_agent.image_spec import ImageSpecError, validate
+
+        prompt = Template(IMAGE_SPEC_PROMPT_TEMPLATE).render(
+            description=description or "(Keine Beschreibung angegeben)",
+            name=name or "",
+            current_dockerfile=current_dockerfile or "",
+        )
+        result = await self._call_plain(prompt, config=self._public_config(config),
+                                        max_tokens=4096)
+        if not result.get("success"):
+            return {"success": False,
+                    "error": result.get("error", "LLM-Fehler")}
+        dockerfile = self._extract_code_block(result.get("raw_response") or "")
+        if not dockerfile or dockerfile == "(keine Antwort)":
+            return {"success": False, "error": "LLM lieferte kein Dockerfile."}
+        try:
+            validate(dockerfile)
+        except ImageSpecError as e:
+            return {"success": False, "error": f"LLM-Dockerfile ungültig: {e}"}
+        return {"success": True, "dockerfile": dockerfile,
+                "name": (name or "").strip()}
+
+    @staticmethod
+    def _extract_code_block(text: str) -> str:
+        """Codeblock aus der LLM-Antwort extrahieren (Code-Zaun optional,
+        beliebiges Sprach-Tag, z. B. yaml/dockerfile)."""
+        import re as _re
+        m = _re.search(r"```(?:[a-zA-Z0-9_-]+)?\s*\n(.*?)```", text, _re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return text.strip()
 
     async def generate_script_section(
         self,
@@ -684,32 +894,6 @@ class LLMService:
         )
 
         return await self._call_with_json(prompt, response_format={"type": "json_object"}, config=config)
-
-    async def generate_code_template_and_tests(
-        self,
-        description: str,
-        model_solution: str,
-        config: Optional[dict] = None,
-    ):
-        """Generiert für eine Code-Aufgabe: Code-Vorlage, Public und Private Tests.
-
-        Benötigt die bereits generierte Musterlösung als Refernz.
-
-        Enthält keine sensitive Studentendaten — nutzt daher den Public
-        Endpoint, falls konfiguriert.
-
-        Returns JSON mit:
-            code_template, public_tests, private_tests
-        """
-        prompt = self._render_prompt(
-            CODE_TEMPLATE_TESTS_PROMPT_TEMPLATE,
-            description=description,
-            model_solution=model_solution,
-        )
-
-        return await self._call_with_json(
-            prompt, response_format={"type": "json_object"}, config=self._public_config(config)
-        )
 
     async def convert_image_to_latex(
         self,

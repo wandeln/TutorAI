@@ -56,9 +56,10 @@
       </span>
       <span class="px-2 py-0.5 rounded text-xs font-medium
         {% if task_type == 'code' %}bg-orange-100 text-orange-700
+        {% elif task_type == 'workspace' %}bg-indigo-100 text-indigo-700
         {% else %}bg-gray-100 text-gray-600
         {% endif %}" style="align-content: center;">
-        {{ '💻 Code' if task_type == 'code' else '📄 Text' }}
+        {{ '💻 Code' if task_type == 'code' else '🐳 Workspace' if task_type == 'workspace' else '📄 Text' }}
       </span>
     </div>
   </div>
@@ -341,6 +342,7 @@
 
     container.innerHTML = '';
     var isCode = data.task.task_type === 'code';
+    var isWorkspace = data.task.task_type === 'workspace';
 
     var subIndex = 0;
     data.submissions.forEach(function(sub) {
@@ -389,6 +391,44 @@
       }
       solSection.appendChild(solContainer);
       card.appendChild(solSection);
+
+      // ── Workspace: Download-Buttons ────────────────────────────
+      if (isWorkspace && data.task.id && sub.id) {
+        var dlSection = document.createElement('div');
+        dlSection.className = 'mb-4';
+        dlSection.innerHTML = '<div class="flex items-center gap-3">' +
+          '<span class="text-xs text-gray-500">📦 Download (diese Einreichung):</span>' +
+          '<a href="/api/tasks/' + data.task.id + '/submissions/' + sub.id + '/package"' +
+          '  class="text-indigo-700 hover:text-indigo-900 border border-indigo-300 hover:border-indigo-500 px-3 py-1.5 rounded-lg transition text-sm"' +
+          '  title="Vollpaket: Student-Dateien + .solution/ + .tests/ + docker-compose (workspace + verify) — lokal lauffähig">' +
+          '  ⬇️ Lösung + Umgebung (Tutor)' +
+          '</a>' +
+          '<a href="/api/tasks/' + data.task.id + '/submissions/' + sub.id + '/package?role=student"' +
+          '  class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-1.5 rounded-lg transition text-sm"' +
+          '  title="Studenten-Version: ohne Musterlösung, private Tests und verify-Befehl">' +
+          '  ⬇️ Studenten-Version' +
+          '</a>' +
+          '</div>';
+        card.appendChild(dlSection);
+
+        // ── Workspace: Rerun (Verify) + Run-Historie ────────────
+        var wsSection = document.createElement('div');
+        wsSection.className = 'mb-4';
+        wsSection.innerHTML =
+          '<div class="flex items-center gap-3">' +
+            '<button id="ws-rerun-' + sub.id + '" class="text-emerald-700 hover:text-emerald-900 border border-emerald-300 hover:border-emerald-500 px-3 py-1.5 rounded-lg transition text-sm" ' +
+            'title="Verify-Befehl der Aufgabe in einem frischen Container ausführen (Student-Snapshot + private Tests)">' +
+            '↻ Neu ausführen (Verify)' +
+            '</button>' +
+            '<span id="ws-rerun-status-' + sub.id + '" class="text-xs text-gray-500"></span>' +
+          '</div>' +
+          '<div id="ws-runs-' + sub.id + '" class="mt-2"></div>';
+        card.appendChild(wsSection);
+        wsSection.querySelector('#ws-rerun-' + sub.id).addEventListener('click', function() {
+          wsRerun(data.task.id, sub.id, this);
+        });
+        wsLoadRuns(data.task.id, sub.id);
+      }
 
       // ── Separate LLM and human feedback ────────────────────────
       var llmFeedbacks = [];
@@ -750,6 +790,98 @@
       bubble.appendChild(timeDiv);
       hintHistory.appendChild(bubble);
     });
+  }
+
+  // ─── Workspace: Rerun (Verify) + Run-Historie ─────────────────
+
+  function wsRunBadge(status) {
+    var styles = {
+      running: 'bg-yellow-100 text-yellow-800',
+      done: 'bg-green-100 text-green-800',
+      timeout: 'bg-red-100 text-red-800',
+      killed: 'bg-gray-200 text-gray-700',
+    };
+    var labels = { running: 'läuft …', done: 'erfolgreich', timeout: 'Timeout', killed: 'Fehler' };
+    return '<span class="badge ' + (styles[status] || 'bg-gray-100 text-gray-700') + '">' +
+      (labels[status] || status) + '</span>';
+  }
+
+  async function wsLoadRuns(taskId, subId) {
+    var box = document.getElementById('ws-runs-' + subId);
+    if (!box) return;
+    var data;
+    try {
+      var res = await fetch('/api/tasks/' + taskId + '/submissions/' + subId + '/runs');
+      if (!res.ok) return;
+      data = await res.json();
+    } catch (e) {
+      return;
+    }
+    if (!data.runs || data.runs.length === 0) {
+      box.innerHTML = '<div class="text-xs text-gray-400">Noch keine Runs (Grading/Rerun) für diese Einreichung.</div>';
+      return;
+    }
+    box.innerHTML = '';
+    data.runs.forEach(function(r) {
+      var d = document.createElement('details');
+      d.className = 'bg-gray-50 rounded-lg border border-gray-200 mb-1.5';
+      var ec = (r.exit_code === null || r.exit_code === undefined) ? '—' : r.exit_code;
+      d.innerHTML =
+        '<summary class="cursor-pointer px-3 py-2 text-sm flex items-center gap-2 flex-wrap">' +
+          wsRunBadge(r.status) +
+          '<span class="text-gray-600">' + formatDate(r.started_at) + '</span>' +
+          '<span class="text-xs text-gray-400 font-mono">exit ' + ec + '</span>' +
+          (r.command ? '<span class="text-xs text-gray-400 font-mono truncate max-w-md">' + escapeHtml(r.command) + '</span>' : '') +
+        '</summary>' +
+        '<div class="px-3 pb-2 space-y-1.5">' +
+          (r.stdout ? '<div><div class="text-xs text-gray-500 mb-0.5">stdout</div><pre class="text-xs bg-white border border-gray-200 rounded p-2 overflow-x-auto whitespace-pre-wrap">' + escapeHtml(r.stdout) + '</pre></div>' : '') +
+          (r.stderr ? '<div><div class="text-xs text-red-500 mb-0.5">stderr</div><pre class="text-xs bg-white border border-red-200 rounded p-2 overflow-x-auto whitespace-pre-wrap text-red-700">' + escapeHtml(r.stderr) + '</pre></div>' : '') +
+        '</div>';
+      box.appendChild(d);
+    });
+  }
+
+  async function wsRerun(taskId, subId, btn) {
+    btn.disabled = true;
+    var statusEl = document.getElementById('ws-rerun-status-' + subId);
+    statusEl.textContent = 'Starte Verify-Lauf …';
+    try {
+      var res = await fetch('/api/tasks/' + taskId + '/submissions/' + subId + '/rerun', { method: 'POST' });
+      var data = await res.json();
+      if (!res.ok) {
+        statusEl.textContent = 'Fehler: ' + (data.detail || res.status);
+        btn.disabled = false;
+        return;
+      }
+    } catch (e) {
+      statusEl.textContent = 'Fehler: ' + e;
+      btn.disabled = false;
+      return;
+    }
+    statusEl.textContent = 'Läuft …';
+    // 3s-Polling (max. 20 min), bis der Run abgeschlossen ist
+    var start = Date.now();
+    var timer = setInterval(async function() {
+      var done = false;
+      try {
+        var rr = await fetch('/api/tasks/' + taskId + '/submissions/' + subId + '/runs');
+        var rd = rr.ok ? await rr.json() : null;
+        if (rd && rd.runs && rd.runs.length > 0) {
+          var latest = rd.runs[0];
+          if (latest.status !== 'running') {
+            done = true;
+            statusEl.textContent = (latest.status === 'done' ? '✅' : '❌') + ' ' +
+              (latest.status === 'done' ? 'Fertig' : latest.status) + ' (exit ' + latest.exit_code + ')';
+          }
+        }
+      } catch (e) { /* transient — nächste Runde */ }
+      if (done || Date.now() - start > 20 * 60 * 1000) {
+        clearInterval(timer);
+        btn.disabled = false;
+        if (!done) statusEl.textContent = '⏳ Läuft noch (>20 min) — Status unten in der Historie';
+        wsLoadRuns(taskId, subId);
+      }
+    }, 3000);
   }
 
   // ─── Initial Load ─────────────────────────────────────────────

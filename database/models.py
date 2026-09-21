@@ -50,6 +50,7 @@ class CourseRole(str, Enum):
 class TaskType(str, Enum):
     TEXT = "text"
     CODE = "code"
+    WORKSPACE = "workspace"
 
 
 
@@ -193,6 +194,19 @@ class TaskBase(SQLModel):
     is_visible: bool = Field(default=True)             # Für Studenten sichtbar
     display_order: int = Field(default=0)              # Anzeigereihenfolge im Kurs
     hints_enabled: bool = Field(default=True)          # Socratic-Hints fuer Studenten
+    # Workspace-Aufgaben (task_type=workspace), s. docs/plan-workspace-tasks.md:
+    # Skript-basiertes Modell: Run/Tests/Init laufen über Task-Dateien
+    # (run.sh, test.sh, .test_private.sh, init.sh, .init_hidden.sh, .run_solution.sh);
+    # die Umgebung wird hier per einfachen Feldern konfiguriert.
+    workspace_timeout: int = Field(default=900)                 # Run-Timeout (s, 1–7200)
+    workspace_cpu: float = Field(default=2.0)                   # CPU-Limit des Student-Containers
+    workspace_memory: str = Field(default="4g", max_length=10)  # Memory-Limit („512m“, „4g“, …)
+    workspace_internet: bool = Field(default=False)             # Internet für Studenten-Läufe (Build hat immer)
+    workspace_main_file: Optional[str] = Field(default=None, max_length=200)  # Editor-Hauptdatei (relativ)
+    workspace_assets_status: Optional[str] = Field(default=None)  # JSON je Agent: assets + task_image-Status
+    # Compute-Engines + Image-Specs, s. docs/plan-compute-engines-images.md:
+    workspace_engines: Optional[str] = Field(default=None)      # JSON-Liste Engine-Namen (geordnet) — Pool für Routing/Prebuild
+    workspace_image: Optional[str] = Field(default=None, max_length=50)  # Image-Spec-Name (Kurs-Scope > global)
 
 
 class Task(TaskBase, table=True):
@@ -208,6 +222,7 @@ class Task(TaskBase, table=True):
     creator: User = Relationship(back_populates="created_tasks")
     submissions: List["Submission"] = Relationship(back_populates="task")
     hint_exchanges: List["HintExchange"] = Relationship(back_populates="task")
+    workspace_files: List["TaskWorkspaceFile"] = Relationship(back_populates="task")
 
 
 class TaskCreate(SQLModel):
@@ -224,6 +239,15 @@ class TaskCreate(SQLModel):
     is_visible: bool = Field(default=True)
     display_order: int = Field(default=0)
     hints_enabled: bool = Field(default=True)
+    # Workspace-Aufgaben (s. TaskBase)
+    workspace_timeout: int = Field(default=900)
+    workspace_cpu: float = Field(default=2.0)
+    workspace_memory: str = Field(default="4g", max_length=10)
+    workspace_internet: bool = Field(default=False)
+    workspace_main_file: Optional[str] = Field(default=None, max_length=200)
+    workspace_assets_status: Optional[str] = Field(default=None)
+    workspace_engines: Optional[str] = Field(default=None)
+    workspace_image: Optional[str] = Field(default=None, max_length=50)
 
 
 class TaskRead(TaskBase):
@@ -247,6 +271,122 @@ class TaskUpdate(SQLModel):
     is_visible: Optional[bool] = None
     display_order: Optional[int] = None
     hints_enabled: Optional[bool] = None
+    # Workspace-Aufgaben (s. TaskBase)
+    workspace_timeout: Optional[int] = None
+    workspace_cpu: Optional[float] = None
+    workspace_memory: Optional[str] = None
+    workspace_internet: Optional[bool] = None
+    workspace_main_file: Optional[str] = None
+    workspace_assets_status: Optional[str] = None
+    workspace_engines: Optional[str] = None
+    workspace_image: Optional[str] = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# IMAGE SPEC ("Rezept" für Workspace-Images, s. plan-compute-engines-images.md)
+# ═══════════════════════════════════════════════════════════════════
+
+class ImageSpec(SQLModel, table=True):
+    """Image-Spec: reines Dockerfile (Name als eigene Spalte) zum Bauen
+    eines Workspace-Images auf den Compute-Engines. (scope, name) ist
+    eindeutig; dockerfile ist die Single Source of Truth.
+    GPU-Regeln gehören zur Compute-Engine (compute_agents-JSON, Key gpus)."""
+    __tablename__ = "image_specs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scope: str = Field(max_length=50, index=True)     # "global" | str(course_id)
+    name: str = Field(max_length=50, index=True)      # slug (z.B. "python-ml")
+    dockerfile: str = Field(default="")
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    __table_args__ = (UniqueConstraint("scope", "name", name="uq_image_spec_scope_name"),)
+
+
+class ImageSpecRead(SQLModel):
+    id: int
+    scope: str
+    name: str
+    dockerfile: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════
+# TASK WORKSPACE FILE (Dateien einer Workspace-Aufgabe)
+# ═══════════════════════════════════════════════════════════════════
+
+class TaskWorkspaceFile(SQLModel, table=True):
+    """Metadaten einer Workspace-Datei. Der Inhalt liegt auf Disk:
+    data/workspaces/{task_id}/<path>
+
+    Zugriffsklassen (s. docs/plan-workspace-access-classes.md):
+    `access` ist die EXPLIZITE Klasse der Datei (NULL = erben von den
+    Ordner-Vorfahren). Effektive Klasse = restriktivste von (eigene,
+    alle Ordner-Vorfahren): hidden > readonly > edit.
+    """
+    __tablename__ = "task_workspace_files"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    path: str = Field(max_length=500)        # relativer Pfad (z.B. main.py, data/mnist.csv)
+    size: int = Field(default=0)
+    checksum: Optional[str] = Field(default=None, max_length=64)  # SHA256 des Inhalts
+    access: Optional[str] = Field(default=None, max_length=16)    # NULL=erben; "readonly"|"hidden"
+    is_binary: bool = Field(default=False)   # Dataset/Binary vs. Textdatei
+    sort_order: Optional[int] = Field(default=None)  # manuelle Reihenfolge je Ordner
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    task: Optional[Task] = Relationship(back_populates="workspace_files")
+
+
+class TaskWorkspaceFolder(SQLModel, table=True):
+    """Explizite Zugriffsklasse eines Workspace-Ordners (wirkt per
+    Erbung auf alle Dateien/Unterordner darunter).
+
+    Nur Zeilen für "readonly"/"hidden" — explizites "edit" braucht keine
+    Zeile (restriktivste-von-Vorfahren-Regel). Leere Ordner werden erst
+    bei Setzung persistiert.
+    """
+    __tablename__ = "task_workspace_folders"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    path: str = Field(max_length=500)        # relativer Ordnerpfad (ohne Slash am Ende)
+    access: str = Field(max_length=16)       # "readonly" | "hidden"
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+    __table_args__ = (UniqueConstraint("task_id", "path", name="uq_ws_folder_task_path"),)
+
+
+class TaskWorkspaceOrder(SQLModel, table=True):
+    """Anzeige-Reihenfolge je Ordner für Ordner und [init]-Artefakte.
+
+    Dateien behalten ``task_workspace_files.sort_order``; Ordner (egal ob
+    mit Zugriffs-Klasse) und [init]-Artefakte (virtuell, keine Datei-Zeile)
+    liegen hier. Rein kosmetisch — wirkt weder auf Disk/Sync noch auf das
+    Grading.
+    """
+    __tablename__ = "task_workspace_orders"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    path: str = Field(max_length=500)        # relativer Pfad (Ordner oder [init]-Datei)
+    sort_order: int = Field(default=0)
+
+    __table_args__ = (UniqueConstraint("task_id", "path", name="uq_ws_order_task_path"),)
+
+
+class TaskWorkspaceFileRead(SQLModel):
+    id: int
+    task_id: int
+    path: str
+    size: int
+    checksum: Optional[str] = None
+    access: Optional[str] = None
+    is_binary: bool
+    updated_at: datetime
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -472,6 +612,7 @@ class SubmissionBase(SQLModel):
     code_solution: str = Field(default="")     # Für Code-Aufgaben
     attempt_number: int = Field(default=1)
     solve_time_seconds: float = Field(default=0.0)  # Zeit in Sekunden bis zum Einreichen
+    workspace_snapshot: Optional[str] = Field(default=None, max_length=500)  # Pfad zu workspace.tar.gz (Workspace-Aufgaben)
 
 
 class Submission(SubmissionBase, table=True):
@@ -492,6 +633,7 @@ class SubmissionCreate(SQLModel):
     solution: str = Field(default="")
     code_solution: str = Field(default="")
     solve_time_seconds: float = Field(default=0.0)
+    workspace_snapshot: Optional[str] = Field(default=None, max_length=500)
 
 
 class SubmissionRead(SubmissionBase):
@@ -500,6 +642,53 @@ class SubmissionRead(SubmissionBase):
     status: SubmissionStatus
     solve_time_seconds: float = Field(default=0.0)
     feedback_list: List["FeedbackRead"] = []
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WORKSPACE RUN (Lauf-Historie von Workspace-Ausführungen)
+# ═══════════════════════════════════════════════════════════════════
+
+class WorkspaceRunStatus(str, Enum):
+    RUNNING = "running"
+    DONE = "done"
+    TIMEOUT = "timeout"
+    KILLED = "killed"
+
+
+class WorkspaceRun(SQLModel, table=True):
+    """Historie der Run-Jobs einer Workspace-Aufgabe (nützlich für Tutor-Debugging).
+    stdout/stderr werden beim Schreiben auf ~1 MB getruncatet (Log-Tail).
+    submission_id: gesetzt bei Grading-/Tutor-Rerun (Link zu einer Einreichung);
+    Student-Läufe im eigenen Workspace haben submission_id = None.
+    """
+    __tablename__ = "workspace_runs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str = Field(max_length=64, index=True)  # run_id des Compute-Agenten
+    task_id: int = Field(foreign_key="tasks.id", index=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    submission_id: Optional[int] = Field(default=None, foreign_key="submissions.id", index=True)
+    command: str = Field(default="")
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    exit_code: Optional[int] = None
+    status: WorkspaceRunStatus = WorkspaceRunStatus.RUNNING
+    stdout: str = Field(default="")
+    stderr: str = Field(default="")
+
+
+class WorkspaceRunRead(SQLModel):
+    id: int
+    run_id: str
+    task_id: int
+    student_id: int
+    command: str
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    exit_code: Optional[int] = None
+    status: WorkspaceRunStatus
+    stdout: str = ""
+    stderr: str = ""
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -573,6 +762,13 @@ class GlobalSettings(SQLModel, table=True):
     ldap_bind_dn: Optional[str] = None
     ldap_bind_pw: Optional[str] = None
     ldap_user_search: Optional[str] = None
+    # Compute/Workspaces: Anbindung an Compute-Agents (per-Student-Docker-Container)
+    compute_enabled: bool = Field(default=False)
+    # JSON-Liste: [{"name": ..., "url": ..., "key": ..., "gpu": true/false}]
+    compute_agents: Optional[str] = None
+    compute_idle_timeout: int = Field(default=1200)   # Sekunden bis Container-Abort bei Inaktivität
+    workspace_gpu_enabled: bool = Field(default=False)
+    compute_gpu_max_jobs: int = Field(default=8)       # parallele GPU-Jobs pro Agent (GPU nicht voll auslasten)
 
 
 class GlobalSettingsUpdate(SQLModel):
@@ -589,6 +785,11 @@ class GlobalSettingsUpdate(SQLModel):
     ldap_bind_dn: Optional[str] = None
     ldap_bind_pw: Optional[str] = None
     ldap_user_search: Optional[str] = None
+    compute_enabled: Optional[bool] = None
+    compute_agents: Optional[str] = None
+    compute_idle_timeout: Optional[int] = None
+    workspace_gpu_enabled: Optional[bool] = None
+    compute_gpu_max_jobs: Optional[int] = None
 
 
 class GlobalSettingsRead(SQLModel, from_attributes=True):
@@ -605,6 +806,11 @@ class GlobalSettingsRead(SQLModel, from_attributes=True):
     ldap_base_dn: Optional[str]
     ldap_bind_dn: Optional[str]
     ldap_user_search: Optional[str]
+    compute_enabled: bool
+    compute_agents: Optional[str]
+    compute_idle_timeout: int
+    workspace_gpu_enabled: bool
+    compute_gpu_max_jobs: int
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -622,6 +828,10 @@ class CourseSettingsBase(SQLModel):
     ldap_bind_dn: Optional[str] = None
     ldap_bind_pw: Optional[str] = None
     ldap_user_search: Optional[str] = None  # e.g. (uid={username}) or (sAMAccountName={username})
+    # Compute/Workspace-Overrides (None = globale Settings folgen, s. settings_resolver)
+    compute_enabled: Optional[bool] = None         # Workspace-Aufgaben im Kurs (Override)
+    compute_gpu_enabled: Optional[bool] = None     # GPU-Passthrough im Kurs (Override)
+    compute_agents: Optional[str] = None           # JSON-Liste [{name,url,key,gpu}] (Override)
 
 
 class CourseSettings(CourseSettingsBase, table=True):
@@ -658,6 +868,10 @@ class CourseSettingsUpdate(SQLModel):
     ldap_bind_dn: Optional[str] = None
     ldap_bind_pw: Optional[str] = None
     ldap_user_search: Optional[str] = None
+    # Compute-Overrides: null = zurück auf global (wird im Endpoint per Raw-Body gehandhabt)
+    compute_enabled: Optional[bool] = None
+    compute_gpu_enabled: Optional[bool] = None
+    compute_agents: Optional[str] = None
 
 
 # ═══════════════════════════════════════════════════════════════════

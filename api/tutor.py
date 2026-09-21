@@ -4,19 +4,26 @@ Tutor-Endpoints: Aufgaben-Management + Korrektur + Übersicht.
 Rollen: Tutor und PROF (im Kurs), Admin (global)
 """
 
+import asyncio
 import io
+import json
 import logging
+import mimetypes
+import re
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlmodel import Session, SQLModel, select
 
-from database.base import get_session
+from database.base import engine, get_session
 from database.models import (
     Course,
     CourseRole,
+    CourseSettings,
     Feedback,
     FeedbackSource,
     GlobalUserRole,
@@ -26,22 +33,46 @@ from database.models import (
     SubmissionStatus,
     Task,
     TaskType,
+    TaskWorkspaceFile,
     User,
     UserCourse,
+    WorkspaceRun,
+    WorkspaceRunStatus,
 )
 from services.auth_service import get_current_user, require_course_access
 from services.export_service import ExportService
 from services.grading_service import GradingService
 from services.llm_service import LLMService
 from services.media_service import all_media_for_course, sync_media_usages
+from services.import_service import spawn_job
 from services.references_service import build_references_text
-from services.settings_resolver import get_effective_llm_config
+from services.settings_resolver import get_effective_compute_config, get_effective_llm_config
+from services.workspace_presets import validate_workspace_generation
+from services.workspace_service import (
+    MAX_FILE_BYTES,
+    MAX_WORKSPACE_TOTAL_BYTES,
+    RUN_SOLUTION_SCRIPT,
+    effective_file_access,
+    effective_folder_access,
+    file_disk_path,
+    task_has_init,
+    task_init_hash,
+    test_run_key,
+    workspace_service,
+)
 
 router = APIRouter(prefix="/api", tags=["Tutor"])
 grading_service = GradingService()
 llm_service = LLMService()
 export_service = ExportService()
 logger = logging.getLogger(__name__)
+
+# Starke Referenzen auf laufende Workspace-Sync-Threads (GC-Schutz)
+_workspace_sync_threads: list[threading.Thread] = []
+# Coalescing: bei mehreren File-Änderungen in kurzer Zeit (z. B. Ordner-
+# Umbenennen) läuft nur ein Sync; nach Abschluss wird ggf. erneut angestoßen.
+_workspace_sync_inflight: set[int] = set()
+_workspace_sync_retry: set[int] = set()
 
 
 def _check_course_role(user: User, course_id: int, session: Session):
@@ -59,6 +90,171 @@ def _check_course_role(user: User, course_id: int, session: Session):
     ).first()
     if not membership or membership.role_in_course not in (CourseRole.PROF, CourseRole.TUTOR):
         raise HTTPException(403, "Nur PROF/Tutor dürfen auf diese Daten zugreifen.")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WORKSPACE-AUFGABEN (Helfer)
+# ═══════════════════════════════════════════════════════════════════
+
+_WS_MEM_RE = re.compile(r"^\d+(\.\d+)?[bkmg]$", re.IGNORECASE)
+
+
+def _apply_workspace_env_fields(task: Task, body: dict) -> None:
+    """Workspace-Umgebungsfelder validieren & anwenden (nur explizit
+    übergebene Keys). HTTPException 400 bei ungültigen Werten."""
+    if "workspace_timeout" in body and body["workspace_timeout"] is not None:
+        try:
+            t = int(body["workspace_timeout"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "workspace_timeout muss eine Zahl sein.")
+        if not (1 <= t <= 7200):
+            raise HTTPException(400, "workspace_timeout muss zwischen 1 und 7200 liegen.")
+        task.workspace_timeout = t
+    if "workspace_cpu" in body and body["workspace_cpu"] is not None:
+        try:
+            c = float(body["workspace_cpu"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "workspace_cpu muss eine Zahl sein.")
+        if not (0 < c <= 32):
+            raise HTTPException(400, "workspace_cpu muss größer 0 (max. 32) sein.")
+        task.workspace_cpu = c
+    if "workspace_memory" in body:
+        m = str(body["workspace_memory"] or "4g").strip().lower().replace(" ", "")
+        if re.match(r"^\d+(\.\d+)?$", m):
+            m += "g"  # UI/LLM senden GB-Zahl (4 → "4g")
+        if not _WS_MEM_RE.match(m):
+            raise HTTPException(400, "workspace_memory: Zahl in GB (z. B. 4) oder String mit Einheit (z. B. '512m').")
+        task.workspace_memory = m
+    if "workspace_internet" in body:
+        task.workspace_internet = bool(body["workspace_internet"])
+    if "workspace_main_file" in body:
+        mf = body["workspace_main_file"]
+        if mf is not None:
+            mf = str(mf).strip()
+            if mf and (mf.startswith("/") or ".." in mf.split("/")):
+                raise HTTPException(400, "workspace_main_file muss ein relativer Pfad sein (kein ..).")
+            task.workspace_main_file = mf or None
+        else:
+            task.workspace_main_file = None
+
+
+def _parse_engine_list(val) -> str | None:
+    """Engine-Liste (UI) → JSON-String (leere Liste → None)."""
+    if val in (None, "", []):
+        return None
+    if not isinstance(val, list):
+        raise HTTPException(400, "workspace_engines muss eine Liste sein")
+    names = [str(n).strip() for n in val if str(n).strip()]
+    return json.dumps(names) if names else None
+
+
+def _enforce_workspace_requirements(session: Session, task: Task) -> None:
+    """Workspace-Aufgabe ist erst lauffähig mit Image-Spec + Engine-Pool.
+
+    Fehlendes Bild/Engine ist kein Zustand, den wir tolerieren: Volumes
+    sind an die Engine gebunden, das Image muss auflösbar sein. Der Tutor
+    korrigiert das über die Task-Edit (Studenten sehen einen
+    Graceful-Fehler via validate_task_ready).
+    """
+    from services import image_spec_service
+    from services.workspace_service import workspace_service
+    if not task.workspace_image:
+        raise HTTPException(
+            400, "Workspace-Aufgabe: bitte eine Image-Spec wählen "
+                 "(Arbeitsumgebung).")
+    if image_spec_service.resolve_spec(
+            session, task.course_id, task.workspace_image) is None:
+        raise HTTPException(
+            400, f"Workspace-Aufgabe: Image-Spec {task.workspace_image!r} "
+                 "existiert nicht (global oder Kurs).")
+    names = workspace_service.task_engine_names(task)
+    if not names:
+        raise HTTPException(
+            400, "Workspace-Aufgabe: bitte mindestens eine Compute-Engine "
+                 "zuweisen (Arbeitsumgebung).")
+    known = {a["name"] for a in
+             workspace_service.get_agents(session, task.course_id)}
+    missing = [n for n in names if n not in known]
+    if missing:
+        raise HTTPException(
+            400, f"Workspace-Aufgabe: Compute-Engine(s) nicht registriert: "
+                 f"{', '.join(missing)}.")
+
+
+def _task_pool_agents(session: Session, task: Task) -> list[dict]:
+    """Agenten des Engine-Pools der Aufgabe (None → alle registrierten)."""
+    agents = workspace_service.get_agents(session, task.course_id)
+    engine_names = workspace_service.task_engine_names(task)
+    if engine_names:
+        by_name = {a["name"]: a for a in agents}
+        agents = [by_name[n] for n in engine_names if n in by_name]
+    return agents
+
+
+def _check_image_spec(session: Session, course_id: int, name: str | None) -> str | None:
+    """workspace_image validieren (Spec muss global oder Kurs-Scope existieren)."""
+    name = str(name or "").strip()
+    if name:
+        from services import image_spec_service
+        if image_spec_service.resolve_spec(session, course_id, name) is None:
+            raise HTTPException(
+                400, f"Image-Spec {name!r} existiert nicht (global oder Kurs)")
+    return name or None
+
+
+def _schedule_workspace_sync(task_id: int) -> None:
+    """Task-Save-Seiteneffekte (Asset-Sync + Init-Build) im Hintergrund —
+    eigener Session-Thread, damit die Antwort nicht auf den Agent wartet.
+    Starke Thread-Referenzen, damit nichts weg-GC'd wird."""
+
+    def _work() -> None:
+        try:
+            with Session(engine) as bg_session:
+                task = bg_session.get(Task, task_id)
+                if task and task.task_type.value == "workspace":
+                    # „pending"-Marker (Objekt-Format wie on_task_saved):
+                    # Die UI kann „lädt …“ pollen, bis der Sync fertig ist.
+                    if workspace_service.is_enabled(bg_session, task.course_id):
+                        try:
+                            task.workspace_assets_status = json.dumps({
+                                a["url"]: {"assets": "pending",
+                                           "task_image": "pending",
+                                           "image": "pending"}
+                                for a in workspace_service.get_agents(bg_session, task.course_id)
+                            })
+                            bg_session.add(task)
+                            bg_session.commit()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    try:
+                        workspace_service.on_task_saved(bg_session, task)
+                    except Exception as e:  # noqa: BLE001 — Status liegt in workspace_assets_status
+                        logger.warning("Workspace-Sync (task %s) fehlgeschlagen: %s", task_id, e)
+        finally:
+            _workspace_sync_inflight.discard(task_id)
+            if _workspace_sync_retry.discard(task_id):
+                _schedule_workspace_sync(task_id)
+
+    if task_id in _workspace_sync_inflight:
+        _workspace_sync_retry.add(task_id)
+        return
+    _workspace_sync_inflight.add(task_id)
+    t = threading.Thread(target=_work, daemon=True)
+    _workspace_sync_threads.append(t)
+    t.start()
+
+
+async def _load_workspace_task(
+    task_id: int,
+    session: Session,
+    user: User,
+) -> Task:
+    """Task laden + PROF/Tutor-Zugriff prüfen (course_id nicht im Path)."""
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+    _check_course_role(user, task.course_id, session)
+    return task
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -122,6 +318,11 @@ async def create_task(
     if model_solution == "":
         model_solution = None
 
+    try:
+        task_type = TaskType(body.get("task_type", "text"))
+    except ValueError:
+        raise HTTPException(400, f"Ungültiger Aufgabentyp: {body.get('task_type')!r}")
+
     max_points = body.get("max_points", 10)
     try:
         max_points = int(max_points)
@@ -129,12 +330,12 @@ async def create_task(
         raise HTTPException(400, "Max. Punkte muss eine Zahl sein.")
     if max_points < 0:
         raise HTTPException(400, "Max. Punkte muss mindestens 0 sein.")
-    
+
     task = Task(
         course_id=course_id,
         created_by=user.id,  # type: ignore[arg-type]
         title=body.get("title", ""),
-        task_type=TaskType(body.get("task_type", "text")),
+        task_type=task_type,
         description=body.get("description", ""),
         model_solution=model_solution,
         max_points=max_points,
@@ -145,11 +346,19 @@ async def create_task(
         is_visible=body.get("is_visible", True),
         display_order=next_order,
     )
-    
+    if task_type == TaskType.WORKSPACE:
+        _apply_workspace_env_fields(task, body)
+        task.workspace_engines = _parse_engine_list(body.get("workspace_engines"))
+        task.workspace_image = _check_image_spec(session, course_id,
+                                                 body.get("workspace_image"))
+        _enforce_workspace_requirements(session, task)
+
     session.add(task)
     session.commit()
     session.refresh(task)
     sync_media_usages(session, course_id)
+    if task_type == TaskType.WORKSPACE:
+        _schedule_workspace_sync(task.id)
 
     return {
         "message": f"Aufgabe '{task.title}' erstellt.",
@@ -205,13 +414,30 @@ async def get_task(
         "test_code": task.test_code if is_tutor else None,
         "hints_enabled": task.hints_enabled,
     }
+
+    # Workspace-Aufgabe: Preset/GPU für alle (UI-Badges, Editor-Modus),
+    # Spec/Dateien nur für Tutoren
+    if task.task_type.value == "workspace":
+        result["workspace_main_file"] = task.workspace_main_file
+        try:
+            result["workspace_engines"] = (
+                json.loads(task.workspace_engines)
+                if task.workspace_engines else None)
+        except (json.JSONDecodeError, TypeError):
+            result["workspace_engines"] = None
+        result["workspace_image"] = task.workspace_image
+        if is_tutor:
+            result["workspace_timeout"] = task.workspace_timeout
+            result["workspace_cpu"] = task.workspace_cpu
+            result["workspace_memory"] = task.workspace_memory
+            result["workspace_internet"] = task.workspace_internet
+            result["workspace_assets_status"] = task.workspace_assets_status
     
     if is_tutor:
         result["model_solution"] = task.model_solution
     else:
         # Student: mask private tests (replace PrivateTest class body with *** )
         if task.test_code:
-            import re
             result["test_code"] = re.sub(
                 r'(class PrivateTest.*?)(class PublicTest|$)',
                 r'\1***\2',
@@ -274,12 +500,25 @@ async def update_task(
     if "test_code" in body: task.test_code = body["test_code"]
     if "is_visible" in body: task.is_visible = body["is_visible"]
     if "hints_enabled" in body: task.hints_enabled = body["hints_enabled"]
-    
+
+    # Workspace-Felder (Umgebung + Dateien; nur explizit übergebene Keys)
+    if task.task_type == TaskType.WORKSPACE:
+        _apply_workspace_env_fields(task, body)
+    if "workspace_engines" in body:
+        task.workspace_engines = _parse_engine_list(body["workspace_engines"])
+    if "workspace_image" in body:
+        task.workspace_image = _check_image_spec(session, task.course_id,
+                                                 body["workspace_image"])
+
     task.updated_at = datetime.now(timezone.utc)
+    if task.task_type == TaskType.WORKSPACE:
+        _enforce_workspace_requirements(session, task)
     session.add(task)
     session.commit()
     session.refresh(task)
     sync_media_usages(session, task.course_id)
+    if task.task_type.value == "workspace":
+        _schedule_workspace_sync(task.id)
 
     return {"message": "Aufgabe aktualisiert.", "task": {"id": task.id, "title": task.title}}
 
@@ -305,6 +544,15 @@ async def delete_task(
         raise HTTPException(403, "Keine Berechtigung, diese Aufgabe zu löschen.")
 
     task_course_id = task.course_id
+    task_was_workspace = task.task_type.value == "workspace"
+    # Agent-Ressourcen + lokale Dateien aufräumen, BEVOR der Task aus der
+    # DB gelöscht wird (Instanz ist danach expired/detached)
+    if task_was_workspace:
+        try:
+            workspace_service.on_task_deleted(session, task)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Workspace-Aufräumen (task %s) fehlgeschlagen: %s", task_id, e)
+
     for sub in task.submissions:
         for fb in sub.feedback_list:
             session.delete(fb)
@@ -642,8 +890,14 @@ async def ai_generate_task(
     # Template/Tests gelten nur für Code-Aufgaben
     gen_template = bool(gen.get("template")) and task_type == "code"
     gen_tests = bool(gen.get("tests")) and task_type == "code"
+    # Workspace-Aufgabe: Umgebung (Timeout/Limits/Internet/Artefakte)
+    # + Dateien. Ungespeicherte Aufgaben werden nach dem LLM-Call
+    # automatisch angelegt (Titel aus LLM/Formular/Thema).
+    gen_env = bool(gen.get("env")) and task_type == "workspace"
+    gen_files = bool(gen.get("files")) and task_type == "workspace"
 
-    if not (gen_title or gen_description or gen_solution or gen_template or gen_tests):
+    if not (gen_title or gen_description or gen_solution or gen_template or gen_tests
+            or gen_env or gen_files):
         raise HTTPException(400, "Keine Felder angefordert.")
 
     current_title = (body.get("title") or "").strip()
@@ -651,22 +905,11 @@ async def ai_generate_task(
     current_solution = (body.get("model_solution") or "").strip()
     current_template = (body.get("code_template") or "").strip()
 
-    # Schritt 1: Titel/Aufgabenstellung/Musterlösung — nur aktiv angeforderte Felder.
-    # Nicht angeforderte Felder werden weder im Prompt verlangt noch übernommen.
-    step1_fields: list[str] = []
-    if gen_title:
-        step1_fields.append("title")
-    if gen_description:
-        step1_fields.append("description")
-    if gen_solution:
-        step1_fields.append("model_solution")
-
-    # Code-Aufgabe: Vorlage/Tests brauchen eine Musterlösung als Basis —
-    # falls die Lösung nicht aktiv angefordert und noch leer, intern ergänzen
-    # (wird aber NICHT in die Response übernommen).
-    if (gen_template or gen_tests) and not gen_solution and not current_solution:
-        step1_fields.append("model_solution")
-
+    # EIN LLM-Call pro Aufgabe (Single-Prompt): alle angeforderten Felder
+    # entstehen in einem Durchlauf und passen automatisch zueinander.
+    # Reihenfolge der LLM-Keys = Abarbeitungsreihenfolge: Implementierung
+    # zuerst, dann Musterlösung/Kriterien (bezogen auf die konkrete
+    # Implementierung), dann Aufgabenstellung/Titel.
     llm_cfg = get_effective_llm_config(session, user_and_course[1])
 
     response = {
@@ -678,35 +921,41 @@ async def ai_generate_task(
         "private_tests": "",
     }
     latency_ms = 0
-    internal_solution_text = ""
 
-    if step1_fields:
-        # Kontext für konsistente Notation & Querverweise: Skript-Kapitel
-        # (nur mit Zusammenfassung, da Labels dort drinstecken) + alle Medien.
-        script_chapters = [
-            {"title": s.title, "summary": (s.summary or "").strip()}
-            for s in session.exec(
-                select(ScriptSection)
-                .where(ScriptSection.course_id == course_id)
-                .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
-            ).all()
-            if (s.summary or "").strip()
-        ][:20]
-        course_media = all_media_for_course(session, course_id)
+    # Kontext für konsistente Notation & Querverweise: Skript-Kapitel
+    # (nur mit Zusammenfassung, da Labels dort drinstecken) + alle Medien.
+    script_chapters = [
+        {"title": s.title, "summary": (s.summary or "").strip()}
+        for s in session.exec(
+            select(ScriptSection)
+            .where(ScriptSection.course_id == course_id)
+            .order_by(ScriptSection.display_order.asc())  # type: ignore[union-attr]
+        ).all()
+        if (s.summary or "").strip()
+    ][:20]
+    course_media = all_media_for_course(session, course_id)
+    references = build_references_text(session, course_id)
 
+    if task_type == "text":
+        # ── Text-Aufgabe: Titel/Aufgabenstellung/Musterlösung ──
+        text_fields = [f for f, active in (
+            ("title", gen_title),
+            ("description", gen_description),
+            ("model_solution", gen_solution),
+        ) if active]
         result = await llm_service.generate_task_fields(
             topic=body.get("topic", ""),
             difficulty=body.get("difficulty", "mittel"),
             task_type=task_type,
             max_points=body.get("max_points", 10),
-            generate_fields=step1_fields,
+            generate_fields=text_fields,
             current_title=current_title,
             current_description=current_description,
             current_model_solution=current_solution,
             code_template=current_template,
             script_chapters=script_chapters,
             course_media=course_media,
-            references=build_references_text(session, course_id),
+            references=references,
             config=llm_cfg,
         )
 
@@ -717,39 +966,284 @@ async def ai_generate_task(
         latency_ms = result.get("latency_ms", 0)
 
         # NUR angeforderte Felder aus der LLM-Antwort übernehmen.
-        if "title" in step1_fields:
+        if gen_title:
             response["title"] = (data.get("title") or "").strip()
-        if "description" in step1_fields:
+        if gen_description:
             response["description"] = (data.get("description") or "").strip()
-        if "model_solution" in step1_fields:
-            sol = (data.get("model_solution") or "").strip()
-            if gen_solution:
-                response["model_solution"] = sol
-            else:
-                internal_solution_text = sol
+        if gen_solution:
+            response["model_solution"] = (data.get("model_solution") or "").strip()
 
-    # Basis für Schritt 2 (Code): neue Lösung, sonst intern generierte, sonst vorhandene
-    solution_for_step2 = response["model_solution"] or internal_solution_text or current_solution
-
-    # Schritt 2: Code-Vorlage + Tests (nur Code-Aufgaben, nur angefordert)
-    if task_type == "code" and (gen_template or gen_tests):
-        template_result = await llm_service.generate_code_template_and_tests(
-            description=response["description"] or current_description,
-            model_solution=solution_for_step2,
+    elif task_type == "code":
+        # ── Code-Aufgabe: Vorlage/Tests/Lösung/Beschreibung/Titel ──
+        code_fields: list[str] = []
+        if gen_template:
+            code_fields.append("code_template")
+        if gen_tests:
+            code_fields += ["public_tests", "private_tests"]
+        if gen_solution:
+            code_fields.append("model_solution")
+        if gen_description:
+            code_fields.append("description")
+        if gen_title:
+            code_fields.append("title")
+        result = await llm_service.generate_code_task_fields(
+            topic=body.get("topic", ""),
+            difficulty=body.get("difficulty", "mittel"),
+            max_points=body.get("max_points", 10),
+            generate_fields=code_fields,
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_solution,
+            current_code_template=current_template,
+            script_chapters=script_chapters,
+            course_media=course_media,
+            references=references,
             config=llm_cfg,
         )
 
-        if not template_result.get("success"):
-            raise HTTPException(500, f"LLM-Fehler (Code/Tests): {template_result.get('error', 'Unbekannter Fehler')}")
+        if not result.get("success"):
+            raise HTTPException(500, f"LLM-Fehler (Code): {result.get('error', 'Unbekannter Fehler')}")
 
-        template_data = template_result.get("data") or {}
-        latency_ms = latency_ms + template_result.get("latency_ms", 0)
+        data = result.get("data") or {}
+        latency_ms = result.get("latency_ms", 0)
 
         if gen_template:
-            response["code_template"] = template_data.get("code_template", "")
+            response["code_template"] = data.get("code_template", "")
         if gen_tests:
-            response["public_tests"] = template_data.get("public_tests", "")
-            response["private_tests"] = template_data.get("private_tests", "")
+            response["public_tests"] = data.get("public_tests", "")
+            response["private_tests"] = data.get("private_tests", "")
+        if gen_solution:
+            response["model_solution"] = (data.get("model_solution") or "").strip()
+        if gen_description:
+            response["description"] = (data.get("description") or "").strip()
+        if gen_title:
+            response["title"] = (data.get("title") or "").strip()
+
+    elif task_type == "workspace":
+        # ── Workspace-Aufgabe: ein LLM-Call für alle angeforderten Felder.
+        # Dateien/Umwelt werden direkt auf Disk/DB geschrieben; Titel/
+        # Aufgabenstellung/Lösungsskizze übernimmt die UI in das Formular.
+        # Ungespeicherte Aufgaben werden NACH dem LLM-Call angelegt.
+        ws_fields: list[str] = []
+        if gen_files:
+            ws_fields += ["files", "folders"]
+        if gen_env:
+            ws_fields.append("env")
+        if gen_solution:
+            ws_fields.append("model_solution")
+        if gen_description:
+            ws_fields.append("description")
+        if gen_title:
+            ws_fields.append("title")
+        # Image-/Engine-Wahl (workspace_image/-engines/proposed_image_spec)
+        # ist nur relevant, wenn Umgebung/Dateien generiert werden.
+        require_image_selection = gen_env or gen_files
+
+        req_task_id = body.get("task_id")
+        task = session.get(Task, req_task_id) if req_task_id else None
+        if task is not None and task.course_id != course_id:
+            task = None
+
+        # Bestehende Dateien als LLM-Kontext (Text, mit Größen-Caps)
+        current_files: list[dict] = []
+        total_chars = 0
+        if task is not None:
+            for row in workspace_service.task_files(session, task):
+                try:
+                    file_bytes = file_disk_path(task.id, row.path).read_bytes()
+                except OSError:
+                    continue
+                try:
+                    text = file_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = "(Binärdatei)"
+                if total_chars >= 120_000:
+                    current_files.append({"path": row.path, "content": "(nicht geladen — Kontext-Limit)"})
+                else:
+                    if len(text) > 20_000:
+                        text = text[:20_000] + "\n(… gekürzt …)"
+                    total_chars += len(text)
+                    current_files.append({"path": row.path, "content": text})
+        # Aktuelle Umgebungsfelder als LLM-Kontext
+        current_env: dict | None = None
+        if task is not None:
+            current_env = {
+                "workspace_timeout": task.workspace_timeout,
+                "workspace_cpu": task.workspace_cpu,
+                "workspace_memory": task.workspace_memory,
+                "workspace_internet": task.workspace_internet,
+                "workspace_main_file": task.workspace_main_file or "",
+            }
+        # Engine-/Image-Spec-Kontext (s. plan-compute-engines-images.md):
+        # das LLM wählt aus registrierten Engines + existierenden Specs oder
+        # schlägt eine neue Spec vor (proposed_image_spec, UI bestätigt).
+        from services import image_spec_service
+        from services.compute_client import ComputeAgentError
+        ws_engines: list[dict] = []
+        ws_specs: list[dict] = []
+        ws_engine_names: set[str] = set()
+        if require_image_selection:
+            ws_status = workspace_service.status(session, course_id)
+            ws_engines = ws_status.get("agents") or []
+            if not ws_engines:
+                raise HTTPException(
+                    400, "Keine Compute-Engine registriert — bitte zuerst in den "
+                         "Einstellungen (Admin-Konsole oder Kurs) eine Engine anlegen.")
+            ws_engine_names = {a["name"] for a in ws_engines}
+            ws_specs = image_spec_service.list_specs(session, course_id)
+            # LLM-Kontext: pro Engine die installierten Image-Specs (mit
+            # Dockerfile), damit das LLM ein passendes Image+Engine-Paar wählt.
+            # Offline-Engine → installierte Images unbekannt (leer).
+            for a in ws_engines:
+                a["installed_specs"] = []
+            if ws_specs:
+                for a in ws_engines:
+                    try:
+                        statuses = workspace_service.client_for(a).images_spec_status(
+                            [{"name": s["name"], "dockerfile": s["dockerfile"]}
+                             for s in ws_specs])
+                    except ComputeAgentError:
+                        continue
+                    for s, st in zip(ws_specs, statuses):
+                        if isinstance(st, dict) and st.get("installed"):
+                            a["installed_specs"].append(
+                                {"name": s["name"], "dockerfile": s["dockerfile"]})
+        ws_result = await llm_service.generate_workspace_task_fields(
+            topic=body.get("topic", ""),
+            difficulty=body.get("difficulty", "mittel"),
+            max_points=body.get("max_points", 10),
+            generate_fields=ws_fields,
+            current_title=current_title,
+            current_description=current_description,
+            current_model_solution=current_solution,
+            current_env=current_env,
+            current_files=current_files or None,
+            engines=ws_engines,
+            image_specs=ws_specs,
+            script_chapters=script_chapters,
+            course_media=course_media,
+            references=references,
+            require_image_selection=require_image_selection,
+            config=llm_cfg,
+        )
+        if not ws_result.get("success"):
+            raise HTTPException(
+                500, f"LLM-Fehler (Workspace): {ws_result.get('error', 'Unbekannter Fehler')}")
+        latency_ms = latency_ms + ws_result.get("latency_ms", 0)
+
+        ws_data = ws_result.get("data") or {}
+        if gen_title:
+            response["title"] = (ws_data.get("title") or "").strip()
+        if gen_description:
+            response["description"] = (ws_data.get("description") or "").strip()
+        if gen_solution:
+            response["model_solution"] = (ws_data.get("model_solution") or "").strip()
+
+        try:
+            cleaned = validate_workspace_generation(ws_data)
+        except ValueError as e:
+            raise HTTPException(422, f"LLM-Output ungültig: {e}") from e
+
+        # "From scratch"-Generierung: Aufgabe NACH dem LLM-Call anlegen,
+        # damit Titel/Aufgabenstellung/Lösungsskizze direkt aus der Antwort
+        # kommen. NUR wenn dafür eine Task-ID gebraucht wird (env/files) —
+        # reine Textfeld-Regenerierung ohne Aufgabe bleibt bei der UI.
+        task_created = False
+        if task is None and (gen_env or gen_files):
+            existing_tasks = session.exec(
+                select(Task)
+                .where(Task.course_id == course_id)
+                .order_by(Task.display_order.desc())  # type: ignore[attr-defined]
+            ).all()
+            next_order = existing_tasks[0].display_order + 1 if existing_tasks else 0
+            try:
+                ws_max_points = int(body.get("max_points", 10))
+            except (TypeError, ValueError):
+                ws_max_points = 10
+            topic_seed = (body.get("topic") or "").strip()
+            task = Task(
+                course_id=course_id,
+                created_by=user_and_course[0].id,  # type: ignore[arg-type]
+                title=(response.get("title") or current_title
+                       or (topic_seed if topic_seed and topic_seed != "allgemein" else "")
+                       or "Neue Workspace-Aufgabe"),
+                task_type=TaskType.WORKSPACE,
+                description=(response.get("description") or current_description) or None,
+                model_solution=(response.get("model_solution") or current_solution) or None,
+                max_points=ws_max_points,
+                display_order=next_order,
+            )
+            session.add(task)
+            session.commit()
+            session.refresh(task)
+            sync_media_usages(session, course_id)
+            task_created = True
+
+        if task is None:
+            # Nur Textfelder angefordert, keine bestehende Aufgabe → nichts
+            # zu schreiben; die UI übernimmt die Antwort in das Formular.
+            response["latency_ms"] = latency_ms
+            return response
+
+        ws_changed = False
+        if gen_env and "env" in cleaned:
+            _apply_workspace_env_fields(task, cleaned["env"])
+            response["workspace_timeout"] = task.workspace_timeout
+            response["workspace_cpu"] = task.workspace_cpu
+            response["workspace_memory"] = task.workspace_memory
+            response["workspace_internet"] = task.workspace_internet
+            response["workspace_main_file"] = task.workspace_main_file
+            ws_changed = True
+        if gen_files:
+            written: list[str] = []
+            for f in cleaned.get("files") or []:
+                file_bytes = f["content"].encode("utf-8")
+                _check_workspace_size(session, task, len(file_bytes))
+                try:
+                    workspace_service.save_task_file(
+                        session, task, _safe_task_path(f["path"]), file_bytes,
+                        access=f.get("access"))
+                except ValueError as e:
+                    raise HTTPException(422, str(e)) from e
+                written.append(f["path"])
+            response["workspace_files"] = written
+            if written:
+                ws_changed = True
+            # Ordner-Zugriffsklassen (Erbung auf alle Dateien darunter)
+            folders = cleaned.get("folders")
+            if folders:
+                for p, a in folders.items():
+                    try:
+                        workspace_service.set_folder_access(session, task, p, a)
+                    except ValueError as e:
+                        raise HTTPException(422, str(e)) from e
+                ws_changed = True
+        if ws_changed:
+            session.add(task)
+            session.commit()
+            _schedule_workspace_sync(task.id)
+        if task_created:
+            response["task_created"] = True
+            response["task_id"] = task.id
+        # Engine + Image-Spec: LLM-Namen müssen existieren (sonst verwerfen)
+        if require_image_selection:
+            if "workspace_image" in cleaned:
+                name = cleaned["workspace_image"]
+                if name and image_spec_service.resolve_spec(session, course_id, name):
+                    task.workspace_image = name
+                    session.add(task)
+                    session.commit()
+                response["workspace_image"] = cleaned["workspace_image"] \
+                    if (name and task.workspace_image == name) else None
+            if "workspace_engines" in cleaned:
+                names = [n for n in (cleaned["workspace_engines"] or [])
+                         if n in ws_engine_names]
+                task.workspace_engines = json.dumps(names) if names else None
+                session.add(task)
+                session.commit()
+                response["workspace_engines"] = names or None
+        if cleaned.get("proposed_image_spec"):
+            response["proposed_image_spec"] = cleaned["proposed_image_spec"]
 
     response["latency_ms"] = latency_ms
     return response
@@ -1235,3 +1729,1075 @@ async def generate_course_report(
         "report": result["data"]["report"],
         "latency_ms": result["latency_ms"],
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# WORKSPACE DATEIEN (Tutor-Datei-Manager)
+#
+# Der Dateibaum = die reale Container-Dateistruktur. Jede Datei/Ordner
+# hat eine Zugriffs-Klasse (s. docs/plan-workspace-access-classes.md):
+#   ✏️ edit      → public, editierbar (im Student-Volume)
+#   🔒 readonly  → public, read-only (shared auf dem Agenten, ro-Mount)
+#   👤 hidden    → privat (Student sieht es nie, nur Grading)
+# Effektive Klasse = restriktivste von (eigene, Ordner-Vorfahren).
+# ═══════════════════════════════════════════════════════════════════
+
+def _safe_task_path(path: str) -> str:
+    """Pfad validieren (relativ, kein ..). Liefert die bereinigte Form."""
+    p = str(path).replace("\\", "/").lstrip("/")
+    if not p or any(x == ".." for x in p.split("/")):
+        raise HTTPException(400, "Ungültiger Dateipfad")
+    return p
+
+
+def _require_workspace_task(task: Task) -> None:
+    if task.task_type.value != "workspace":
+        raise HTTPException(400, "Keine Workspace-Aufgabe.")
+
+
+def _init_artifact_lookup(session: Session, task: Task) -> dict[str, dict]:
+    """Init-Artefakte (Manifest vom Agenten) als Map {path: {scope, size, is_binary}}.
+
+    Agent nicht erreichbar (oder kein Init) → {} — die UI zeigt dann
+    einfach keine [init]-Einträge (degradierter Modus, wie ohne Agenten).
+    """
+    from services.compute_client import ComputeAgentError
+    if not task_has_init(task):
+        return {}
+    for agent in _task_pool_agents(session, task):
+        try:
+            data = workspace_service.client_for(agent).init_artifacts(
+                task.course_id, task.id, "all")
+        except ComputeAgentError:
+            continue
+        out: dict[str, dict] = {}
+        for e in data.get("files", []):
+            p = str(e.get("path") or "")
+            if p:
+                out[p] = {"scope": e.get("scope"), "size": e.get("size", 0),
+                          "is_binary": bool(e.get("is_binary"))}
+        return out
+    return {}
+
+
+def _reject_init_artifact(session: Session, task: Task, path: str) -> None:
+    """Mutationen auf [init]-Artefakte ablehnen (read-only).
+
+    Init-Artefakte (Ergebnisse von init.sh/.init_hidden.sh) liegen auf dem
+    Agenten und entstehen nur per neuem Init-Build — sie sind im
+    Tutor-Dateibaum virtuell und read-only.
+    """
+    if path in _init_artifact_lookup(session, task):
+        raise HTTPException(
+            403, "Init-Artefakt ist read-only (per neuem Init-Build neu erzeugen).")
+
+
+_INIT_ACCESS_BY_SCOPE = {"shared": "readonly", "seed": "edit", "private": "hidden"}
+
+
+def _init_artifact_entries(session: Session, task: Task,
+                           order_map: dict[str, int] | None = None) -> list[dict]:
+    """Init-Artefakte (vom Agenten-Manifest) als virtuelle [init]-Einträge
+    im Dateibaum — am REALEN Pfad (Ziel-Klasse entscheidet den Speicherort):
+    shared→🔒, seed→✏️, private→👤. Read-only, nur per neuem Init-Build
+    änderbar. Ohne Agenten: [] (Baum zeigt dann nur die DB-Dateien).
+
+    ``order_map``: gepflegte Anzeige-Reihenfolge (task_workspace_orders);
+    ohne Eintrag = Ende der Datei-Gruppe (sort_order None)."""
+    existing = {f.path for f in workspace_service.task_files(session, task)}
+    out = []
+    for p, info in sorted(_init_artifact_lookup(session, task).items()):
+        if p in existing:
+            continue  # DB-Datei gewinnt (init-Artefakt wurde überschrieben)
+        acc = _INIT_ACCESS_BY_SCOPE.get(info.get("scope"), "readonly")
+        out.append({
+            "id": f"init:{info.get('scope')}:{p}",
+            "path": p,
+            "size": info.get("size", 0),
+            "access": acc,
+            "file_access": acc,
+            "is_binary": info.get("is_binary", False),
+            "sort_order": (order_map or {}).get(p),
+            "init": True,
+            "updated_at": None,
+        })
+    return out
+
+
+def _read_init_artifact(session: Session, task: Task, path: str,
+                        scope: str) -> Response:
+    """Inhalt eines Init-Artefakts (raw bytes + MIME-Typ, damit Medien
+    wie PNGs in der Preview erscheinen). Pool-Agenten der Reihe nach."""
+    from services.compute_client import ComputeAgentError
+    last_err: ComputeAgentError | None = None
+    for agent in _task_pool_agents(session, task):
+        try:
+            _size, data = workspace_service.client_for(agent).init_artifact_file(
+                task.course_id, task.id, scope, path)
+        except ComputeAgentError as e:
+            last_err = e
+            continue
+        return Response(
+            content=data,
+            media_type=mimetypes.guess_type(path)[0] or "application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+        )
+    raise HTTPException(502, last_err.message if last_err else "Keine Compute-Engine verfügbar")
+
+
+def _check_workspace_size(session: Session, task: Task, extra_bytes: int) -> None:
+    """Gesamtvolumen des Aufgaben-Workspaces begrenzen (512 MB)."""
+    existing = sum(f.size for f in workspace_service.task_files(session, task))
+    if existing + extra_bytes > MAX_WORKSPACE_TOTAL_BYTES:
+        raise HTTPException(
+            413, "Workspace-Volumen überschritten (max. 512 MB gesamt).")
+
+
+@router.get("/tasks/{task_id}/workspace/files")
+async def list_workspace_files(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Dateibaum der Workspace-Aufgabe (alle Klassen, inkl. hidden).
+
+    ``files``: effektive Klasse ``access`` + explizite ``file_access``.
+    ``folders``: explizite Ordner-Klassen (effektiv + eigene Setzung).
+    Dazu die Init-Artefakte (init.sh/.init_hidden.sh-Ergebnisse) als
+    virtuelle read-only [init]-Einträge am realen Pfad (ohne Agenten: leer)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    files = workspace_service.task_files(session, task)
+    fm = workspace_service.folder_map(session, task)
+    om = workspace_service.order_map(session, task)
+    out_files = [{
+        "id": f.id,
+        "path": f.path,
+        "size": f.size,
+        "access": effective_file_access(f.path, f.access, fm),
+        "file_access": f.access,
+        "is_binary": f.is_binary,
+        "sort_order": f.sort_order,
+        "updated_at": f.updated_at.isoformat() if f.updated_at else None,
+    } for f in files]
+    out_files.extend(_init_artifact_entries(session, task, om))
+    out_folders = [{
+        "path": p,
+        "access": effective_folder_access(p, fm),
+        "own": fm.get(p),
+    } for p in sorted(fm)]
+    # no-store: nach Moves/Deletes darf der Browser keine gecachte (alte)
+    # Liste zeigen, sonst wirken Dateien scheinbar „dupliziert“.
+    return JSONResponse(
+        content={
+            "files": out_files,
+            "folders": out_folders,
+            "folder_order": om,  # Ordner + [init]-Artefakte (Anzeige nur)
+            "total": sum(f["size"] for f in out_files),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/tasks/{task_id}/workspace/files/{path:path}")
+async def read_workspace_file(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei-Inhalt laden (für den Editor). Binarys: als octet-stream.
+
+    Fehlende Disk-Dateien, die als [init]-Artefakt gelistet sind, kommen
+    vom Agenten (MIME-typisiert, damit Medien wie PNGs in der Preview
+    erscheinen)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    p = _safe_task_path(path)
+    disk = file_disk_path(task.id, p)
+    if not disk.is_file():
+        art = _init_artifact_lookup(session, task).get(p)
+        if art:
+            return _read_init_artifact(session, task, p, str(art.get("scope") or "shared"))
+        raise HTTPException(404, "Datei nicht gefunden.")
+    if disk.stat().st_size > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß für den Editor (max. 50 MB).")
+    data = disk.read_bytes()
+    is_binary = b"\x00" in data[:1024]
+    headers = {"Cache-Control": "no-store"}
+    if is_binary:
+        headers["Content-Disposition"] = f'attachment; filename="{p.split("/")[-1]}"'
+    return Response(
+        content=data,
+        media_type="application/octet-stream" if is_binary else "text/plain; charset=utf-8",
+        headers=headers,
+    )
+
+
+@router.put("/tasks/{task_id}/workspace/files/{path:path}")
+async def write_workspace_file(
+    task_id: int,
+    path: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Textdatei speichern (Editor-Save)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    p = _safe_task_path(path)
+    _reject_init_artifact(session, task, p)
+    body = await request.json()
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise HTTPException(422, "Feld 'content' (String) fehlt.")
+    data = content.encode("utf-8")
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß (max. 50 MB).")
+    _check_workspace_size(session, task, len(data))
+    row = workspace_service.save_task_file(session, task, p, data)
+    _schedule_workspace_sync(task.id)
+    fm = workspace_service.folder_map(session, task)
+    return {"ok": True, "path": p, "size": row.size,
+            "access": effective_file_access(p, row.access, fm)}
+
+
+@router.post("/tasks/{task_id}/workspace/files")
+async def create_workspace_file(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Neue Textdatei anlegen ({path, content})."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    if body.get("path") in (None, ""):
+        raise HTTPException(422, "Feld 'path' fehlt.")
+    p = _safe_task_path(str(body["path"]))
+    _reject_init_artifact(session, task, p)
+    content = body.get("content") or ""
+    if not isinstance(content, str):
+        raise HTTPException(422, "Feld 'content' muss ein String sein.")
+    data = content.encode("utf-8")
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß (max. 50 MB).")
+    _check_workspace_size(session, task, len(data))
+    row = workspace_service.save_task_file(session, task, p, data)
+    _schedule_workspace_sync(task.id)
+    fm = workspace_service.folder_map(session, task)
+    return {"ok": True, "path": p, "size": row.size,
+            "access": effective_file_access(p, row.access, fm)}
+
+
+@router.post("/tasks/{task_id}/workspace/files/move")
+async def move_workspace_file(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei verschieben/umbenennen ({src, dst}) — Klassen-Wechsel = Sichtbarkeit."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    src = _safe_task_path(str(body.get("src") or ""))
+    dst = _safe_task_path(str(body.get("dst") or ""))
+    arts = _init_artifact_lookup(session, task)
+    if src in arts or dst in arts:
+        raise HTTPException(
+            403, "Init-Artefakt ist read-only (per neuem Init-Build neu erzeugen).")
+    try:
+        row = workspace_service.move_task_file(session, task, src, dst)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _schedule_workspace_sync(task.id)
+    fm = workspace_service.folder_map(session, task)
+    return {"ok": True, "path": row.path, "size": row.size,
+            "access": effective_file_access(row.path, row.access, fm)}
+
+
+@router.post("/tasks/{task_id}/workspace/reorder")
+async def reorder_workspace(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Anzeige-Reihenfolge eines Ordners per Drag & Drop ({order: [Pfade]}).
+
+    Dateien, Ordner UND [init]-Artefakte sind sortierbar (gemischt in
+    einer Gruppe) — rein kosmetisch, keine Datei-/Sync-/Grading-Änderung.
+    """
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    order = body.get("order")
+    if not isinstance(order, list) or not order or len(order) > 500:
+        raise HTTPException(422, "Feld 'order' (Liste von Pfaden) fehlt bzw. zu lang.")
+    paths = [_safe_task_path(str(p)) for p in order]
+    try:
+        workspace_service.reorder_workspace(
+            session, task, paths,
+            virtual_paths=set(_init_artifact_lookup(session, task)))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/upload")
+async def upload_workspace_file(
+    task_id: int,
+    file: UploadFile = File(...),
+    path: str = Form(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Binary-Upload (Datasets etc.)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    p = _safe_task_path(path)
+    _reject_init_artifact(session, task, p)
+    data = await file.read()
+    if len(data) > MAX_WORKSPACE_TOTAL_BYTES:
+        raise HTTPException(413, "Upload zu groß (max. 512 MB).")
+    _check_workspace_size(session, task, len(data))
+    row = workspace_service.save_task_file(session, task, p, data)
+    _schedule_workspace_sync(task.id)
+    fm = workspace_service.folder_map(session, task)
+    return {"ok": True, "path": p, "size": row.size,
+            "access": effective_file_access(p, row.access, fm)}
+
+
+@router.delete("/tasks/{task_id}/workspace/files/{path:path}")
+async def delete_workspace_file(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei aus dem Aufgaben-Workspace entfernen."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    p = _safe_task_path(path)
+    _reject_init_artifact(session, task, p)
+    workspace_service.delete_task_file(session, task, p)
+    _schedule_workspace_sync(task.id)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/access")
+async def set_workspace_access(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Zugriffs-Klasse einer Datei oder eines Ordners setzen.
+
+    Body: {path, is_folder, access: null|"readonly"|"hidden"}
+    (null = Datei: erben / Ordner: edit).
+    """
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    p = _safe_task_path(str(body.get("path") or ""))
+    _reject_init_artifact(session, task, p)
+    access = body.get("access")
+    if access not in (None, "readonly", "hidden"):
+        raise HTTPException(422,
+                            "access muss null, 'readonly' oder 'hidden' sein.")
+    try:
+        if body.get("is_folder"):
+            workspace_service.set_folder_access(session, task, p, access)
+        else:
+            workspace_service.set_file_access(session, task, p, access)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _schedule_workspace_sync(task.id)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/folders/move")
+async def move_workspace_folder(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Ordner verschieben/umbenennen ({src, dst}) — DB-Rows (Dateien +
+    Ordner-Klassen) werden mitgezogen."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    src = _safe_task_path(str(body.get("src") or ""))
+    dst = _safe_task_path(str(body.get("dst") or ""))
+    arts = _init_artifact_lookup(session, task)
+    if src in arts or dst in arts:
+        raise HTTPException(
+            403, "Init-Artefakt ist read-only (per neuem Init-Build neu erzeugen).")
+    try:
+        workspace_service.move_folder(session, task, src, dst)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _schedule_workspace_sync(task.id)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/sync")
+async def sync_workspace(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Asset-Sync + Init-Build manuell anstoßen (Retry-Button).
+
+    Läuft im Hintergrund; der Status ist danach in
+    task.workspace_assets_status (per GET /tasks/{id} pollen).
+    """
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    _schedule_workspace_sync(task.id)
+    return {"ok": True, "message": "Sync gestartet."}
+
+
+@router.post("/tasks/{task_id}/workspace/init")
+async def workspace_init_build(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Task-Image (init.sh) (neu) bauen — Force-Rebuild-Button.
+
+    Der Init-Build ist über den init-Hash idempotent; ein echter Rebuild
+    passiert, wenn init.sh oder das Image sich geändert haben. Läuft
+    wie der Sync im Hintergrund (on_task_saved → init_build je Agent).
+    """
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    _schedule_workspace_sync(task.id)
+    return {"ok": True, "message": "Init-Build gestartet."}
+
+
+@router.get("/tasks/{task_id}/workspace/init-status")
+async def workspace_init_status(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Live-Init-Status je Engine (none|ready|building|failed|idle).
+
+    Wird von der Aufgaben-UI gepollt, solange ein Init-Build läuft
+    (bzw. nach einem Force-Rebuild).
+    """
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    from services.compute_client import ComputeAgentError
+    if not task_has_init(task):
+        return {"agents": [], "status": "none"}
+    from services import image_spec_service
+    try:
+        resolved = image_spec_service.resolve_task_image(session, task)
+    except image_spec_service.ImageSpecError as e:
+        return {"agents": [], "status": "failed", "error": str(e)}
+    if resolved is None:
+        return {"agents": [], "status": "failed",
+                "error": "Workspace-Image nicht auflösbar (Image-Spec fehlt?)"}
+    init_hash = task_init_hash(session, task, resolved["image"])
+    agents = _task_pool_agents(session, task)
+    out = []
+    for agent in agents:
+        try:
+            st = await asyncio.to_thread(
+                workspace_service.client_for(agent).init_status,
+                task.course_id, task.id, init_hash)
+        except ComputeAgentError as e:
+            st = {"status": "failed", "error": e.message}
+        st["agent"] = agent["name"]
+        st["url"] = agent["url"]
+        out.append(st)
+    overall = "ready"
+    for st in out:
+        if st.get("status") in ("failed", "building"):
+            overall = st["status"]
+            break
+        if st.get("status") == "idle":
+            overall = "idle"
+    return {"agents": out, "status": overall, "init_hash": init_hash}
+
+
+@router.post("/tasks/{task_id}/workspace/init/stop")
+async def workspace_init_stop(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Aktiven Init-Build abbrechen (je Engine des Pools)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    from services.compute_client import ComputeAgentError
+    from services import image_spec_service
+    if not task_has_init(task):
+        return {"ok": True, "stopped": []}
+    try:
+        resolved = image_spec_service.resolve_task_image(session, task)
+    except image_spec_service.ImageSpecError:
+        resolved = None
+    if resolved is None:
+        return {"ok": True, "stopped": []}
+    init_hash = task_init_hash(session, task, resolved["image"])
+    agents = _task_pool_agents(session, task)
+    stopped = []
+    for agent in agents:
+        try:
+            await asyncio.to_thread(
+                workspace_service.client_for(agent).init_stop,
+                task.course_id, task.id, init_hash)
+            stopped.append(agent["name"])
+        except ComputeAgentError:
+            pass
+    return {"ok": True, "stopped": stopped}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WORKSPACE: MUSTERLÖSUNG-TESTLAUF (Tutor, 🧪-Button)
+# ═══════════════════════════════════════════════════════════════════
+
+async def _test_run_from_db(session: Session, user: User, run_id: str,
+                            stale: bool = False) -> dict:
+    """Persistierten Testlauf aus der DB zurückgeben (Agent-404-Fallback).
+
+    stale=True: Agent kennt den Lauf nicht mehr (z. B. nach Neustart) →
+    noch „running“ stehende Rows werden auf „killed“ gesetzt.
+    """
+    run = session.exec(select(WorkspaceRun).where(
+        WorkspaceRun.run_id == run_id,
+        WorkspaceRun.student_id == user.id,
+    )).first()
+    if run is None:
+        raise HTTPException(404, "Lauf nicht gefunden.")
+    if stale and run.status == WorkspaceRunStatus.RUNNING:
+        run.status = WorkspaceRunStatus.KILLED
+        run.finished_at = datetime.now()
+        run.stderr = ((run.stderr or "") +
+                      "\n[agent] Lauf nach Agent-Neustart nicht mehr verfügbar").strip()
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+    return {
+        "run_id": run.run_id,
+        "status": run.status.value,
+        "exit_code": run.exit_code,
+        "stdout": run.stdout or "",
+        "stderr": run.stderr or "",
+    }
+
+
+@router.post("/tasks/{task_id}/workspace/test-run")
+async def workspace_test_run(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Musterlösung-Testlauf (🧪): ephemerer Container mit frischem
+    Volume, alle Task-Dateien inkl. 👤 injiziert, führt .run_solution.sh
+    aus (Overlay .solution/ + run.sh + test.sh + .test_private.sh).
+    Das Lauf-Workspace wird nach dem finalen Status deterministisch
+    gelöscht."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    if not workspace_service.is_enabled(session, task.course_id):
+        raise HTTPException(503, "Compute für diesen Kurs ist nicht aktiv.")
+    from services.compute_client import ComputeAgentError
+    agent = workspace_service.pick_task_agent(session, task)
+    if agent is None:
+        raise HTTPException(503, workspace_service.pick_agent_error(
+            session, task.course_id, workspace_service.task_engine_names(task)))
+    files = {f.path for f in workspace_service.task_files(session, task)}
+    if RUN_SOLUTION_SCRIPT not in files:
+        raise HTTPException(
+            400, f"Kein {RUN_SOLUTION_SCRIPT} hinterlegt — die Musterlösung "
+                 "kann nicht getestet werden.")
+    client = workspace_service.client_for(agent)
+    key = test_run_key(task)
+    command = f"bash {RUN_SOLUTION_SCRIPT}"
+    try:
+        try:
+            await asyncio.to_thread(client.delete_workspace, key)
+        except ComputeAgentError:
+            pass
+        starter = workspace_service.test_run_starter_files(session, task)
+        spec = workspace_service.workspace_spec_for_agent(session, task, agent)
+        await asyncio.to_thread(
+            client.create_workspace, key, spec, starter_files=starter or None)
+        result = await asyncio.to_thread(
+            client.start_run, key, command, task.workspace_timeout)
+    except ComputeAgentError as e:
+        raise HTTPException(
+            e.status if e.status in (400, 404, 409, 413, 422) else 502,
+            e.message)
+    workspace_service.record_run(session, task, user.id, command, result)
+    return {
+        "run_id": result.get("run_id"),
+        "async": True,
+        "status": result.get("status", "queued"),
+    }
+
+
+@router.get("/tasks/{task_id}/workspace/test-runs/{run_id}")
+async def workspace_test_run_status(
+    task_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Status eines Testlaufs (Live-Log); beim finalen Status räumt das
+    Backend das ephemere Lauf-Workspace deterministisch auf."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    from services.compute_client import ComputeAgentError
+    agent = workspace_service.pick_task_agent(session, task)
+    if agent is None:
+        return await _test_run_from_db(session, user, run_id, stale=True)
+    client = workspace_service.client_for(agent)
+    key = test_run_key(task)
+    try:
+        status = await asyncio.to_thread(client.run_status, key, run_id)
+    except ComputeAgentError as e:
+        if e.status == 404:
+            return await _test_run_from_db(session, user, run_id, stale=True)
+        raise HTTPException(502, e.message)
+    # Normalisierung: Agent liefert stdout/stderr als Zeilenliste
+    for field in ("stdout", "stderr"):
+        if isinstance(status.get(field), list):
+            status[field] = "\n".join(status[field])
+    run = session.exec(select(WorkspaceRun).where(
+        WorkspaceRun.run_id == run_id,
+        WorkspaceRun.student_id == user.id,
+    )).first()
+    if run is not None:
+        workspace_service.update_run_from_status(session, task, status)
+    if status.get("status") not in ("running", "queued"):
+        try:
+            await asyncio.to_thread(client.delete_workspace, key)
+        except ComputeAgentError:
+            pass
+    return status
+
+
+@router.post("/tasks/{task_id}/workspace/test-runs/{run_id}/stop")
+async def workspace_test_run_stop(
+    task_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Laufenden Musterlösung-Testlauf stoppen."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    from services.compute_client import ComputeAgentError
+    agent = workspace_service.pick_task_agent(session, task)
+    if agent is None:
+        raise HTTPException(503, "Kein Compute-Agent verfügbar.")
+    client = workspace_service.client_for(agent)
+    key = test_run_key(task)
+    try:
+        await asyncio.to_thread(client.stop_run, key, run_id)
+    except ComputeAgentError as e:
+        if e.status == 409:
+            raise HTTPException(404, "Lauf nicht (mehr) aktiv.")
+        raise HTTPException(502, e.message)
+    return {"ok": True}
+
+
+@router.get("/tasks/{task_id}/workspace/compute-status")
+async def workspace_compute_status(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Compute-Status für die Aufgaben-UI (Banner degradierte Modus)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    status = workspace_service.status(session, task.course_id)
+    agent = workspace_service.pick_task_agent(session, task)
+    status["task_agent"] = agent["name"] if agent else None
+    return status
+
+
+@router.get("/tasks/{task_id}/package")
+async def download_task_package(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Tutor-Download-Paket (Aufgaben-Vorlage): Vollpaket inkl. .solution/
+    .tests/ und compose mit verify-Service. ?role=student liefert die
+    Student-Variante (ohne private Dateien) zum Weitergeben."""
+    from services.compose_gen import build_package
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    role = request.query_params.get("role") or "tutor"
+    if role not in ("tutor", "student"):
+        role = "tutor"
+    try:
+        fname, data = await asyncio.to_thread(build_package, task, role, None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/tasks/{task_id}/submissions/{submission_id}/package")
+async def download_submission_package(
+    task_id: int,
+    submission_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Tutor-Download-Paket einer Einreichung (Student-Dateien + private
+    Dateien + verify-Service). ?role=student → nur die Student-Variante
+    (z.B. zur Rückgabe an den Studenten)."""
+    from services.compose_gen import build_package
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    submission = session.get(Submission, submission_id)
+    if not submission or submission.task_id != task.id:
+        raise HTTPException(404, "Einreichung nicht gefunden.")
+    role = request.query_params.get("role") or "tutor"
+    if role not in ("tutor", "student"):
+        role = "tutor"
+    try:
+        fname, data = await asyncio.to_thread(build_package, task, role, submission)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# WORKSPACE: RERUN + RUN-HISTORIE (Tutor)
+# ═══════════════════════════════════════════════════════════════════
+
+async def _run_rerun_background(task_id: int, submission_id: int, run_db_id: int) -> None:
+    """Test-Lauf (hiddenes test_private.sh) einer Einreichung im
+    Hintergrund (eigener Session; spiegelt den Grading-Lauf aus
+    grading_service._grade_workspace)."""
+    from services.compute_client import ComputeAgentError
+    from services.workspace_service import MAX_LOG_CHARS
+
+    with Session(engine) as bg_session:
+        run = bg_session.get(WorkspaceRun, run_db_id)
+        if run is None:
+            return
+        task = bg_session.get(Task, task_id)
+        submission = bg_session.get(Submission, submission_id)
+        if not (task and submission):
+            run.status = WorkspaceRunStatus.KILLED
+            run.stderr = "[rerun] Aufgabe oder Einreichung nicht mehr vorhanden"
+            run.finished_at = datetime.now()
+            bg_session.add(run)
+            bg_session.commit()
+            return
+
+        client = None
+        key = None
+        try:
+            judge = workspace_service.judge_script_path(bg_session, task)
+            command = f"bash {judge}" if judge else None
+            if not command:
+                raise ValueError(
+                    "Kein .test_private.sh (hidden) hinterlegt")
+            agent = workspace_service.pick_task_agent(bg_session, task)
+            if agent is None:
+                raise ValueError("Kein Compute-Agent für diesen Kurs verfügbar")
+            client = workspace_service.client_for(agent)
+            key = workspace_service.grading_key(task, submission.id)
+            run.command = command
+            bg_session.add(run)
+            bg_session.commit()
+
+            try:
+                await asyncio.to_thread(client.delete_workspace, key)
+            except ComputeAgentError:
+                pass
+            starter = workspace_service.grading_starter_files(
+                bg_session, task, submission)
+            spec_for_agent = workspace_service.workspace_spec_for_agent(
+                bg_session, task, agent)
+            await asyncio.to_thread(
+                client.create_workspace, key, spec_for_agent,
+                starter_files=starter or None)
+            result = await asyncio.to_thread(
+                client.exec_sync, key, command, task.workspace_timeout)
+            run.status = (WorkspaceRunStatus.TIMEOUT if result.get("timed_out")
+                          else WorkspaceRunStatus.DONE)
+            run.exit_code = result.get("exit_code")
+            run.stdout = str(result.get("stdout") or "")[-MAX_LOG_CHARS:]
+            run.stderr = str(result.get("stderr") or "")[-MAX_LOG_CHARS:]
+        except Exception as e:  # noqa: BLE001 — Fehler landet in stderr der Run-Row
+            if run.status == WorkspaceRunStatus.RUNNING:
+                run.status = WorkspaceRunStatus.KILLED
+            err = f"[rerun] {e}"
+            run.stderr = (run.stderr + chr(10) + err) if run.stderr else err
+        run.finished_at = datetime.now()
+        bg_session.add(run)
+        bg_session.commit()
+        if client is not None and key is not None:
+            try:
+                await asyncio.to_thread(client.delete_workspace, key)
+            except Exception:  # noqa: BLE001 — Best-Effort-Cleanup
+                pass
+
+
+@router.post("/tasks/{task_id}/submissions/{submission_id}/rerun")
+async def rerun_submission(
+    task_id: int,
+    submission_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Führt den Verify-Lauf einer Workspace-Einreichung neu aus (unabhängiger
+    Testlauf neben dem Grading). Erscheint in der Run-Historie der Einreichung."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    submission = session.get(Submission, submission_id)
+    if not submission or submission.task_id != task.id:
+        raise HTTPException(404, "Einreichung nicht gefunden.")
+    if not submission.workspace_snapshot:
+        raise HTTPException(400, "Kein Workspace-Snapshot bei dieser Einreichung.")
+    if not workspace_service.is_enabled(session, task.course_id):
+        raise HTTPException(503, "Compute für diesen Kurs ist nicht aktiv.")
+
+    run = WorkspaceRun(
+        run_id=f"rerun-{int(time.time() * 1000)}-{submission.id}",
+        task_id=task.id,
+        student_id=submission.student_id,
+        submission_id=submission.id,
+        command="",
+        started_at=datetime.now(),
+        status=WorkspaceRunStatus.RUNNING,
+    )
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    spawn_job(_run_rerun_background(task.id, submission.id, run.id))
+    return {"run_id": run.id, "status": "running"}
+
+
+@router.get("/tasks/{task_id}/submissions/{submission_id}/runs")
+async def list_submission_runs(
+    task_id: int,
+    submission_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Run-Historie einer Einreichung (Grading-Läufe + Tutor-Reruns), neueste zuerst."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    submission = session.get(Submission, submission_id)
+    if not submission or submission.task_id != task.id:
+        raise HTTPException(404, "Einreichung nicht gefunden.")
+    runs = session.exec(
+        select(WorkspaceRun)
+        .where(WorkspaceRun.submission_id == submission.id)
+        .order_by(WorkspaceRun.started_at.desc())  # type: ignore[attr-defined]
+    ).all()[:20]
+    return {
+        "runs": [
+            {
+                "id": r.id,
+                "run_id": r.run_id,
+                "command": r.command,
+                "status": r.status.value,
+                "exit_code": r.exit_code,
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+                "stdout": (r.stdout or "")[-20_000:],
+                "stderr": (r.stderr or "")[-20_000:],
+            }
+            for r in runs
+        ]
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KURS-COMPUTE-SETTINGS (PROF/ADMIN)
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_course_prof_admin(user: User, course_id: int, session: Session) -> None:
+    """PROF im Kurs oder globaler Admin (Compute-Settings ändern)."""
+    if user.role == GlobalUserRole.ADMIN:
+        return
+    membership = session.exec(
+        select(UserCourse)
+        .where(UserCourse.user_id == user.id)
+        .where(UserCourse.course_id == course_id)
+    ).first()
+    if not membership or membership.role_in_course != CourseRole.PROF:
+        raise HTTPException(403, "Nur PROF/Admin dürfen die Compute-Settings ändern.")
+
+
+def _compute_settings_payload(session: Session, course_id: int) -> dict:
+    """Kurs-Overrides (None = global) + effektiv gültige Konfiguration
+    (Agenten ohne API-Key)."""
+    cs = session.exec(
+        select(CourseSettings).where(CourseSettings.course_id == course_id)
+    ).first()
+    effective = get_effective_compute_config(session, course_id)
+    return {
+        "overrides": {
+            "compute_enabled": cs.compute_enabled if cs else None,
+            "compute_gpu_enabled": cs.compute_gpu_enabled if cs else None,
+            "compute_agents": cs.compute_agents if cs else None,
+        },
+        "effective": {
+            "enabled": effective["enabled"],
+            "gpu_enabled": effective["gpu_enabled"],
+            "source": effective["source"],
+            "agents": [
+                {k: v for k, v in a.items() if k != "key"}
+                for a in effective["agents"]
+            ],
+        },
+    }
+
+
+@router.get("/courses/{course_id}/compute-settings")
+async def get_compute_settings(
+    course_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Overrides + effektiv gültige Compute-Konfiguration."""
+    _check_course_prof_admin(user, course_id, session)
+    return _compute_settings_payload(session, course_id)
+
+
+@router.get("/courses/{course_id}/compute/engines")
+async def course_compute_engines(
+    course_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Effektive Compute-Engines des Kurses mit Health + GPU (detektiert).
+
+    Für die UI-Auswahl (Task-Editor: Engine-Dropdown, Kurs-Settings:
+    Install-Picker). Health-Cache (30 s) wird bewusst genutzt.
+    """
+    _check_course_prof_admin(user, course_id, session)
+    return workspace_service.status(session, course_id)
+
+
+class CourseComputeTestRequest(SQLModel):
+    url: Optional[str] = ""
+    key: Optional[str] = ""
+    name: Optional[str] = ""
+
+
+@router.post("/courses/{course_id}/compute/test")
+async def course_compute_test(
+    course_id: int,
+    data: CourseComputeTestRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Einzelne Engine testen (ohne Cache, frische Health-Abfrage).
+
+    url+key: direkt aus dem Formular (neue, noch nicht gespeicherte
+    Kurs-Engine); sonst name: aus der effektiven Registry — so lassen
+    sich auch globale Engines testen, deren Keys der Kurs-UI verborgen
+    bleiben.
+    """
+    _check_course_prof_admin(user, course_id, session)
+    from services.compute_client import ComputeAgentError, ComputeClient
+
+    url = (data.url or "").strip().rstrip("/")
+    key = data.key or ""
+    if not url and data.name:
+        agent = next(
+            (a for a in workspace_service.get_agents(session, course_id)
+             if a["name"] == data.name),
+            None,
+        )
+        if agent is None:
+            raise HTTPException(404, f"Engine {data.name!r} ist nicht registriert.")
+        url = agent["url"]
+        key = agent["key"]
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return {"ok": False, "error": "URL muss mit http:// beginnen."}
+    client = ComputeClient(url=url, key=key or None)
+    try:
+        info = client.health(timeout=8.0)
+        return {
+            "ok": bool(info.get("docker")),
+            "docker": bool(info.get("docker")),
+            "gpu": bool(info.get("gpu")),
+            "gpus": info.get("gpus") or [],
+            "gpu_info": info.get("gpu_info") or "",
+            "workspaces": info.get("workspaces"),
+            "error": None if info.get("docker") else "Docker-Daemon nicht erreichbar",
+        }
+    except ComputeAgentError as e:
+        return {"ok": False, "docker": False, "gpu": False,
+                "workspaces": None, "error": e.message}
+
+
+@router.put("/courses/{course_id}/compute-settings")
+async def put_compute_settings(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Kurs-Overrides setzen. `null` = Reset auf Global/Standard.
+
+    Raw-JSON statt Pydantic, damit `null` (Reset) von "Feld fehlt"
+    unterscheidbar bleibt.
+    """
+    _check_course_prof_admin(user, course_id, session)
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Ungültiges JSON.") from None
+    if not isinstance(body, dict):
+        raise HTTPException(400, "JSON-Objekt erwartet.")
+
+    cs = session.exec(
+        select(CourseSettings).where(CourseSettings.course_id == course_id)
+    ).first()
+    if cs is None:
+        cs = CourseSettings(course_id=course_id)
+
+    for key in ("compute_enabled", "compute_gpu_enabled"):
+        if key in body:
+            val = body[key]
+            if val is not None and not isinstance(val, bool):
+                raise HTTPException(422, f"{key} muss true/false/null sein.")
+            setattr(cs, key, val)
+
+    if "compute_agents" in body:
+        val = body["compute_agents"]
+        if val is not None:
+            if not isinstance(val, str) or not val.strip():
+                raise HTTPException(422, "compute_agents muss JSON-Text oder null sein.")
+            try:
+                parsed = json.loads(val)
+            except json.JSONDecodeError as e:
+                raise HTTPException(422, f"compute_agents: Ungültiges JSON ({e})") from e
+            if not isinstance(parsed, list) or any(not isinstance(a, dict) for a in parsed):
+                raise HTTPException(422, "compute_agents muss eine JSON-Liste von Objekten sein.")
+        cs.compute_agents = val if val else None
+
+    session.add(cs)
+    session.commit()
+    return {"ok": True, **_compute_settings_payload(session, course_id)}

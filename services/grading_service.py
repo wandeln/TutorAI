@@ -8,15 +8,18 @@ Orchestriert den kompletten Korrektur-Workflow:
 4. Ergebnis an Frontend zurueckgeben
 """
 
+import asyncio
 import json
 import re
+import time
+from datetime import datetime
 from typing import Optional
 from sqlmodel import Session, select
 
 from services.settings_resolver import get_effective_llm_config
 from database.models import (
     Task, Submission, Feedback, FeedbackSource,
-    SubmissionStatus,
+    SubmissionStatus, WorkspaceRun, WorkspaceRunStatus,
 )
 from services.llm_service import LLMService
 from services.sandbox_runner import SandboxedRunner
@@ -68,6 +71,8 @@ class GradingService:
         """
         if task.task_type.value == "code":
             result = await self._grade_code(task, submission, session, custom_prompt)
+        elif task.task_type.value == "workspace":
+            result = await self._grade_workspace(task, submission, session, custom_prompt)
         else:
             result = await self._grade_text(task, submission, session, custom_prompt)
 
@@ -211,6 +216,175 @@ class GradingService:
             "tests_passed": sum(1 for t in test_results if t.get("passed")),
             "tests_total": len(test_results),
         }
+
+    # ──────────────────────────────────────────────────────────────
+    # WORKSPACE-AUFGABEN (frischer Einweg-Container + LLM)
+    # ──────────────────────────────────────────────────────────────
+
+    async def _grade_workspace(
+        self, task: Task, submission: Submission, session: Session,
+        custom_prompt: Optional[str] = None,
+    ) -> dict:
+        """
+        Workspace-Aufgabe: 1) Einweg-Container mit Student-Snapshot +
+        hidden-Dateien aufsetzen und das (hidden) Judge-Skript
+        test_private.sh ausfuehren,
+        2) LLM korrigiert (Dateien + Test-Output).
+        Ohne hiddenes test_private.sh: Grading OHNE private Tests
+        (kein Fallback auf andere Tests).
+        """
+        from services.workspace_service import workspace_service
+        from services.compute_client import ComputeAgentError, ComputeAgentUnavailable
+
+        judge = workspace_service.judge_script_path(session, task)
+        verify = f"bash {judge}" if judge else None
+        default_timeout = int(task.workspace_timeout or 900)
+
+        agent = workspace_service.pick_task_agent(session, task)
+        if agent is None:
+            raise ComputeAgentUnavailable(
+                "Kein Compute-Agent für das Grading verfügbar")
+        client = workspace_service.client_for(agent)
+        key = workspace_service.grading_key(task, submission.id)
+
+        # Lauf-Historie: WorkspaceRun-Row (Tutor sieht den Grading-Lauf in der Review)
+        from services.workspace_service import MAX_LOG_CHARS
+        run = WorkspaceRun(
+            run_id=f"grade-{submission.id}-{int(time.time() * 1000)}",
+            task_id=task.id,
+            student_id=submission.student_id,
+            submission_id=submission.id,
+            command=verify or "",
+            started_at=datetime.now(),
+            status=WorkspaceRunStatus.RUNNING,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        run_finalized = False
+
+        def _finalize_run(status: WorkspaceRunStatus, exit_code: int | None = None,
+                          stdout: str = "", stderr: str = "") -> None:
+            nonlocal run_finalized
+            if run_finalized:
+                return
+            run.status = status
+            run.exit_code = exit_code
+            if stdout:
+                run.stdout = stdout[-MAX_LOG_CHARS:]
+            if stderr:
+                run.stderr = stderr[-MAX_LOG_CHARS:]
+            run.finished_at = datetime.now()
+            session.add(run)
+            session.commit()
+            run_finalized = True
+
+        test_output = ""
+        try:
+            # Einweg-Workspace: Student-Snapshot + hidden-Dateien
+            # (frisch von der Disk). Alte Überreste (Retry) vorher entfernen.
+            try:
+                await asyncio.to_thread(client.delete_workspace, key)
+            except ComputeAgentError:
+                pass
+            starter = workspace_service.grading_starter_files(
+                session, task, submission)
+            spec_for_agent = workspace_service.workspace_spec_for_agent(
+                session, task, agent)
+            await asyncio.to_thread(
+                client.create_workspace, key, spec_for_agent,
+                starter_files=starter or None)
+
+            if verify:
+                result = await asyncio.to_thread(
+                    client.exec_sync, key, verify, default_timeout)
+                test_output = self._format_workspace_run(result)
+                _finalize_run(
+                    WorkspaceRunStatus.TIMEOUT if result.get("timed_out")
+                    else WorkspaceRunStatus.DONE,
+                    result.get("exit_code"),
+                    str(result.get("stdout") or ""),
+                    str(result.get("stderr") or ""),
+                )
+            else:
+                test_output = "(Keine privaten Tests hinterlegt — Grading ohne private Tests)"
+                _finalize_run(WorkspaceRunStatus.DONE, 0)
+        except Exception as e:  # noqa: BLE001 — Run-Row finalisieren, Fehler weiterwerfen
+            if not run_finalized:
+                try:
+                    _finalize_run(
+                        WorkspaceRunStatus.KILLED,
+                        stderr=f"[grading] Fehler beim Verify-Lauf: {e}",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            raise
+        finally:
+            try:
+                await asyncio.to_thread(client.delete_workspace, key)
+            except ComputeAgentError:
+                pass
+
+        ctx = workspace_service.grade_context(session, task, submission)
+
+        llm_cfg = self.get_llm_config(task, session)
+        llm_result = await self.llm.grade_workspace_task(
+            task_description=task.description,
+            private_files=self._format_files(ctx.get("private_files") or {}) or
+                              "(Keine privaten Dateien hinterlegt — bitte eigenstaendig bewerten)",
+            student_files=self._format_files(ctx.get("student_files") or {}),
+            test_results=test_output,
+            max_points=task.max_points,
+            custom_prompt=custom_prompt,
+            config=llm_cfg,
+        )
+
+        data = llm_result.get("data", {})
+        points = float(data.get("points", 0))
+        comment = data.get("feedback", "Kein Feedback generiert.")
+
+        feedback = Feedback(
+            submission_id=submission.id,
+            source=FeedbackSource.LLM,
+            points_earned=points,
+            comment=comment,
+        )
+        session.add(feedback)
+        session.commit()
+        session.refresh(feedback)
+
+        return {
+            "points": points,
+            "max_points": task.max_points,
+            "feedback": feedback,
+            "comment": comment,
+        }
+
+    @staticmethod
+    def _format_files(files: dict[str, str]) -> str:
+        """Datei-Verzeichnis (Pfad → Text) für den LLM-Prompt."""
+        if not files:
+            return "(Keine Dateien hintergelegt)"
+        parts = []
+        for name in sorted(files):
+            parts.append(f"=== {name} ===\n{files[name]}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_workspace_run(result: dict) -> str:
+        """Verify-Lauf (Agent-Exec) als lesbaren Text für den LLM."""
+        lines = []
+        if result.get("timed_out"):
+            lines.append("⏰ TIMEOUT: Zeitlimit des Testlaufs ueberschritten")
+        else:
+            lines.append(f"Exit-Code: {result.get('exit_code')}")
+        stdout = str(result.get("stdout") or "").strip()
+        stderr = str(result.get("stderr") or "").strip()
+        if stdout:
+            lines.append(f"--- stdout ---\n{stdout[-20000:]}")
+        if stderr:
+            lines.append(f"--- stderr ---\n{stderr[-20000:]}")
+        return "\n".join(lines) if lines else "(Kein Output)"
 
     def _format_test_results(self, sandbox_result: dict) -> str:
         """Formatiert Sandbox-Output als lesbaren Text fuer den LLM."""

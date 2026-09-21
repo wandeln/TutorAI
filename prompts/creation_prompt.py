@@ -1,9 +1,14 @@
 """
-Prompt-Template für die einheitliche LLM-gestützte Aufgabengenerierung.
+Prompt-Template für die LLM-gestützte Aufgabengenerierung von TEXT-Aufgaben.
 
 Tutor gibt Thema + Schwierigkeit + zu generierende Felder (Tick-Boxen) ein →
 LLM generiert die angeforderten Felder (Titel, Aufgabenstellung, Musterlösung)
 neu bzw. ändert vorhandene Inhalte.
+
+Code- und Workspace-Aufgaben laufen je über EINEN eigenen Single-Prompt:
+- Code: prompts/code_task_prompt.py (CODE_TASK_PROMPT_TEMPLATE)
+- Workspace: prompts/workspace_task_prompt.py (WORKSPACE_TASK_PROMPT_TEMPLATE)
+
 Ersetzt CREATION_PROMPT_TEMPLATE, MODIFY_TASK_PROMPT_TEMPLATE und
 SOLUTION_PROMPT_TEMPLATE.
 """

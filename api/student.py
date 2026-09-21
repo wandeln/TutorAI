@@ -4,12 +4,15 @@ Student-Endpoints: Aufgaben ansehen, Lösungen einreichen, Tests ausführen.
 Rolle: Student (im Kurs)
 """
 
+import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, SQLModel, select
 
 from database.base import get_session
@@ -17,14 +20,26 @@ from database.models import (
     User, Task, Submission, Feedback, HintExchange, ScriptSection,
     TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
+    WorkspaceRun, WorkspaceRunStatus,
 )
 from services.auth_service import get_current_user
+from services.compute_client import (
+    ComputeAgentError,
+    ComputeClient,
+)
 from services.grading_service import GradingService
 from services.import_service import spawn_job
 from services.llm_service import LLMService
 from services.media_service import all_media_for_course
 from services.sandbox_runner import SandboxedRunner
 from services.settings_resolver import get_effective_llm_config
+from services.workspace_service import (
+    MAX_FILE_BYTES,
+    effective_file_access,
+    effective_folder_access,
+    workspace_key,
+    workspace_service,
+)
 
 router = APIRouter(prefix="/api/student", tags=["Student"])
 grading_service = GradingService()
@@ -243,6 +258,23 @@ async def submit_solution(
 
     # Type narrowing: Nach refresh() ist die ID gesetzt
     assert submission.id is not None
+
+    # Workspace-Aufgabe: Loesung = ganzes /workspace-Volume → Snapshot aus
+    # dem Student-Container sichern und an die Einreichung hängen. Bei
+    # Fehlschlag wird die Einreichung verworfen (kein „verlorener“ Versuch).
+    if task.task_type.value == "workspace":
+        try:
+            rel_path = await asyncio.to_thread(
+                workspace_service.save_snapshot,
+                session, task, user.id, submission.id)
+            submission.workspace_snapshot = rel_path
+            session.add(submission)
+            session.commit()
+        except ComputeAgentError as e:
+            session.delete(submission)
+            session.commit()
+            raise HTTPException(
+                503, f"Workspace-Abgabe fehlgeschlagen: {e.message}")
 
     # Grading im Hintergrund starten — spawn_job haelt eine starke Referenz
     # auf den Task, damit er nicht vom GC weggeraeumt wird, waehrend die
@@ -1181,3 +1213,520 @@ async def generate_student_report(
         "report": result["data"]["report"],
         "latency_ms": result["latency_ms"],
     }
+
+
+# =================================================================
+# WORKSPACE (Student-IDE: Dateien + Ausführung im eigenen Container)
+#
+# Alle Endpunkte greifen auf den EIGENEN Container des Nutzers zu
+# (Key = ws-{course}-{task}-{user.id}; Tutoren-Preview via as_student
+# läuft damit auf dem Container des Tutoren-Accounts).
+# Im Container sichtbar: /workspace (editierbares Volumen) + je 🔒-
+# Top-Level-Pfad ein ro-Bind-Mount (geteilte Datasets/Pakete). 👤-Pfade
+# sind nicht gemountet und fließen nie in die Datei-API.
+# =================================================================
+
+def _safe_ws_path(path: str) -> str:
+    """Pfad validieren (relativ, kein ..)."""
+    p = str(path).replace("\\", "/").lstrip("/")
+    if not p or any(x == ".." for x in p.split("/")):
+        raise HTTPException(400, "Ungültiger Dateipfad")
+    return p
+
+
+async def _load_ws_task(task_id: int, session: Session, user: User) -> Task:
+    """Task laden + Kurs-Zugriff + Workspace-Typ prüfen."""
+    task = session.get(Task, task_id)
+    if not task:
+        raise HTTPException(404, "Aufgabe nicht gefunden.")
+    if not _check_course_access(session, user, task.course_id):
+        raise HTTPException(403, "Kein Zugriff auf diese Aufgabe.")
+    if task.task_type.value != "workspace":
+        raise HTTPException(400, "Keine Workspace-Aufgabe.")
+    return task
+
+
+def _ws_client_or_error(session: Session, task: Task) -> ComputeClient:
+    """Gesunden Agent wählen oder 503 (degradierter Modus).
+    Routing über den Engine-Pool der Aufgabe (s. plan-compute-engines-images.md).
+    Zusätzlich: Aufgabe muss lauffähig sein (Image + Engines hinterlegt),
+    sonst graceful 503 — deckt alle Workspace-Endpoints ab."""
+    if not workspace_service.is_enabled(session, task.course_id):
+        raise HTTPException(503, "Workspace-Aufgaben sind derzeit deaktiviert.")
+    not_ready = workspace_service.validate_task_ready(session, task)
+    if not_ready:
+        raise HTTPException(503, not_ready)
+    agent = workspace_service.pick_task_agent(session, task)
+    if agent is None:
+        raise HTTPException(
+            503, workspace_service.pick_agent_error(
+                session, task.course_id, workspace_service.task_engine_names(task)))
+    return workspace_service.client_for(agent)
+
+
+def _agent_http(e: ComputeAgentError) -> HTTPException:
+    """Agent-Fehler → HTTP-Fehler (Agent-5xx → 502)."""
+    status = e.status if e.status < 500 else 502
+    return HTTPException(status, e.message)
+
+
+def _ws_key(task: Task, user: User) -> str:
+    return workspace_key(task.course_id, task.id, user.id)
+
+
+def _ws_effective_access(session: Session, task: Task, path: str) -> str:
+    """Effektive Zugriffs-Klasse eines Pfads (eigene + Ordner-Vorfahren)."""
+    fm = workspace_service.folder_map(session, task)
+    file_acc = {f.path: f.access
+                for f in workspace_service.task_files(session, task)}
+    return effective_file_access(path, file_acc.get(path), fm)
+
+
+def _ws_require_writable(session: Session, task: Task, path: str) -> None:
+    """Studenten schreiben nur Dateien der effektiven Klasse ✏️ edit:
+    👤-Dateien existieren für sie nicht (404), 🔒-Dateien sind read-only (403)."""
+    p = str(path).replace("\\", "/").lstrip("/")
+    acc = _ws_effective_access(session, task, p)
+    if acc == "hidden":
+        raise HTTPException(404, "Datei nicht gefunden.")
+    if acc == "readonly":
+        raise HTTPException(403, "Diese Datei ist read-only (vom Tutor verwaltet).")
+
+
+@router.get("/tasks/{task_id}/workspace/status")
+async def workspace_status(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Workspace-Status für die Lösungs-UI (Container, Preset, degraded).
+
+    Nebeneffekt: Container wird idempotent gesichert (gestartet/erstellt).
+    """
+    task = await _load_ws_task(task_id, session, user)
+    file_paths = {f.path for f in workspace_service.task_files(session, task)}
+    out = {
+        "enabled": workspace_service.is_enabled(session, task.course_id),
+        "degraded": False,
+        "agent": None,
+        "container": None,
+        "error": None,
+        "main_file": task.workspace_main_file,
+        # Buttons pro Skript-Konvention (Datei existiert in der Aufgabe):
+        "has_run": "run.sh" in file_paths,
+        "has_test": "test.sh" in file_paths,
+        "timeout": task.workspace_timeout,
+        "assets": [],
+    }
+    if not out["enabled"]:
+        out["degraded"] = True
+        out["error"] = "Workspace-Aufgaben sind derzeit deaktiviert."
+        return out
+
+    not_ready = workspace_service.validate_task_ready(session, task)
+    if not_ready:
+        out["degraded"] = True
+        out["error"] = not_ready
+        return out
+
+    try:
+        client = _ws_client_or_error(session, task)
+    except HTTPException as e:
+        out["degraded"] = True
+        out["error"] = e.detail
+        return out
+
+    try:
+        ws = await asyncio.to_thread(
+            workspace_service.ensure_workspace, session, task, user.id)
+        out["agent"] = ws.get("agent")
+        out["container"] = {"state": ws.get("state"), "fresh": bool(ws.get("fresh"))}
+        assets = await asyncio.to_thread(client.list_assets, task.course_id, task.id)
+        out["assets"] = [{"path": a.get("path"), "size": a.get("size")} for a in assets]
+    except ComputeAgentError as e:
+        out["degraded"] = True
+        out["error"] = e.message
+    return out
+
+
+@router.get("/tasks/{task_id}/workspace/files")
+async def workspace_list_files(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Dateiliste des eigenen Containers (/workspace)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        files = await asyncio.to_thread(client.list_files, key)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    # Effektive Zugriffs-Klasse je Datei (effektiv inkl. Ordner-Erbung;
+    # 👤-Dateien fehlen im Container automatisch) + gepflegte
+    # (Tutor-)Reihenfolge sort_order aus der DB.
+    fm = workspace_service.folder_map(session, task)
+    file_rows = {f.path: f
+                 for f in workspace_service.task_files(session, task)}
+    for f in files:
+        p = str(f.get("path") or "")
+        row = file_rows.get(p)
+        f["access"] = effective_file_access(p, row.access if row else None, fm)
+        f["sort_order"] = row.sort_order if row else None
+    # Ordner-Klassen (explizite Setzungen — für die Baum-Marker/Fallbacks).
+    out_folders = [{
+        "path": p,
+        "access": effective_folder_access(p, fm),
+        "own": fm.get(p),
+    } for p in sorted(fm)]
+    # no-store: nach Moves/Deletes gecachte (alte) Liste vermeiden.
+    return JSONResponse(
+        content={
+            "files": files,
+            "folders": out_folders,
+            "folder_order": workspace_service.order_map(session, task),
+            "total": sum(f.get("size", 0) for f in files),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/tasks/{task_id}/workspace/files/{path:path}")
+async def workspace_read_file(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei-Inhalt laden (für den Editor). Binarys: als octet-stream."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    p = _safe_ws_path(path)
+    try:
+        data = await asyncio.to_thread(client.read_file, key, p)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß für den Editor (max. 50 MB).")
+    is_binary = b"\x00" in data[:1024]
+    headers = {"Cache-Control": "no-store"}
+    if is_binary:
+        headers["Content-Disposition"] = f'attachment; filename="{p.split("/")[-1]}"'
+    return Response(
+        content=data,
+        media_type="application/octet-stream" if is_binary else "text/plain; charset=utf-8",
+        headers=headers,
+    )
+
+
+@router.put("/tasks/{task_id}/workspace/files/{path:path}")
+async def workspace_write_file(
+    task_id: int,
+    path: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Textdatei speichern (Editor-Save)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    p = _safe_ws_path(path)
+    _ws_require_writable(session, task, p)
+    body = await request.json()
+    content = body.get("content")
+    if not isinstance(content, str):
+        raise HTTPException(422, "Feld 'content' (String) fehlt.")
+    data = content.encode("utf-8")
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß (max. 50 MB).")
+    try:
+        result = await asyncio.to_thread(client.write_file, key, p, data)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True, "path": p, "size": result.get("size")}
+
+
+@router.post("/tasks/{task_id}/workspace/files")
+async def workspace_create_file(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Neue Textdatei anlegen ({path, content})."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    body = await request.json()
+    if not body.get("path"):
+        raise HTTPException(422, "Feld 'path' fehlt.")
+    p = _safe_ws_path(str(body["path"]))
+    _ws_require_writable(session, task, p)
+    content = body.get("content")
+    if content is None:
+        content = ""
+    if not isinstance(content, str):
+        raise HTTPException(422, "Feld 'content' muss ein String sein.")
+    data = content.encode("utf-8")
+    if len(data) > MAX_FILE_BYTES:
+        raise HTTPException(413, "Datei zu groß (max. 50 MB).")
+    try:
+        result = await asyncio.to_thread(client.write_file, key, p, data)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True, "path": p, "size": result.get("size")}
+
+
+@router.post("/tasks/{task_id}/workspace/files/move")
+async def workspace_move_file(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei verschieben/umbenennen ({src, dst}) — nur zwischen Dateien
+    der effektiven Klasse ✏️ edit (🔒/👤-Bereiche bleiben außen vor)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    body = await request.json()
+    src = _safe_ws_path(str(body.get("src") or ""))
+    dst = _safe_ws_path(str(body.get("dst") or ""))
+    if _ws_effective_access(session, task, src) == "hidden":
+        raise HTTPException(404, "Datei nicht gefunden.")
+    if _ws_effective_access(session, task, src) != "edit" \
+            or _ws_effective_access(session, task, dst) != "edit":
+        raise HTTPException(403, "Verschieben ist nur innerhalb der editierbaren Bereiche möglich.")
+    try:
+        await asyncio.to_thread(client.move_file, key, src, dst)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True, "path": dst}
+
+
+@router.delete("/tasks/{task_id}/workspace/files/{path:path}")
+async def workspace_delete_file(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Datei aus dem eigenen Container löschen."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    p = _safe_ws_path(path)
+    _ws_require_writable(session, task, p)
+    try:
+        await asyncio.to_thread(client.delete_file, key, p)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/reset")
+async def workspace_reset(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Workspace auf die Vorlage zurücksetzen.
+
+    Löscht Container + Volume; beim nächsten Status-Aufruf wird der
+    Workspace frisch angelegt und die Starter-Dateien neu geschrieben.
+    """
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        await asyncio.to_thread(client.delete_workspace, key)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/run")
+async def workspace_run(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Task-Skript im eigenen Container ausführen (immer asynchron,
+    Job-Progress im UI). Studenten senden NIE freie Commands.
+
+    Body: {kind: "run"|"test"} — run.sh bzw. test.sh.
+    """
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        raise HTTPException(422, "Body muss JSON sein.")
+    if not isinstance(body, dict):
+        raise HTTPException(422, "Body muss ein JSON-Objekt sein.")
+
+    kind = str(body.get("kind") or "").strip()
+    files = {f.path for f in workspace_service.task_files(session, task)}
+    if kind == "run":
+        if "run.sh" not in files:
+            raise HTTPException(400, "Die Aufgabe hat kein run.sh hinterlegt.")
+        command = "bash run.sh"
+    elif kind == "test":
+        if "test.sh" not in files:
+            raise HTTPException(400, "Die Aufgabe hat keine test.sh hinterlegt.")
+        command = "bash test.sh"
+    else:
+        raise HTTPException(422, "kind muss 'run' oder 'test' sein.")
+
+    try:
+        result = await asyncio.to_thread(
+            client.start_run, key, command, task.workspace_timeout)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    workspace_service.record_run(session, task, user.id, command, result)
+    return {
+        "run_id": result.get("run_id"),
+        "async": True,
+        "status": result.get("status", "queued"),
+    }
+
+
+async def _workspace_run_from_db(
+    session: Session, user: User, run_id: str, stale: bool = False,
+) -> dict:
+    """Persistierten Lauf aus der DB zurückgeben.
+
+    stale=True: Agent kennt den Lauf nicht (z. B. nach Neustart) →
+    noch „running“ stehende Rows werden auf „killed“ gesetzt.
+    """
+    run = session.exec(select(WorkspaceRun).where(
+        WorkspaceRun.run_id == run_id,
+        WorkspaceRun.student_id == user.id,
+    )).first()
+    if run is None:
+        raise HTTPException(404, "Lauf nicht gefunden.")
+    if stale and run.status == WorkspaceRunStatus.RUNNING:
+        run.status = WorkspaceRunStatus.KILLED
+        run.finished_at = datetime.now()
+        run.stderr = ((run.stderr or "") +
+                      "\n[agent] Lauf nach Agent-Neustart nicht mehr verfügbar").strip()
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+    return {
+        "run_id": run.run_id,
+        "status": run.status.value,
+        "exit_code": run.exit_code,
+        "stdout": run.stdout or "",
+        "stderr": run.stderr or "",
+    }
+
+
+@router.get("/tasks/{task_id}/workspace/runs/{run_id}")
+async def workspace_run_status(
+    task_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Status eines Laufs; fertige Läufe werden in der DB persistiert."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        status = await asyncio.to_thread(client.run_status, key, run_id)
+    except ComputeAgentError as e:
+        if e.status == 404:
+            return await _workspace_run_from_db(session, user, run_id, stale=True)
+        raise _agent_http(e)
+    # Normalisierung: Agent liefert stdout/stderr als Zeilenliste
+    for field in ("stdout", "stderr"):
+        if isinstance(status.get(field), list):
+            status[field] = "\n".join(status[field])
+    run = session.exec(select(WorkspaceRun).where(
+        WorkspaceRun.run_id == run_id,
+        WorkspaceRun.student_id == user.id,
+    )).first()
+    if run is not None:
+        workspace_service.update_run_from_status(session, task, status)
+    return status
+
+
+@router.post("/tasks/{task_id}/workspace/runs/{run_id}/stop")
+async def workspace_run_stop(
+    task_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Laufenden Job stoppen."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        await asyncio.to_thread(client.stop_run, key, run_id)
+    except ComputeAgentError as e:
+        if e.status == 409:
+            raise HTTPException(404, "Lauf nicht (mehr) aktiv.")
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.get("/tasks/{task_id}/workspace/history")
+async def workspace_run_history(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Eigene Lauf-Historie (DB, neueste 50; Logs gekürzt)."""
+    task = await _load_ws_task(task_id, session, user)
+    runs = session.exec(
+        select(WorkspaceRun)
+        .where(WorkspaceRun.task_id == task.id)
+        .where(WorkspaceRun.student_id == user.id)
+        .order_by(WorkspaceRun.started_at.desc())
+    ).all()
+    out = []
+    for r in runs[:50]:
+        out.append({
+            "id": r.id,
+            "run_id": r.run_id,
+            "command": r.command,
+            "status": r.status.value,
+            "exit_code": r.exit_code,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "stdout": (r.stdout or "")[-2000:],
+            "stderr": (r.stderr or "")[-2000:],
+        })
+    return {"runs": out}
+
+
+@router.get("/tasks/{task_id}/package")
+async def workspace_download_package(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Student-Download-Paket (Aufgaben-Vorlage): Workspace-Dateien + data/
+    + docker-compose + images/ (öffentliches Basis-Image + dünne Schicht)
+    + README. Enthält bewusst KEINE Musterlösung/private Tests/verify."""
+    from fastapi.responses import Response
+    from services.compose_gen import build_package
+    task = await _load_ws_task(task_id, session, user)
+    try:
+        fname, data = await asyncio.to_thread(build_package, task, "student", None)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

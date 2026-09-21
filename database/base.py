@@ -103,6 +103,12 @@ def migrate_schema():
             "llm_api_url_public": "VARCHAR",
             "llm_api_key_public": "VARCHAR",
             "llm_model_public": "VARCHAR",
+            # Compute/Workspaces (per-Student-Docker-Container, s. plan-workspace-tasks.md)
+            "compute_enabled": "BOOLEAN DEFAULT 0",
+            "compute_agents": "VARCHAR",  # JSON-Liste [{name,url,key,gpu}]
+            "compute_idle_timeout": "INTEGER DEFAULT 1200",
+            "workspace_gpu_enabled": "BOOLEAN DEFAULT 0",
+            "compute_gpu_max_jobs": "INTEGER DEFAULT 8",
         },
         "course_script_sections": {
             "summary": "TEXT",  # Interne LLM-Zusammenfassung (nicht für Studenten)
@@ -116,6 +122,35 @@ def migrate_schema():
         },
         "courses": {
             "toc_visible": "BOOLEAN DEFAULT 1",  # Inhaltsverzeichnis für Studenten sichtbar
+        },
+        "tasks": {
+            # (Legacy-Spalten workspace_spec/workspace_dataset wurden mit dem
+            # Skript-Modell ersetzt — siehe column_drops; Migration:
+            # scripts/migrate_workspace_scripts.py, einmalig gelaufen.)
+            "workspace_main_file": "VARCHAR",  # Editor-Hauptdatei (relativ)
+            "workspace_assets_status": "TEXT",  # JSON je Agent: assets + task_image-Status
+            "workspace_engines": "VARCHAR",  # JSON-Liste Engine-Namen (geordnet) — Engine-Pool
+            "workspace_image": "VARCHAR",  # Image-Spec-Name (Kurs-Scope > global)
+            # Skript-basiertes Workspace-Modell (Umgebung je Aufgabe):
+            "workspace_timeout": "INTEGER DEFAULT 900",  # Run-Timeout (s, 1–7200)
+            "workspace_cpu": "REAL DEFAULT 2",  # CPU-Limit
+            "workspace_memory": "VARCHAR DEFAULT '4g'",  # Memory-Limit
+            "workspace_internet": "BOOLEAN DEFAULT 0",  # Internet für Studenten-Läufe
+        },
+        "submissions": {
+            "workspace_snapshot": "VARCHAR",  # Pfad zu workspace.tar.gz
+        },
+        "task_workspace_files": {
+            "sort_order": "INTEGER",  # manuelle Dateireihenfolge je Ordner (NULL = alphabetisch)
+            "access": "VARCHAR(16)",  # explizite Zugriffs-Klasse (NULL=erben; readonly/hidden)
+        },
+        "workspace_runs": {
+            "submission_id": "INTEGER",  # Grading-/Tutor-Rerun: Link zur Einreichung
+        },
+        "course_settings": {
+            "compute_enabled": "BOOLEAN",  # None = globale Settings (Workspace-Aufgaben)
+            "compute_gpu_enabled": "BOOLEAN",  # None = global (GPU-Passthrough)
+            "compute_agents": "VARCHAR",  # JSON-Liste [{name,url,key,gpu}] (Override)
         },
         "course_materials": {
             "display_order": "INTEGER DEFAULT 0",  # Reihenfolge (mehrere Slide-Decks pro Kurs)
@@ -138,6 +173,14 @@ def migrate_schema():
     column_drops = {
         "course_media": ["is_visible"],  # Sichtbarkeit steuert der einbindende Inhalt
         "course_imports": ["refine_status"],  # Stufe „Nachbesserung“ entfallen
+        # YAML-Spec-Modell abgelöst durch Skripte + Simple-Felder (2026-09);
+        # Migration: scripts/migrate_workspace_scripts.py (einmalig, gelaufen).
+        # Artefakt-Sammlung entfernt (2026-09): Ergebnisdaten kommen per
+        # Test-Output (test.sh/.test_private.sh echoen Metriken knapp).
+        "tasks": ["workspace_spec", "workspace_dataset", "workspace_artifacts"],
+        # is_public (Pfad-Konvention) abgelöst durch explizite access-Klassen;
+        # Migration: scripts/migrate_workspace_access.py (einmalig).
+        "task_workspace_files": ["is_public"],
     }
     is_sqlite = "sqlite" in DATABASE_URL
 

@@ -24,11 +24,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 import hashlib
+import json
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jinja2 import TemplateNotFound
 from sqlmodel import Session, select
 
 from config import BASE_DIR, DEBUG, LLM_TIMEOUT
@@ -54,6 +56,8 @@ from database.models import (
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
 from services import media_service, import_service
+from services import image_spec_service
+from services.workspace_service import workspace_service
 from services.slides_service import (
     ASPECT_LABELS,
     ASPECT_RATIOS,
@@ -62,7 +66,7 @@ from services.slides_service import (
     slide_count,
 )
 
-from api import admin, auth, forum, importer, media as media_api, materials as materials_api, references, script as script_api, script_questions, slides as slides_api, student, tutor, user_settings, course_members
+from api import admin, auth, forum, importer, image_specs, media as media_api, materials as materials_api, references, script as script_api, script_questions, slides as slides_api, student, tutor, user_settings, course_members
 
 
 def _calculate_percentile(my_score: float, other_scores: list[float]) -> int:
@@ -111,6 +115,9 @@ async def lifespan(app: FastAPI):
 
         if not admin_exists:
             _create_admin(session)
+
+        # Kuratierte globale Image-Specs (idempotent, s. plan-compute-engines-images.md)
+        image_spec_service.seed_global_specs(session)
 
     yield
 
@@ -265,6 +272,7 @@ async def _cors_for_static_fonts(request: Request, call_next):
 app.include_router(auth.router)
 app.include_router(user_settings.router)
 app.include_router(admin.router)
+app.include_router(image_specs.router)
 app.include_router(tutor.router)
 app.include_router(course_members.router)
 app.include_router(student.router)
@@ -1423,6 +1431,22 @@ async def join_page(
     )
 
 
+def _pick_task_template(candidates: list[str]) -> str:
+    """Wählt das erste vorhandene Template aus candidates (Fallback: letzter Eintrag).
+
+    Ermöglicht typspezifische Templates (z. B. task_detail_code.html,
+    task_solve_workspace.html) mit Fallback auf die Base-Vorlage,
+    ohne dass fehlende Dateien einen 500-Fehler verursachen.
+    """
+    for name in candidates:
+        try:
+            templates.env.get_template(name)
+            return name
+        except TemplateNotFound:
+            continue
+    return candidates[-1]
+
+
 @app.get("/courses/{course_id}/tasks/new")
 async def new_task_page(
     course_id: int,
@@ -1450,8 +1474,16 @@ async def new_task_page(
     if user.role == GlobalUserRole.ADMIN:
         course_role = "PROF"
 
+    # Typ des Templates: Default „text“, per Query-Param umschaltbar (z. B. ?task_type=code).
+    # Workspace ist immer wählbar — ohne erreichbare Engine degradiert die View sauber.
+    allowed_types = ("text", "code", "workspace")
+    tpl_type = request.query_params.get("task_type", "text")
+    if tpl_type not in allowed_types:
+        tpl_type = "text"
+    template = _pick_task_template([f"tutor/task_detail_{tpl_type}.html", "tutor/task_detail_base.html"])
+
     return templates.TemplateResponse(
-        "tutor/task_detail.html",
+        template,
         {
             "request": request,
             "page_title": "Neue Aufgabe",
@@ -1464,6 +1496,7 @@ async def new_task_page(
                 "name": course.name,
             },
             "task": None,
+            "tpl_type": tpl_type,
             "is_tutor": True,
             "is_code": False,
             "code_editor": True,  # CodeMirror (Markdown-Mode) für Aufgabenstellung/Musterlösung
@@ -1511,14 +1544,23 @@ async def task_page(
     is_student_view = is_tutor and request.query_params.get("as_student") in ("1", "true")
 
     is_code = task.task_type.value == "code"
+    is_workspace = task.task_type.value == "workspace"
 
     # Tutoren in Student-View: Zeige alle Aufgaben (auch versteckte) bei Prev/Next
     show_hidden = is_tutor  # egal ob as_student oder nicht
 
-    template = (
-        "tutor/task_detail.html" if (is_tutor and not is_student_view)
-        else "student/task_solve.html"
-    )
+    # Typspezifisches Template (task_detail_{type}.html / task_solve_{type}.html)
+    # mit Fallback auf die Base-Vorlage. Tutoren können per ?task_type=
+    # umschalten (z. B. Text-Aufgabe im Code-Template öffnen, um den Typ zu ändern).
+    if is_tutor and not is_student_view:
+        tpl_type = task.task_type.value
+        override = request.query_params.get("task_type")
+        if override in ("text", "code", "workspace"):
+            tpl_type = override
+        template = _pick_task_template([f"tutor/task_detail_{tpl_type}.html", "tutor/task_detail_base.html"])
+    else:
+        tpl_type = task.task_type.value
+        template = _pick_task_template([f"student/task_solve_{tpl_type}.html", "student/task_solve_base.html"])
 
     courses = _get_user_courses(user, session)
 
@@ -1571,6 +1613,7 @@ async def task_page(
                 "id": sub.id,
                 "solution": sub.solution,
                 "code_solution": sub.code_solution,
+                "workspace_snapshot": sub.workspace_snapshot is not None,
                 "attempt_number": sub.attempt_number,
                 "submitted_at": sub.submitted_at,
                 "status": sub.status.value,
@@ -1642,11 +1685,27 @@ async def task_page(
                 "test_code": task.test_code if is_tutor else None,
                 "is_visible": task.is_visible if is_tutor else None,
                 "hints_enabled": task.hints_enabled,
+                # Workspace: Main-Datei für alle (Editor-Modus),
+                # Spec/Dataset/Status nur für Tutoren
+                "workspace_main_file": task.workspace_main_file,
+                # Workspace-Umgebung (nur Tutor): Simple-Fields im
+                # task_detail_workspace.html
+                "workspace_timeout": task.workspace_timeout if is_tutor else None,
+                "workspace_cpu": task.workspace_cpu if is_tutor else None,
+                "workspace_memory": task.workspace_memory if is_tutor else None,
+                "workspace_internet": task.workspace_internet if is_tutor else None,
+                "workspace_assets_status": task.workspace_assets_status if is_tutor else None,
+                # Compute-Engines/Image-Spec (nur Tutor, s. plan-compute-engines-images.md)
+                "workspace_engines": (
+                    json.loads(task.workspace_engines)
+                    if (task.workspace_engines and is_tutor) else None),
+                "workspace_image": task.workspace_image if is_tutor else None,
             },
             "is_tutor": is_tutor,
             "is_student_view": is_student_view,
             "is_code": is_code,
-            "code_editor": is_code or is_tutor,  # Tutoren: CodeMirror für Markdown-Editoren (Aufgabenstellung/Musterlösung)
+            "tpl_type": tpl_type,
+            "code_editor": is_code or is_tutor or is_workspace,  # Tutoren + Workspace-IDE: CodeMirror
             "my_submissions": my_submissions,
             "latest_points": latest_points,
             "total_attempts": len(my_submissions),
@@ -1749,7 +1808,8 @@ async def submission_review_page(
                 llm_points = max(llm_points, fb.points_earned)
         latest_points = human_points if override_exists else llm_points
 
-    task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe"}.get(
+    task_type_display = {"text": "Textaufgabe", "code": "Codeaufgabe",
+                         "workspace": "Workspace-Aufgabe"}.get(
         task.task_type.value, task.task_type.value
     )
 

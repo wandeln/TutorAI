@@ -21,7 +21,7 @@
           <option value="">Alle</option>
           <option value="text">Textaufgaben</option>
           <option value="code">Codeaufgaben</option>
-
+          <option value="workspace">Workspace-Aufgaben</option>
         </select>
       </div>
       <div class="flex items-end">
@@ -158,7 +158,7 @@
 
     data.tasks.forEach(task => {
       const typeBadge = {
-        text: '📝', code: '💻'
+        text: '📝', code: '💻', workspace: '🐳'
       }[task.task_type] || '📋';
       headerHtml += '<th class="text-center py-3 px-3 font-semibold text-gray-700 border-b text-xs min-w-[120px]" title="' + task.title + '">' +
         typeBadge + ' ' + task.title + ' ' + task.max_points + 'P' +

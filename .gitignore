@@ -36,6 +36,7 @@ migrate_twocol_to_columns.py
 
 # Environment (contains secrets!)
 .env
+deploy/.env
 
 # reveal.js-Build (npm-Abhängigkeiten)
 static/vendor/reveal/reveal-build/node_modules/

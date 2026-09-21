@@ -1,0 +1,54 @@
+# TutorAI Compute-Agent — STANDALONE auf externem Compute-Server
+#
+# Nur der Agent, kein TutorAI. Für Compute-Server, die per SSH-Tunnel
+# mit dem TutorAI-Server verbunden werden (README, Modus C).
+#
+# Installation auf der Compute-Maschine:
+#   1. Docker installieren (bei GPU: + nvidia-container-toolkit)
+#   2. Repo hinbekommen (git clone / rsync)
+#   3. deploy/.env anlegen:     AGENT_KEY=<Key, == COMPUTE_AGENT_KEY in
+#                               TutorAI bzw. Key aus der Engine-Registry>
+#      (chmod 600 deploy/.env)
+#   4. Starten:                 docker compose -f deploy/compose.compute-only.yml up -d --build
+#
+#   (Workspace-Images: NICHT vorher bauen — sie werden per Image-Spec-
+#    Installation in der TutorAI-UI auf der Engine angelegt,
+#    „＋ Image installieren“.)
+#
+# Danach auf dem TutorAI-Server: SSH-Tunnel (deploy/tutorai-compute-tunnel.service)
+# + Engine in der Admin-Konsole registrieren (Systemeinstellungen →
+# Compute/Workspace) mit URL http://127.0.0.1:<Tunnelport> und dem
+# gleichen Key.
+#
+# Der Agent bindet nur auf 127.0.0.1 der Compute-Maschine — ohne Tunnel
+# und ohne gültiges HMAC-Token ist nichts erreichbar.
+
+services:
+  compute-agent:
+    build:
+      context: ..
+      dockerfile: compute_agent/Dockerfile
+    image: tutorai-compute-agent:local
+    container_name: tutorai-compute-agent
+    environment:
+      AGENT_HOST: "0.0.0.0"     # nur im Compose-Netz / via host-Port erreichbar
+      # Pflicht: ohne Key startet der Agent nicht (bewusste Schutzsperre)
+      AGENT_KEY: ${AGENT_KEY:?AGENT_KEY fehlt — deploy/.env anlegen oder exportieren}
+      AGENT_PORT: "8700"
+      ASSET_ROOT: /opt/tutorai/assets
+      GPU_ENABLED: auto         # auto | true | false (s. compute-agent.env.example)
+      GPU_MAX_JOBS: "8"
+      IDLE_TIMEOUT: "1200"
+      # AGENT_INIT_TIMEOUT: "1800"   # init.sh-Build-Timeout (30 min Default)
+    volumes:
+      # Der Agent verwaltet den Docker-Daemon des HOSTS (Workspace-Container,
+      # Images, Volumes leben dort — auch für GPU-Passthrough nötig)
+      - /var/run/docker.sock:/var/run/docker.sock
+      - compute-assets:/opt/tutorai/assets
+    ports:
+      # Nur auf dem Loopback der Compute-Maschine (Ziel des SSH-Tunnels)
+      - "127.0.0.1:8700:8700"
+    restart: unless-stopped
+
+volumes:
+  compute-assets:

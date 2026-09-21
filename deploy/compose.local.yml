@@ -1,0 +1,86 @@
+# TutorAI — lokales Hybrid-Setup (TutorAI + Compute-Agent auf EINER Maschine)
+#
+# Start (vom Repo-Root):
+#   docker compose -f deploy/compose.local.yml up --build -d
+#
+# Voraussetzungen:
+#   - Docker auf dem Host
+#   - .env im Repo-Root (wie bei der nativen Installation)
+#   - AGENT_KEY: gleiche Key-Variable wie COMPUTE_AGENT_KEY im .env
+#     (per Shell-Export oder deploy/.env — Compose-Interpolation liest
+#     keinen env_file!)
+#
+# GPU-Trainings: nvidia-container-toolkit auf dem HOST installieren
+# (der Agent steuert den Host-Daemon über docker.sock; Container starten
+# automatisch mit den in der Engine-UI erlaubten GPUs).
+#
+# Hinweis: Im Docker-Betrieb ist der Agent für TutorAI unter
+# http://compute-agent:8700 erreichbar (Compose-Netz). Falls die
+# Admin-Registry (Compute/Workspace) konfiguriert ist, dort genau diese
+# URL eintragen — das .env-Fallback-URL http://127.0.0.1:8700 ist im
+# Container-Modus NICHT erreichbar.
+
+services:
+  tutorai:
+    build: ..
+    image: tutorai-app:local
+    container_name: tutorai
+    env_file: ../.env
+    extra_hosts:
+      # LLM-Zugriff laeuft ueber einen SSH-Tunnel auf dem HOST (Port 8001).
+      # "host-gateway" = IP des Hosts im Compose-Netz (hier 172.18.0.1),
+      # damit der Tunnel aus dem Container erreichbar ist — Voraussetzung:
+      # Tunnel muss an die Bridge-IP binden: -L 172.18.0.1:8001:localhost:8001
+      - "host.docker.internal:host-gateway"
+    environment:
+      COMPUTE_AGENT_URL: http://compute-agent:8700
+      # .env hat den Host-Pfad (sqlite:////home/...); im Container liegt die
+      # DB unter dem Mount /app/data
+      DATABASE_URL: sqlite:////app/data/tutor.db
+    ports:
+      - "127.0.0.1:8000:8000"   # für LAN-Zugriff auf "8000:8000" ändern
+    volumes:
+      - ../data:/app/data       # DB + Uploads + Workspaces + Submissions
+    depends_on:
+      - compute-agent
+    restart: unless-stopped
+
+  compute-agent:
+    build:
+      context: ..
+      dockerfile: compute_agent/Dockerfile
+    image: tutorai-compute-agent:local
+    container_name: tutorai-compute-agent
+    environment:
+      AGENT_HOST: "0.0.0.0"     # nur im Compose-Netz erreichbar
+      AGENT_KEY: ${COMPUTE_AGENT_KEY:-}
+      AGENT_PORT: "8700"
+      ASSET_ROOT: /opt/tutorai/assets
+      # Host-Pfad zum selben Verzeichnis (der Docker-Daemon auf dem Host
+      # braucht Host-Pfade für die Asset-Bind-Mounts in den Workspaces).
+      # Voraussetzung: Compose vom REPO-ROOT starten (s. Header).
+      ASSET_ROOT_HOST: ${PWD}/data/compute-assets
+      GPU_ENABLED: auto
+      GPU_MAX_JOBS: "8"
+      IDLE_TIMEOUT: "1200"
+      # AGENT_INIT_TIMEOUT: "1800"   # init.sh-Build-Timeout (30 min Default)
+    volumes:
+      # Der Agent verwaltet den Docker-Daemon des HOSTS (Workspace-Container,
+      # Images, Volumes leben dort — auch für GPU-Passthrough nötig)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Bind-Mount statt Named Volume: Der Agent übergibt Asset-Pfade an
+      # den Docker-Daemon, der sie als HOST-Pfad auflöst. Ein Named Volume
+      # wäre dem Daemon nicht als Pfad zugänglich → leere Asset-Mounts.
+      - ../data/compute-assets:/opt/tutorai/assets
+      # Optional: GPU-Sichtbarkeit IM Agent-Container (nvidia-smi), damit die
+      # Engine-UI die GPUs der Maschine als Checkboxen anzeigen kann. Ohne die
+      # Mounts meldet Health gpus: [] → UI-Fallback "alle erlauben/keine".
+      # (Pfade je Distribution prüfen, z. B.: find / -name 'libnvidia-ml.so*')
+      # - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
+      # - /lib/x86_64-linux-gnu/libnvidia-ml.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-ml.so.1:ro
+    ports:
+      # Optional: zusätzlich auf dem Host-Loopback (z. B. für Tests)
+      - "127.0.0.1:8700:8700"
+    restart: unless-stopped
+
+

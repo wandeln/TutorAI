@@ -199,8 +199,8 @@ TutorAI/
 │   └── js/markdown-renderer.js # Markdown + LaTeX Rendering
 ├── prompts/
 │   ├── grading_prompt.py    # LLM-Grading-Prompt-Templates
-│   ├── creation_prompt.py   # LLM-Task-Creation-Prompt-Templates
-│   ├── solution_prompt.py   # LLM-Solution-Hint-Prompt-Templates
+│   ├── creation_prompt.py   # LLM-Task-Creation-Prompt (Text-Aufgaben)
+│   ├── code_task_prompt.py  # LLM-Code-Task-Prompt (Vorlage/Tests/Lösung)
 │   └── script_prompt.py     # LLM-Prompt für Skript-Kapitel (Titel/Inhalt als JSON)
 └── data/
     ├── tutor.db             # SQLite-Datenbank (dev)
@@ -236,6 +236,73 @@ LLM_API_URL=http://localhost:8000/v1
 LLM_API_KEY=
 LLM_MODEL=meta-llama/Llama-3.1-70B-Instruct
 ```
+
+### SSH-Tunnel zu einem nur per SSH erreichbaren LLM-Server (persistent)
+
+Wenn der LLM-Server in einem anderen Netz liegt oder per Firewall nicht direkt erreichbar ist
+(z. B. vLLM auf einem Uni-GPU-Server, nur SSH offen), kann man einen SSH-Local-Port-Forward
+als **systemd-Service** einrichten — reboot-fest mit Auto-Restart:
+
+```bash
+# 1) SSH-Key erzeugen (falls noch nicht vorhanden) und Public-Key auf den LLM-Server kopieren
+ssh-keygen -t ed25519 -C "tutorai-llm-tunnel"
+ssh-copy-id user@llm-server   # alternativ: Public-Key manuell nach ~/.ssh/authorized_keys
+
+# 2) systemd-Service anlegen (er setzt Key-Auth voraus, kein Passwort-Prompt)
+sudo tee /etc/systemd/system/tutorai-llm-tunnel.service > /dev/null << 'EOF'
+[Unit]
+Description=TutorAI LLM SSH-Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wandel
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -L 0.0.0.0:8001:localhost:8001 user@llm-server
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 3) Aktivieren
+sudo systemctl daemon-reload
+sudo systemctl enable --now tutorai-llm-tunnel
+
+# 4) Prüfen: Port muss lauschen
+ss -tln | grep 8001
+```
+
+Dann im `.env` einfach den lokalen Tunnel-Port als Endpoint angeben:
+
+```bash
+LLM_API_URL=http://localhost:8001/v1
+```
+
+**Bei Docker-Deployment** (TutorAI läuft in einem Container) sind zwei Dinge zusätzlich nötig:
+
+1. Der Container erreicht den Host nicht über `localhost`, sondern über die Docker-Host-IP.
+   Am einfachsten per `extra_hosts` in der Compose-Datei:
+   ```yaml
+   services:
+     tutorai:
+       extra_hosts: ["host.docker.internal:host-gateway"]
+   ```
+   und `LLM_API_URL=http://host.docker.internal:8001/v1` im `.env`.
+   **Wichtig:** `host-gateway` löst auf die **docker0-IP** (üblich `172.17.0.1`), nicht auf die
+   IP des Compose-Netzwerks — beide Subnetze müssen ggf. freigegeben sein.
+2. Falls auf dem Host **UFW** aktiv ist: Docker-Container-Traffic auf nicht-published Ports wird
+   per Default gedroppt. Freigabe für die Docker-Subnetze:
+   ```bash
+   sudo ufw allow from 172.17.0.0/16 to any port 8001 proto tcp
+   sudo ufw allow from 172.18.0.0/16 to any port 8001 proto tcp
+   ```
+
+**Fehlersuche:** `journalctl -u tutorai-llm-tunnel -n 50` — ein `Permission denied
+(publickey)`-Fehler deutet auf ein Key-Problem (z. B. überschriebene `authorized_keys` auf dem
+LLM-Server), sonst liegt es am SSH-Server/Netz. In der TutorAI-Admin-Konsole lässt sich die
+Verbindung jederzeit per „LLM testen" prüfen.
 
 ## 📖 API-Dokumentation
 

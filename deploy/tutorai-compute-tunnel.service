@@ -1,0 +1,50 @@
+# SSH-Tunnel vom TutorAI-Server zum Compute-Server.
+#
+# Fördert den Compute-Agenten (127.0.0.1:8700 auf dem Compute-Server)
+# auf einen lokalen Port des TutorAI-Servers (hier: 8701). Der Agent
+# bindet auf dem Compute-Server NUR auf 127.0.0.1 → der SSH-Tunnel ist
+# der einzige Zugangsweg (Key-Auth, kein Password).
+#
+# Installation (als root auf dem TUTORAI-Server):
+#   1) SSH-Key erzeugen + Publikey auf dem Compute-Server hinlegen:
+#        ssh-keygen -t ed25519 -f /etc/tutorai/compute_ssh_key -N ""
+#        ssh-copy-id -i /etc/tutorai/compute_ssh_key.pub tutorai@COMPUTE_HOST
+#      (oder: cat … >> /home/tutorai/.ssh/authorized_keys)
+#   2) COMPUTE_HOST unten in der Unit ersetzen
+#   3) cp deploy/tutorai-compute-tunnel.service /etc/systemd/system/
+#      systemctl daemon-reload && systemctl enable --now tutorai-compute-tunnel
+#
+# Mehrere Compute-Server: eine Unit pro Server (verschiedene lokale
+# Ports: 8701, 8702, …) und je Eintrag in der Admin-Registry
+# (Compute/Workspace → Agenten) mit der jeweiligen URL.
+#
+# Hinweis: ssh ohne -f (systemd überwacht den Prozess selbst);
+# ServerAlive* + Restart=always machen Abbrüche automatisch.
+
+[Unit]
+Description=TutorAI Compute SSH Tunnel (127.0.0.1:8701 → COMPUTE_HOST:8700)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ssh \
+  -N \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o ExitOnForwardFailure=yes \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=accept-new \
+  -i /etc/tutorai/compute_ssh_key \
+  -L 127.0.0.1:8701:127.0.0.1:8700 \
+  tutorai@COMPUTE_HOST
+Restart=always
+RestartSec=5
+
+# Härten
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

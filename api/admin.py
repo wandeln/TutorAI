@@ -11,7 +11,7 @@ from typing import Optional
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from config import MEDIA_DIR
+from config import COMPUTE_AGENT_KEY, COMPUTE_AGENT_URL, COMPUTE_AGENT_URL_EXPLICIT, MEDIA_DIR
 from database.base import get_session
 from database.models import (
     Course,
@@ -750,6 +750,16 @@ async def get_global_settings(
         "ldap_base_dn": gs.ldap_base_dn,
         "ldap_bind_dn": gs.ldap_bind_dn,
         "ldap_user_search": gs.ldap_user_search,
+        # Compute/Workspace (s. plan-workspace-tasks.md §2.8/§3)
+        "compute_enabled": bool(gs.compute_enabled),
+        "compute_agents": gs.compute_agents or "",
+        "workspace_gpu_enabled": bool(gs.workspace_gpu_enabled),
+        # .env/Compose deklariert einen lokalen Agent → Admin-UI zeigt ihn
+        # als "local"-Zeile an (relevant, wenn die gespeicherte Liste leer ist)
+        "compute_env_default": (
+            {"name": "local", "url": COMPUTE_AGENT_URL, "key": COMPUTE_AGENT_KEY}
+            if COMPUTE_AGENT_URL_EXPLICIT else None
+        ),
     }
 
 
@@ -786,6 +796,61 @@ async def update_global_settings(
             "ldap_bind_dn": gs.ldap_bind_dn,
         },
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# COMPUTE (Workspace-Aufgaben: Feature-Flag, Agent-Registry, Status)
+# ═══════════════════════════════════════════════════════════════════
+
+class ComputeTestRequest(BaseModel):
+    url: str
+    key: Optional[str] = ""
+
+
+@router.get("/compute/status")
+async def compute_status(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(require_global_admin()),
+):
+    """Gesamter Compute-Status: Feature-Flag, GPU, Agenten + Health.
+
+    Health-Cache (30 s) wird bewusst genutzt — für den expliziten
+    "Verbindung testen"-Button gibt es POST /compute/test.
+    """
+    from services.workspace_service import workspace_service
+    return workspace_service.status(session)
+
+
+@router.post("/compute/test")
+async def compute_test(
+    data: ComputeTestRequest,
+    current_user: User = Depends(require_global_admin()),
+):
+    """Einzelnen Agent-Endpoint testen (ohne Cache, frische Health-Abfrage).
+
+    Dient der Admin-Konsole: sowohl für die eingegebenen (noch nicht
+    gespeicherten) Registry-Werte als auch für gespeicherte Einträge.
+    """
+    from services.compute_client import ComputeAgentError, ComputeClient
+
+    url = (data.url or "").strip().rstrip("/")
+    if not url.startswith("http://") and not url.startswith("https://"):
+        return {"ok": False, "error": "URL muss mit http:// beginnen."}
+    client = ComputeClient(url=url, key=data.key or None)
+    try:
+        info = client.health(timeout=8.0)
+        return {
+            "ok": bool(info.get("docker")),
+            "docker": bool(info.get("docker")),
+            "gpu": bool(info.get("gpu")),
+            "gpus": info.get("gpus") or [],
+            "gpu_info": info.get("gpu_info") or "",
+            "workspaces": info.get("workspaces"),
+            "error": None if info.get("docker") else "Docker-Daemon nicht erreichbar",
+        }
+    except ComputeAgentError as e:
+        return {"ok": False, "docker": False, "gpu": False,
+                "workspaces": None, "error": e.message}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -895,7 +960,7 @@ async def test_llm(
     Sendet eine einfache Testanfrage und gibt Latenz zurueck.
     """
     from time import monotonic
-    from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, AuthenticationError
+    from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, AuthenticationError, BadRequestError
 
     # Resolve: request body > global_settings > config.py default
     cfg = get_effective_llm_config(session)
@@ -909,19 +974,35 @@ async def test_llm(
     client = AsyncOpenAI(
         base_url=api_url,
         api_key=api_key,
-        timeout=30,
+        timeout=60,
     )
 
     test_prompt = "Beantworte nur mit: OK"
     test_error = None
     start = monotonic()
     try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": test_prompt}],
-            max_tokens=10,
-            temperature=0,
-        )
+        # Thinking-Modelle (z. B. Qwen3) verbrauchen erst viele Tokens fuer
+        # internes Denken — 10 reichten nicht und lieferten content=None.
+        # Fuer den reinen Verbindungstest denken wir gar nicht erst mit:
+        # chat_template_kwargs=enable_thinking:false -> Antwort in <1s statt ~2s.
+        test_messages = [{"role": "user", "content": test_prompt}]
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=test_messages,
+                max_tokens=2048,
+                temperature=0,
+                extra_body={"chat_template_kwargs": {"enable_thinking": False}},
+            )
+        except BadRequestError:
+            # Provider ohne vLLM-Unterstützung lehnt chat_template_kwargs ab
+            # (z. B. OpenAI) — ohne Thinking-Optimierung erneut versuchen.
+            response = await client.chat.completions.create(
+                model=model,
+                messages=test_messages,
+                max_tokens=2048,
+                temperature=0,
+            )
         latency_ms = int((monotonic() - start) * 1000)
 
         msg = response.choices[0].message if response.choices else None
@@ -941,7 +1022,7 @@ async def test_llm(
     except APIConnectionError as e:
         test_error = f"Keine Verbindung: {e}"
     except APITimeoutError:
-        test_error = "Zeitueberschreitung (>30s)."
+        test_error = "Zeitueberschreitung (>60s)."
     except AuthenticationError as e:
         test_error = f"Authentifizierung fehlgeschlagen: {e}"
     except Exception as e:

@@ -42,6 +42,8 @@ Paket-Varianten:
   student + Submission  → Student-Workspace (Snapshot) + compose + images/
   tutor   + Submission  → Student-Workspace (Snapshot) + 👤-Dateien
                           + compose (wie Tutor) + images/
+  student + Live        → aktueller Workspace-Snapshot des Studenten
+                          (eigene Lösung) + compose + images/ + README
 
 🔒-Dateien werden ab MAX_DATA_IN_PACKAGE aus dem Paket gestrichen; hat die
 Aufgabe ein init.sh, lädt die Initialisierung die Daten lokal nach
@@ -227,6 +229,22 @@ def _remove_path(p: Path) -> None:
         pass
 
 
+def _extract_tar_bytes(tar_bytes: bytes, dest: Path) -> None:
+    """In-Memory-Snapshot sicher entpacken (gleiche Guards wie
+    workspace_service.extract_snapshot: keine Links, kein Entweichen)."""
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    base = dest.resolve()
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            target = (dest / member.name).resolve()
+            if not target.is_relative_to(base):
+                raise ValueError(f"Ungültiger Snapshot-Eintrag: {member.name}")
+            if member.issym() or member.islnk():
+                raise ValueError(f"Links nicht erlaubt: {member.name}")
+        tar.extractall(dest)
+
+
 def _compose_content(task: Task, slug: str, has_init: bool,
                      has_init_private: bool, has_tests: bool,
                      has_verify: bool, ro_mounts: list[str],
@@ -344,9 +362,13 @@ def _compose_content(task: Task, slug: str, has_init: bool,
 def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
                     has_init: bool, has_init_private: bool,
                     data_omitted: bool, has_verify: bool,
-                    submission: Optional[Submission]) -> str:
+                    submission: Optional[Submission],
+                    live: bool = False) -> str:
     is_sub = submission is not None
-    if is_sub and kind == "student":
+    if live:
+        ws_desc = "deine aktuelle Lösung (Stand: jetzt, inkl. generierter " \
+                  "Dateien)"
+    elif is_sub and kind == "student":
         ws_desc = "deine Lösung (Stand der Einreichung)"
     elif is_sub:
         ws_desc = "die Student-Dateien dieser Einreichung"
@@ -356,7 +378,9 @@ def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
         f"# TutorAI Workspace-Paket: {task.title}",
         "",
         f"Generiert am {date.today().isoformat()} von TutorAI."
-        + (" (Version dieser Einreichung)" if is_sub else " (Aufgaben-Vorlage)"),
+        + (" (deine aktuelle Lösung)" if live
+           else " (Version dieser Einreichung)" if is_sub
+           else " (Aufgaben-Vorlage)"),
         "",
         "## Inhalt",
         "",
@@ -459,30 +483,38 @@ def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
 # ── Hauptfunktion ──────────────────────────────────────────────────
 
 def build_package(task: Task, kind: str,
-                  submission: Optional[Submission] = None) -> tuple[str, bytes]:
+                  submission: Optional[Submission] = None,
+                  snapshot_tar: Optional[bytes] = None) -> tuple[str, bytes]:
     """Paket bauen (oder aus dem Cache). Liefert (filename, tar_bytes).
 
     kind: "student" | "tutor"
     submission: None → Aufgaben-Vorlage, sonst Snapshot dieser Einreichung.
+    snapshot_tar: Live-Snapshot (tar.gz) des aktuellen Student-Workspaces
+    → Paket der „eigenen Lösung“ (Vorrang vor submission; wird NICHT
+    gecacht, da der Inhalt bei jedem Download neu ist).
     """
     if kind not in ("student", "tutor"):
         raise ValueError("kind muss 'student' oder 'tutor' sein")
     if task.task_type.value != "workspace":
         raise ValueError("Keine Workspace-Aufgabe.")
 
+    live = submission is None and snapshot_tar is not None
     cache_key = (kind, task.id, submission.id if submission else 0)
     img_spec = _image_spec_for_task(task)
     fmap = _task_access_map(task)
-    fingerprint = _source_fingerprint(task, kind, submission, img_spec, fmap)
+    fingerprint = None if live else _source_fingerprint(
+        task, kind, submission, img_spec, fmap)
 
     with _PKG_CACHE_LOCK:
-        hit = _PKG_CACHE.get(cache_key)
-        if hit and hit[0] == fingerprint and time.time() - hit[3] < _PKG_CACHE_TTL:
-            return hit[1], hit[2]
+        if fingerprint is not None:
+            hit = _PKG_CACHE.get(cache_key)
+            if (hit and hit[0] == fingerprint
+                    and time.time() - hit[3] < _PKG_CACHE_TTL):
+                return hit[1], hit[2]
 
     slug = _slug(task.title, task.id)
     top_name = (f"submission-{submission.id}" if submission
-                else f"task-{task.id}-{slug}")
+                else f"task-{task.id}-{slug}" + ("-solution" if live else ""))
 
     # Public (✏️+🔒) vs. hidden (👤), nur Dateien, die auf der Disk existieren
     public = {p: v for p, v in fmap["files"].items()
@@ -498,9 +530,34 @@ def build_package(task: Task, kind: str,
         (top / "workspace").mkdir(parents=True)
 
         # 1) workspace/ — public Dateien am realen Pfad
-        #    (Studenten-Snapshot bei Submissions)
+        #    (Studenten-Dateien: Live-Snapshot ODER Snapshot der Einreichung;
+        #    sonst Aufgaben-Vorlage)
         data_omitted = False
-        if submission is not None and submission.workspace_snapshot:
+
+        def _ro_capped_write() -> dict:
+            """🔒-Volumen-Cap: read-only-Bereiche > Limit → weglassen
+            (init.sh lädt sie lokal nach; README vermerkt das)."""
+            nonlocal data_omitted
+            ro_total = sum(v["disk"].stat().st_size for p, v in public.items()
+                           if p in ro_files)
+            if ro_total > MAX_DATA_IN_PACKAGE:
+                data_omitted = True
+                return {p: v for p, v in public.items() if p not in ro_files}
+            return public
+
+        if live:
+            # Live-Snapshot: enthält auch die 🔒-Bind-Mounts (tar liest
+            # durch die Mounts) → 🔒/👤 entfernen, 🔒 aus der Task-Disk
+            # nachlegen (mit 🔒-Cap wie die Vorlage).
+            assert snapshot_tar is not None  # live ⇒ snapshot_tar gesetzt
+            _extract_tar_bytes(snapshot_tar, top / "workspace")
+            for p in fmap["hid_paths"] + fmap["ro_paths"]:
+                _remove_path(top / "workspace" / p)
+            for rel, v in _ro_capped_write().items():
+                dst = top / "workspace" / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(v["disk"].read_bytes())
+        elif submission is not None and submission.workspace_snapshot:
             workspace_service.extract_snapshot(
                 submission.workspace_snapshot, top / "workspace")
             # Die RO-Mount-Skripte (run.sh, init.sh, test.sh) stecken nicht
@@ -515,15 +572,7 @@ def build_package(task: Task, kind: str,
             for p in fmap["hid_paths"]:
                 _remove_path(top / "workspace" / p)
         else:
-            # 🔒-Volumen-Cap: read-only-Bereiche > Limit → weglassen
-            # (init.sh lädt sie lokal nach; README vermerkt das)
-            ro_total = sum(v["disk"].stat().st_size for p, v in public.items()
-                           if p in ro_files)
-            write = public
-            if ro_total > MAX_DATA_IN_PACKAGE:
-                data_omitted = True
-                write = {p: v for p, v in public.items() if p not in ro_files}
-            for rel, v in write.items():
+            for rel, v in _ro_capped_write().items():
                 dst = top / "workspace" / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(v["disk"].read_bytes())
@@ -569,16 +618,18 @@ def build_package(task: Task, kind: str,
             _readme_content(task, kind, has_run=has_run, has_tests=has_tests,
                             has_init=has_init, has_init_private=has_init_private,
                             data_omitted=data_omitted, has_verify=has_verify,
-                            submission=submission),
+                            submission=submission, live=live),
             encoding="utf-8")
 
-        # 7) tar.gz (Fingerprint aus den Quellen wurde vor dem Bau geprüft)
+        # 7) tar.gz (Fingerprint aus den Quellen wurde vor dem Bau geprüft;
+        #    Live-Pakete werden nicht gecacht)
         buf = _targz(top)
         filename = f"{top_name}.tar.gz"
-        with _PKG_CACHE_LOCK:
-            if len(_PKG_CACHE) >= _PKG_CACHE_MAX:
-                _PKG_CACHE.pop(next(iter(_PKG_CACHE)))
-            _PKG_CACHE[cache_key] = (fingerprint, filename, buf, time.time())
+        if fingerprint is not None:
+            with _PKG_CACHE_LOCK:
+                if len(_PKG_CACHE) >= _PKG_CACHE_MAX:
+                    _PKG_CACHE.pop(next(iter(_PKG_CACHE)))
+                _PKG_CACHE[cache_key] = (fingerprint, filename, buf, time.time())
         return filename, buf
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

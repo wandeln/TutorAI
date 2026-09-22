@@ -114,8 +114,13 @@
             </button>
             <a href="/api/student/tasks/{{ task.id }}/package"
                class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-2 rounded-lg transition text-sm"
-               title="Aufgaben-Vorlage inkl. Laufumgebung als docker-Paket (ohne Musterlösung/private Tests). Eigene Lösung nach workspace/ kopieren — lokal auf dem eigenen Rechner ausführbar">
+               title="Aufgaben-Vorlage inkl. Laufumgebung als docker-Paket (ohne Musterlösung/private Tests) — lokal auf dem eigenen Rechner ausführbar">
               ⬇️ Aufgaben-Vorlage (docker-Paket)
+            </a>
+            <a href="/api/student/tasks/{{ task.id }}/workspace/package"
+               class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-2 rounded-lg transition text-sm"
+               title="Deine aktuelle Lösung (eigene + generierte Dateien) inkl. Laufumgebung als docker-Paket — lokal auf dem eigenen Rechner ausführbar">
+              ⬇️ Meine Lösung (docker-Paket)
             </a>
           </div>
         </div>

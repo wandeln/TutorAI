@@ -1730,3 +1730,36 @@ async def workspace_download_package(
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+@router.get("/tasks/{task_id}/workspace/package")
+async def workspace_download_solution_package(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Student-Download-Paket der EIGENEN Lösung: gleiche Struktur wie die
+    Aufgaben-Vorlage (Dockerfile + init.sh + compose, gleiches Setup), aber
+    workspace/ enthält die eigenen + vom Code generierten Dateien des
+    aktuellen Workspaces statt der Starter-Dateien."""
+    from fastapi.responses import Response
+    from services.compose_gen import build_package
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        # Container (re-)anlegen, falls Idle-Kill — Volume/Dateien bleiben.
+        await asyncio.to_thread(
+            workspace_service.ensure_workspace, session, task, user.id)
+        snap = await asyncio.to_thread(client.snapshot, key)
+        fname, data = await asyncio.to_thread(
+            build_package, task, "student", None, snap)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )

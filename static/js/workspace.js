@@ -238,6 +238,10 @@
       dragPath: null,
       dragType: null,       // "file" | "dir" (während des Drags gesetzt)
       dragRejected: null,   // letzter Ablehnungs-Grund (→ Fehlermeldung beim dragend)
+      dragMulti: false,     // Drag zieht die ganze Mehrfachauswahl mit
+      selected: new Set(),  // Mehrfachauswahl (Datei-Pfade; markiert ab 2)
+      selAnchor: null,      // Anker-Pfad für Shift-Bereichsauswahl
+      visibleFiles: [],     // sichtbare Datei-Pfade in Baum-Reihenfolge
     };
 
     // ── Lokale Reihenfolge (Student: nur eigene Ansicht) ──────────
@@ -553,9 +557,36 @@
       return moveGate(src, dst);
     }
 
+    // ── Mehrfachauswahl (Strg/Cmd = Toggle, Shift = Bereich) ─────────
+    function clearSelection() {
+      state.selected = new Set();
+      state.selAnchor = null;
+    }
+    // Auswahl ohne init.sh-Ergebnisse (read-only, per Init-Build erzeugt).
+    function bulkTargets() {
+      return [...state.selected].filter(p => {
+        const f = state.files.find(x => x.path === p);
+        return !(f && f.init);
+      });
+    }
+    // Gate für Bulk-Move: alle gewählten Dateien müssen ins Ziel dürfen
+    // (Dateien, die bereits dort liegen, blockieren nicht).
+    function dropGateMulti(dstDir) {
+      for (const s of bulkTargets()) {
+        const g = dropGate(s, dstDir);
+        if (!g.ok && g.reason !== "Bereits dort." &&
+            g.reason !== "Datei liegt bereits in diesem Ordner.") return g;
+      }
+      return { ok: true };
+    }
+
     // Verschieben ohne Bestätigungs-Popup (sichtbar im Baum, per ↺/Undo nicht
     // nötig — Ziel ist beim Drop explizit gewählt).
-    function doMove(src, dstDir) {
+    function doMove(src, dstDir, multi) {
+      if (multi) {
+        moveSelectedTo(dstDir);
+        return;
+      }
       const gate = dropGate(src, dstDir);
       if (!gate.ok) {
         if (gate.reason && gate.reason !== "Bereits dort.") toast(gate.reason, "warning");
@@ -696,8 +727,13 @@
       // Alle Dateien sind per Handle ziehbar; Zugriffs-Klassen/skriptfeste
       // Pfade blockt der Drop-Gate (mit Fehlermeldung, nicht ohne Handle).
       const draggable = !!(canMove || canReorder);
+      // Mehrfachauswahl (blau) hat Vorrang vor der Aktive-Markierung;
+      // bei einer einzelnen Auswahl bleibt die normale Aktive-Färbung.
+      const multiSel = state.selected.size > 1 && state.selected.has(path);
       div.className = "ws-row ws-row-file px-1 py-1.5 rounded flex items-center gap-1 " +
-        (active ? "bg-indigo-100 text-indigo-900" : "text-gray-700 hover:bg-gray-200");
+        (multiSel ? "bg-blue-100 text-blue-900"
+                  : active ? "bg-indigo-100 text-indigo-900"
+                           : "text-gray-700 hover:bg-gray-200");
       // Handle bleibt linksbündig; die Tiefe-Einrückung sitzt am Icon.
       div.style.paddingLeft = "2px";
       div.dataset.path = path;
@@ -714,7 +750,34 @@
         '<span class="truncate flex-1">' + esc(name) + "</span>" +
         (isMain ? '<span class="shrink-0" title="Main-Datei (Editor-Fokus)">⭐</span>' : "") +
         '<span class="text-[10px] text-gray-400 shrink-0">' + fmtBytes(meta.size) + "</span>";
-      div.onclick = () => openFile(path);
+      div.onclick = e => {
+        // Strg/Cmd = Auswahl umschalten, Shift = Bereich vom Anker,
+        // Einfach-Klick = öffnen (Auswahl = nur diese Datei).
+        if (e.ctrlKey || e.metaKey) {
+          if (state.selected.has(path)) state.selected.delete(path);
+          else state.selected.add(path);
+          state.selAnchor = path;
+          renderTree();
+          return;
+        }
+        if (e.shiftKey) {
+          const list = state.visibleFiles;
+          const a = state.selAnchor ? list.indexOf(state.selAnchor) : -1;
+          const b = list.indexOf(path);
+          if (a !== -1 && b !== -1) {
+            const lo = Math.min(a, b), hi = Math.max(a, b);
+            state.selected = new Set(list.slice(lo, hi + 1));
+          } else {
+            state.selected = new Set([path]);
+          }
+          state.selAnchor = path;
+          renderTree();
+          return;
+        }
+        state.selected = new Set([path]);
+        state.selAnchor = path;
+        openFile(path);
+      };
       div.oncontextmenu = e => showFileMenu(e, path);
       // Drag-Handle (nicht die ganze Zeile → Long-Press auf Touch-Geräten
       // triggert weiterhin das Kontextmenü statt Drag & Drop).
@@ -725,14 +788,19 @@
           state.dragPath = path;
           state.dragType = "file";
           state.dragRejected = null;
+          state.dragMulti = state.selected.size > 1 && state.selected.has(path);
           e.dataTransfer.effectAllowed = "move";
-          try { e.dataTransfer.setData("text/plain", path); } catch (err) { /* IE */ }
+          try {
+            e.dataTransfer.setData("text/plain",
+              state.dragMulti ? [...state.selected].join("\n") : path);
+          } catch (err) { /* IE */ }
           e.stopPropagation();
         };
         handle.ondragend = () => {
           const rejected = state.dragRejected;
           state.dragPath = null;
           state.dragType = null;
+          state.dragMulti = false;
           state.dragRejected = null;
           clearDropMarks();
           if (rejected) toast(rejected, "warning");
@@ -742,7 +810,8 @@
       // geöffneten Ordnern) oder — wenn sortierbar und im selben Ordner —
       // vor/nach der Datei einsortieren (obere/halbe Zeile = davor, untere = danach).
       div.ondragover = e => {
-        if (!state.dragPath || state.dragPath === path) return;
+        if (!state.dragPath) return;
+        if (!state.dragMulti && state.dragPath === path) return;
         const src = state.dragPath;
         const myDir = dirOf(path);
         // Ordner-Drag: Datei-Zeile im selben Ordner = Ordner-Gruppe neu
@@ -759,6 +828,18 @@
           }
           const gd = dropGateDir(src, myDir);
           if (!gd.ok) { state.dragRejected = rejectReason(gd); return; }
+          state.dragRejected = null;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "move";
+          treeEl.classList.remove("ws-tree-droproot");
+          div.classList.add("ws-drop-ok");
+          return;
+        }
+        // Mehrfach-Drag: alle gewählten Dateien müssen ins Ziel dürfen.
+        if (state.dragMulti) {
+          const gm = dropGateMulti(myDir);
+          if (!gm.ok) { state.dragRejected = rejectReason(gm); return; }
           state.dragRejected = null;
           e.preventDefault();
           e.stopPropagation();
@@ -789,7 +870,9 @@
       };
       div.ondragleave = () => div.classList.remove("ws-drop-ok", "ws-drop-before", "ws-drop-after");
       div.ondrop = e => {
-        if (!state.dragPath || state.dragPath === path) return;
+        if (!state.dragPath) return;
+        const multi = state.dragMulti;
+        if (!multi && state.dragPath === path) return;
         e.preventDefault();
         e.stopPropagation();
         const src = state.dragPath;
@@ -799,14 +882,15 @@
         const before = (e.clientY - r.top) < r.height / 2;
         state.dragPath = null;
         state.dragType = null;
+        state.dragMulti = false;
         clearDropMarks();
         if (dt === "dir") {
           if (canReorder && dirOf(src) === myDir) reorderDirToEnd(myDir, src);
           else doMoveDir(src, myDir);
           return;
         }
-        if (canReorder && dirOf(src) === myDir) reorderInDir(myDir, "files", src, path, before);
-        else doMove(src, myDir);
+        if (!multi && canReorder && dirOf(src) === myDir) reorderInDir(myDir, "files", src, path, before);
+        else doMove(src, myDir, multi);
       };
       return div;
     }
@@ -831,6 +915,7 @@
         '<span title="' + esc(accDef.label) + '">' + accDef.icon + "</span>" +
         '<span class="truncate flex-1">' + esc(name) + "/</span>";
       div.onclick = () => {
+        clearSelection();
         if (state.collapsed.has(path)) state.collapsed.delete(path);
         else state.collapsed.add(path);
         renderTree();
@@ -874,7 +959,8 @@
           div.classList.toggle("ws-drop-after", !before);
           return;
         }
-        const gate = state.dragType === "dir" ? dropGateDir(src, path) : dropGate(src, path);
+        const gate = state.dragType === "dir" ? dropGateDir(src, path)
+                    : (state.dragMulti ? dropGateMulti(path) : dropGate(src, path));
         if (!gate.ok) { state.dragRejected = rejectReason(gate); return; }
         state.dragRejected = null;
         e.preventDefault();
@@ -889,8 +975,10 @@
         e.stopPropagation();
         const src = state.dragPath;
         const dt = state.dragType;
+        const multi = state.dragMulti;
         state.dragPath = null;
         state.dragType = null;
+        state.dragMulti = false;
         clearDropMarks();
         if (!src || src === path) return;
         if (dt === "dir") {
@@ -903,7 +991,7 @@
           }
           return;
         }
-        doMove(src, path);
+        doMove(src, path, multi);
       };
       return div;
     }
@@ -921,7 +1009,8 @@
     treeEl.ondragover = e => {
       if (!state.dragPath) return;
       const src = state.dragPath;
-      const gate = state.dragType === "dir" ? dropGateDir(src, "") : dropGate(src, "");
+      const gate = state.dragType === "dir" ? dropGateDir(src, "")
+                  : (state.dragMulti ? dropGateMulti("") : dropGate(src, ""));
       if (!gate.ok) {
         // Zeilen-Targets haben den Gate-Check schon gemacht (bubbling): ihren
         // (spezifischeren) Fehlertext behalten, falls die Wurzel kein Ziel ist.
@@ -940,13 +1029,30 @@
       e.preventDefault();
       const src = state.dragPath;
       const dt = state.dragType;
+      const multi = state.dragMulti;
       state.dragPath = null;
       state.dragType = null;
+      state.dragMulti = false;
       clearDropMarks();
       if (!src) return;
       if (dt === "dir") doMoveDir(src, "");
-      else doMove(src, "");
+      else doMove(src, "", multi);
     };
+
+    // Leerer Baum-Bereich anklicken bzw. Escape: Auswahl aufheben.
+    treeEl.onclick = e => {
+      if (e.target !== treeEl || !state.selected.size) return;
+      clearSelection();
+      renderTree();
+    };
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || !state.selected.size || ctxMenu) return;
+      const t = e.target;
+      if (t && (editorEl.contains(t) || t.isContentEditable ||
+                /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""))) return;
+      clearSelection();
+      renderTree();
+    });
 
     function renderTree() {
       const top = treeEl.scrollTop;
@@ -963,6 +1069,7 @@
         return;
       }
       const root = buildTree();
+      state.visibleFiles = [];
       const frag = document.createDocumentFragment();
       const walk = (node, parentPath, depth) => {
         const dirs = [];
@@ -991,6 +1098,7 @@
         });
         filesList.forEach(f => {
           if (effectiveAccess(f.path) === "hidden" && !canSetAccess) return;
+          state.visibleFiles.push(f.path);  // Reihenfolge für Shift-Bereich
           frag.appendChild(fileRow(f.name, f.meta, f.path, depth));
         });
       };
@@ -1028,9 +1136,36 @@
       return out;
     }
 
+    // Ziel-Ordner für Bulk-Moves: nur Ziele, in die ALLE gewählten Dateien
+    // dürfen und in denen mindestens eine noch nicht liegt.
+    function moveDestDirsBulk() {
+      const out = [];
+      const seen = new Set();
+      const add = (label, dir) => {
+        if (seen.has(dir)) return;
+        if (!dropGateMulti(dir).ok) return;
+        if (!bulkTargets().some(p => dropGate(p, dir).ok)) return;
+        seen.add(dir);
+        out.push({ label: label, path: dir });
+      };
+      add("(Wurzel)", "");
+      allDirPaths().forEach(d => add(d + "/", d));
+      return out;
+    }
+
     function showFileMenu(e, path) {
       e.preventDefault();
       e.stopPropagation();
+      if (state.selected.size > 1 && state.selected.has(path)) {
+        showBulkFileMenu(e);
+        return;
+      }
+      if (state.selected.size > 1) {
+        // Rechtsklick außerhalb der Auswahl → Auswahl auf diese Datei.
+        state.selected = new Set([path]);
+        state.selAnchor = path;
+        renderTree();
+      }
       const f = state.files.find(x => x.path === path);
       const isInit = !!(f && f.init);
       const items = [];
@@ -1083,6 +1218,37 @@
         items.push({ label: "🗑 Löschen", danger: true, fn: () => deleteFile(path) });
       }
       if (items.length) showCtxMenu(e.clientX, e.clientY, items);
+    }
+
+    // Kontextmenü für eine Mehrfachauswahl (Bulk-Verschieben/-Löschen).
+    function showBulkFileMenu(e) {
+      const sel = [...state.selected];
+      const items = [{ label: sel.length + " Dateien ausgewählt", header: true }];
+      if (canMove) {
+        const dirs = moveDestDirsBulk();
+        if (dirs.length) {
+          items.push({ sep: true });
+          items.push({ label: "Verschieben nach:", header: true });
+          dirs.forEach(d => items.push({
+            label: "→ " + d.label,
+            fn: () => moveSelectedTo(d.path),
+          }));
+        }
+      }
+      if (canDelete) {
+        const deletable = bulkTargets().filter(p => !readOnlyCheck(p));
+        if (deletable.length) {
+          items.push({ sep: true });
+          const skipped = sel.length - deletable.length;
+          items.push({
+            label: "🗑 " + deletable.length +
+                   (skipped ? " von " + sel.length : "") + " Datei(en) löschen",
+            danger: true,
+            fn: () => deleteSelected(deletable, skipped),
+          });
+        }
+      }
+      showCtxMenu(e.clientX, e.clientY, items);
     }
 
     function showDirMenu(e, dirPath) {
@@ -1163,6 +1329,14 @@
         state.folderOrder = data.folder_order || {};
         state.folderMap = {};
         state.folders.forEach(fd => { state.folderMap[fd.path] = fd.own || "edit"; });
+        // Mehrfachauswahl auf noch existierende Dateien verjüngen.
+        if (state.selected.size) {
+          state.selected = new Set(
+            [...state.selected].filter(p => state.files.some(f => f.path === p)));
+          if (state.selAnchor && !state.files.some(f => f.path === state.selAnchor)) {
+            state.selAnchor = null;
+          }
+        }
         renderTree();
         if (onFilesLoaded) onFilesLoaded(state.files);
         if (openPath) {
@@ -1306,6 +1480,41 @@
         toast("Löschen fehlgeschlagen: " + err.message, "error");
         return false;
       }
+    }
+
+    // Mehrfachauswahl: nacheinander in dstDir verschieben (Dateien, die
+    // bereits dort liegen, und read-only Init-Dateien werden übersprungen).
+    async function moveSelectedTo(dstDir) {
+      const toMove = [];
+      for (const s of bulkTargets()) {
+        const g = dropGate(s, dstDir);
+        if (g.ok) { toMove.push(s); continue; }
+        if (g.reason === "Bereits dort." ||
+            g.reason === "Datei liegt bereits in diesem Ordner.") continue;
+        toast(g.reason || "Nicht möglich.", "warning");
+        return;
+      }
+      if (!toMove.length) return;
+      for (const s of toMove) {
+        const n = s.split("/").pop();
+        if (!await moveFile(s, dstDir ? dstDir + "/" + n : n)) return;
+      }
+      clearSelection();
+      renderTree();
+    }
+
+    async function deleteSelected(paths, skipped) {
+      const lines = paths.slice(0, 10).map(p => "  • " + p).join("\n");
+      const more = paths.length > 10 ? "\n  … (" + (paths.length - 10) + " weitere)" : "";
+      const extra = skipped ? "\n" + skipped + " read-only/Init-Datei(en) werden übersprungen." : "";
+      if (!confirm(paths.length + " Datei(en) wirklich löschen?\n" + lines + more + extra)) return;
+      let ok = 0;
+      for (const p of paths) {
+        if (await deleteFileQuiet(p, false)) ok++;
+      }
+      clearSelection();
+      await refresh();
+      if (ok < paths.length) toast("Nur " + ok + " von " + paths.length + " Dateien gelöscht.", "warning");
     }
 
     async function moveFile(src, dst) {

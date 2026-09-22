@@ -1255,7 +1255,9 @@
       e.preventDefault();
       e.stopPropagation();
       const items = [];
-      if (canCreate) {
+      // Anlegen nur in editierbaren Bereichen (Tutor: überall — sein
+      // readOnlyCheck deckt nur Init-Pfade ab).
+      if (canCreate && (canSetAccess || effectiveAccess(dirPath) === "edit")) {
         items.push({ label: "＋ Neue Datei …", fn: () => newFileIn(dirPath) });
         items.push({ label: "＋ Neuer Ordner …", fn: () => newFolderIn(dirPath) });
       }
@@ -1281,7 +1283,7 @@
           }));
         }
       }
-      if (allowBulk) {
+      if (allowBulk && dirOpGate(dirPath).ok) {
         if (items.length) items.push({ sep: true });
         items.push({ label: "✏️ Ordner umbenennen …", fn: () => renameDir(dirPath) });
         items.push({ label: "🗑 Ordner löschen", danger: true, fn: () => deleteDir(dirPath) });
@@ -1674,6 +1676,10 @@
       const n = name.trim().replace(/[/\\]/g, "");
       if (!n) return;
       const p = prefix + n;
+      if (readOnlyCheck(p)) {
+        toast("Dieser Bereich ist read-only — dort kann kein Ordner angelegt werden.", "warning");
+        return;
+      }
       if (state.files.some(f => f.path === p || f.path.startsWith(p + "/"))) {
         toast("Es existiert bereits eine Datei/dieser Ordner unter „" + p + "“.", "warning");
         return;
@@ -1692,7 +1698,32 @@
       return state.files.filter(f => f.path.startsWith(dir + "/"));
     }
 
+    // Gate für Ordner-Umbenennen/-Löschen: Ordner mit read-only-Inhalt
+    // (Init-Ergebnisse, 🔒/👤-Dateien) dürfen nicht umgebaut werden
+    // (gilt für beide Rollen). Zusätzlich nur für Student: Ordner mit
+    // fester Zugriffs-Klasse (eigene Zeile oder im Subtree) — die
+    // Klassen-Zeilen würden beim Umbenauen/-Löschen sonst auf dem alten
+    // Pfad bleiben (Student hat keine /access-Route).
+    function dirOpGate(dir) {
+      const blocked = filesInDir(dir).filter(f => readOnlyCheck(f.path));
+      if (blocked.length) {
+        return { ok: false, reason: "Enthält " + blocked.length +
+          " read-only Datei(en) — kann nicht gelöscht/umbenannt werden." };
+      }
+      if (!canSetAccess) {
+        if (effectiveAccess(dir) !== "edit") {
+          return { ok: false, reason: "Ordner ist read-only/versteckt — als Student nicht editierbar." };
+        }
+        if (state.folders.some(fd => fd.path === dir || fd.path.startsWith(dir + "/"))) {
+          return { ok: false, reason: "Ein Unterordner hat eine fixe Zugriffs-Klasse — als Student nicht editierbar." };
+        }
+      }
+      return { ok: true };
+    }
+
     async function renameDir(dir) {
+      const gate = dirOpGate(dir);
+      if (!gate.ok) { toast(gate.reason, "warning"); return; }
       const name = dir.split("/").pop();
       const parent = dir.slice(0, dir.length - name.length);
       const nn = prompt("Neuer Name für Ordner „" + dir + "“:", name);
@@ -1720,13 +1751,15 @@
     }
 
     async function deleteDir(dir) {
+      const gate = dirOpGate(dir);
+      if (!gate.ok) { toast(gate.reason, "warning"); return; }
       const inDir = filesInDir(dir);
       const rows = state.folders.filter(fd => fd.path === dir || fd.path.startsWith(dir + "/"));
       if (!inDir.length && !rows.length && !state.extraDirs.has(dir)) return;
       if (!confirm("Ordner „" + dir + "“ löschen?\n" +
         inDir.length + " Datei(en) werden endgültig entfernt.")) return;
       for (const f of inDir) {
-        if (!await deleteFileQuiet(f.path)) return;
+        if (!await deleteFileQuiet(f.path, false)) return;
       }
       if (state.extraDirs.has(dir)) state.extraDirs.delete(dir);
       // Persistierte Zugriffs-Klassen des (nun leeren) Ordners entfernen:

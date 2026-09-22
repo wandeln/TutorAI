@@ -135,7 +135,9 @@
 
   // Gemeinsame Baum/Editor-Komponente (workspace.js). Student-Config:
   // nur Bereiche der effektiven Klasse ✏️ edit sind editierbar;
-  // Run/Tests/Terminal bleiben hier.
+  // Run/Tests/Terminal bleiben hier. Ordner-Umbenennen/-Löschen nur für
+  // editierbare Ordner ohne fixe Zugriffs-Klasse (dirOpGate blockiert
+  // 🔒/👤-Inhalt und explizite Ordner-Klassen).
   const wsUI = WorkspaceUI.init({
     treeEl: document.getElementById("ws-filetree"),
     editorEl: document.getElementById("ws-editor"),
@@ -149,7 +151,7 @@
     canMove: true,
     canReorder: true,  // nur lokal (localStorage) — eigene Ansicht
     localOrderKey: "wsorder-" + {{ current_user.id }} + "-" + {{ task.id }},
-    allowBulk: false,
+    allowBulk: true,  // editierbare Ordner umbenennen/löschen (dirOpGate)
     saveStateEl: document.getElementById("ws-save-state"),
     moveGate: (src, dst) =>
       (wsUI.accessOf(src) === "edit" && wsUI.accessOf(dst) === "edit")

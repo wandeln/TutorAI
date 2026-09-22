@@ -41,6 +41,7 @@ class RunJob:
     exit_code: int | None = None
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    cancelled: bool = field(default=False)  # Stop vor Prozess-Start (z. B. GPU-Warte)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _gpu_sem: threading.Semaphore | None = None
 
@@ -99,6 +100,13 @@ def active_keys() -> set[str]:
     """Workspaces mit aktivem Job (Reaper-Immunität)."""
     with RUNS_LOCK:
         return {j.key for j in RUNS.values() if j.status in ("queued", "running")}
+
+
+def active_run_ids(key: str) -> list[str]:
+    """Run-IDs eines Workspaces mit aktivem Job (queued/running)."""
+    with RUNS_LOCK:
+        return [j.run_id for j in RUNS.values()
+                if j.key == key and j.status in ("queued", "running")]
 
 
 # ── In-Container-Kill ─────────────────────────────────────────────
@@ -198,6 +206,11 @@ def start_run(key: str, command: str, working_dir: str = "/workspace",
                 GPU_SEM.acquire()
                 with job._lock:
                     job.status = "running"
+            if job.cancelled:
+                # Stop-Anforderung vor Prozess-Start (z. B. während GPU-
+                # Warte oder kurz nach start_run) → nicht starten.
+                _abort_cancelled(job)
+                return
             # PID-Datei: der exec-Prozess (sh) notiert seine eigene PID →
             # Stop/Timeout können den kompletten Baum IM Container killen.
             wrapped = f"echo $$ > {_pidfile(run_id)}; {job.command}"
@@ -228,18 +241,34 @@ def start_run(key: str, command: str, working_dir: str = "/workspace",
     return job
 
 
+def _abort_cancelled(job: RunJob) -> None:
+    """Queued Job nach Stop-Anforderung nicht starten (z. B. GPU-Warte)."""
+    with job._lock:
+        job.status = "killed"
+        job.stderr.append("[agent] Gestoppt (vor Start).")
+        job.finished_at = time.time()
+    if job._gpu_sem is not None:
+        job._gpu_sem.release()
+        job._gpu_sem = None
+
+
 def stop_run(key: str, run_id: str) -> bool:
-    """Laufenden Job killen (Prozessbaum im Container + exec-Client)."""
+    """Laufenden Job killen (Prozessbaum im Container + exec-Client).
+
+    Queued Jobs ohne Prozess (z. B. Warten auf die GPU-Semaphore) werden
+    per `cancelled`-Flag markiert — der Worker bricht vor dem Start ab.
+    """
     job = get_run(key, run_id)
-    if job is None or job.proc is None:
+    if job is None or job.status not in ("queued", "running"):
         return False
-    if job.status not in ("queued", "running"):
-        return False
-    _kill_in_container(job)
-    try:
-        os.killpg(job.proc.pid, 9)
-    except (ProcessLookupError, PermissionError, OSError):
-        job.proc.kill()
+    with job._lock:
+        job.cancelled = True
+    if job.proc is not None:
+        _kill_in_container(job)
+        try:
+            os.killpg(job.proc.pid, 9)
+        except (ProcessLookupError, PermissionError, OSError):
+            job.proc.kill()
     with job._lock:
         if job.status in ("queued", "running"):
             job.status = "killed"

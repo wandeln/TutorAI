@@ -507,6 +507,8 @@ class WorkspaceService:
             },
             "internet": bool(task.workspace_internet),
         }
+        if task.workspace_disk_quota:
+            spec["disk_quota_mb"] = int(round(task.workspace_disk_quota * 1024))
         if task.workspace_main_file:
             spec["main_file"] = task.workspace_main_file
         # 🔒-Pfade (top-level, Dateien + Ordner) → je einer ein ro-Bind-Mount

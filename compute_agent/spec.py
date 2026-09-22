@@ -29,7 +29,7 @@ class SpecError(Exception):
 
 ALLOWED_KEYS = {
     "image", "task_image", "limits", "timeout", "gpus",
-    "internet", "main_file", "readonly_paths",
+    "internet", "main_file", "readonly_paths", "disk_quota_mb",
 }
 
 _MEM_RE = re.compile(r"^\d+(\.\d+)?[bkmg]?$", re.IGNORECASE)
@@ -128,9 +128,9 @@ def parse_spec(spec) -> dict:
 
     Liefert ein dict mit garantiert vorhandenen, sauberen Keys:
     image, task_image, working_dir, limits, timeout, gpus, internet,
-    main_file, readonly_paths. (`image` ist Pflicht, `task_image` und
-    `main_file` optional — das Image wird von TutorAI aus der
-    Image-Spec der Aufgabe injiziert.)
+    main_file, readonly_paths, disk_quota_mb. (`image` ist Pflicht,
+    `task_image`, `main_file` und `disk_quota_mb` optional — das Image
+    wird von TutorAI aus der Image-Spec der Aufgabe injiziert.)
     """
     if spec is None:
         spec = {}
@@ -176,6 +176,14 @@ def parse_spec(spec) -> dict:
 
     readonly_paths = _readonly_paths(spec.get("readonly_paths"))
 
+    # Disk-Quota des Student-Volumes in MB (0 = ohne Limit → None).
+    disk_quota_mb = None
+    if spec.get("disk_quota_mb") is not None:
+        disk_quota_mb = _int(spec["disk_quota_mb"], "disk_quota_mb",
+                             0, 100 * 1024)
+        if disk_quota_mb == 0:
+            disk_quota_mb = None
+
     return {
         "image": image,
         "task_image": task_image,
@@ -186,4 +194,5 @@ def parse_spec(spec) -> dict:
         "internet": _bool(spec.get("internet", False), "internet"),
         "main_file": main_file,
         "readonly_paths": readonly_paths,
+        "disk_quota_mb": disk_quota_mb,
     }

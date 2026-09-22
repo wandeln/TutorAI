@@ -65,8 +65,10 @@ HIDDEN_IMAGE_REPOS: frozenset[str] = frozenset(
 
 # ── Limits (Sicherheit, s. Plan §9) ───────────────────────────────
 MAX_FILE_SIZE: int = 50 * 1024 * 1024          # 50 MB pro Datei
-MAX_WORKSPACE_SIZE: int = 512 * 1024 * 1024    # 512 MB pro Workspace
-MAX_SNAPSHOT_SIZE: int = 512 * 1024 * 1024     # Snapshot (tar.gz)
+# Fallback-Disk-Quota pro Workspace (wenn die Aufgabe keine eigene
+# Quota gesetzt hat) + Cap für Snapshots (tar.gz) — mit der Task-Quota
+# zusammengelegt: Snapshot-Cap = Quota (bei Überschreitung erst aufräumen).
+MAX_WORKSPACE_SIZE: int = 1024 * 1024 * 1024   # 1 GB
 MAX_ASSET_FILE: int = 5 * 1024 * 1024 * 1024   # 5 GB pro Asset-Datei (Datasets)
 MAX_TIMEOUT: int = 7200                         # 2 h harte Obergrenze
 DEFAULT_TIMEOUT: int = 900                      # 15 min

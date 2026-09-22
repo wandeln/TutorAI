@@ -1693,6 +1693,7 @@ async def task_page(
                 "workspace_timeout": task.workspace_timeout if is_tutor else None,
                 "workspace_cpu": task.workspace_cpu if is_tutor else None,
                 "workspace_memory": task.workspace_memory if is_tutor else None,
+                "workspace_disk_quota": task.workspace_disk_quota if is_tutor else None,
                 "workspace_internet": task.workspace_internet if is_tutor else None,
                 "workspace_assets_status": task.workspace_assets_status if is_tutor else None,
                 # Compute-Engines/Image-Spec (nur Tutor, s. plan-compute-engines-images.md)

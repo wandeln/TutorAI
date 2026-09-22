@@ -173,6 +173,13 @@ class ComputeClient:
         self._request("POST", f"/workspaces/{key}/runs/{run_id}/stop", op=f"ws:{key}",
                       task_id=task, student_id=student)
 
+    def disk(self, key: str) -> dict:
+        """Disk-Quota-Status des Workspaces: {usage (Bytes), quota_mb, over}."""
+        course, task, student = _key_parts(key)
+        resp = self._request("GET", f"/workspaces/{key}/disk", op=f"ws:{key}",
+                             task_id=task, student_id=student, timeout=60)
+        return resp.json()
+
     def snapshot(self, key: str) -> bytes:
         course, task, student = _key_parts(key)
         resp = self._request("GET", f"/workspaces/{key}/snapshot", op=f"ws:{key}",

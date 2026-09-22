@@ -1317,6 +1317,7 @@ async def workspace_status(
         "has_test": "test.sh" in file_paths,
         "timeout": task.workspace_timeout,
         "assets": [],
+        "disk": None,
     }
     if not out["enabled"]:
         out["degraded"] = True
@@ -1343,6 +1344,12 @@ async def workspace_status(
         out["container"] = {"state": ws.get("state"), "fresh": bool(ws.get("fresh"))}
         assets = await asyncio.to_thread(client.list_assets, task.course_id, task.id)
         out["assets"] = [{"path": a.get("path"), "size": a.get("size")} for a in assets]
+        # Disk-Quota-Status (Usage/Quota/over) — isoliert, damit ein
+        # gemessenes Fehlverhalten den Rest des Status nicht down macht.
+        try:
+            out["disk"] = await asyncio.to_thread(client.disk, _ws_key(task, user))
+        except ComputeAgentError:
+            out["disk"] = None
     except ComputeAgentError as e:
         out["degraded"] = True
         out["error"] = e.message

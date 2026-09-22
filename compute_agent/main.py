@@ -98,7 +98,7 @@ def health(payload: dict = Depends(auth.verify_token)) -> dict:
         "gpus": docker_ops.gpu_list() if docker_ok else [],
         "gpu_max_jobs": config.GPU_MAX_JOBS,
         "idle_timeout": config.IDLE_TIMEOUT,
-        "workspaces": len(REGISTRY.items()),
+        "workspaces": len(REGISTRY.all_items()),
         "time": time.time(),
     }
 
@@ -109,7 +109,7 @@ def workspaces_list(payload: dict = Depends(auth.verify_token)) -> dict:
     _op(payload, "list")
     states = {w["key"]: w["state"] for w in docker_ops.list_workspaces()}
     out = []
-    for key, info in REGISTRY.items():
+    for key, info in REGISTRY.all_items():
         out.append({
             "key": key,
             "state": states.get(key, "absent"),
@@ -249,6 +249,14 @@ def exec_cmd(key: str, body: dict,
             status_code=409,
             detail="Workspace unbekannt — erst POST /workspaces (mit Spec)")
     sp = info["spec"]
+    if info.get("over_quota"):
+        d = info.get("disk") or {}
+        usage_mb = (d.get("usage") or 0) // (1024 * 1024)
+        quota_mb = d.get("quota_mb") or sp.get("disk_quota_mb") or 0
+        raise HTTPException(
+            status_code=409,
+            detail=(f"Speicherlimit erreicht ({usage_mb} MB von {quota_mb} MB) — "
+                    "bitte temporäre Dateien löschen und erneut versuchen."))
     # Freie Commands kommen NUR von TutorAI (Backend baut sie aus den
     # Task-Skripten); es gibt kein Default mehr aus der Spec.
     command = str(body.get("command") or "")
@@ -299,13 +307,55 @@ def run_stop(key: str, run_id: str,
 @app.get("/workspaces/{key}/snapshot")
 @_translate
 def snapshot(key: str, payload: dict = Depends(auth.verify_token)) -> Response:
-    """tar.gz des /workspace-Volumes (für „Abgeben" + Tutor-Review)."""
+    """tar.gz des /workspace-Volumes (für „Abgeben" + Tutor-Review).
+
+    Cap = Task-Disk-Quota (Fallback: MAX_WORKSPACE_SIZE) — bei
+    Überschreitung schlägt der Snapshot fehl, bis der Student aufräumt.
+    """
     _op(payload, f"ws:{key}")
     _touch(key)
-    data = docker_ops.snapshot(key)
+    spec = ((REGISTRY.get(key) or {}).get("spec") or {})
+    quota_mb = spec.get("disk_quota_mb")
+    cap = quota_mb * 1024 * 1024 if quota_mb else config.MAX_WORKSPACE_SIZE
+    data = docker_ops.snapshot(key, cap=cap)
     return Response(content=data, media_type="application/gzip",
                     headers={"Content-Disposition":
                              f'attachment; filename="{key}-workspace.tar.gz"'})
+
+
+@app.get("/workspaces/{key}/disk")
+@_translate
+def workspace_disk(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
+    """Disk-Quota-Status des Workspaces: {usage (Bytes), quota_mb, over}.
+
+    Usage kommt aus dem Reaper-Cache (alle 30 s gemessen); bei fehlendem
+    oder >90 s altem Cache wird frisch gemessen. Ohne Quota: usage=None.
+    """
+    _op(payload, f"ws:{key}")
+    _touch(key)
+    out = {"usage": None, "quota_mb": None, "over": False}
+    info = REGISTRY.get(key)
+    if not info:
+        return out
+    spec = info.get("spec") or {}
+    quota_mb = spec.get("disk_quota_mb")
+    if not quota_mb:
+        return out
+    out["quota_mb"] = quota_mb
+    disk = info.get("disk")
+    if disk and (time.time() - (disk.get("at") or 0)) < 90:
+        out["usage"] = disk.get("usage")
+        out["over"] = bool(disk.get("over"))
+        return out
+    if docker_ops.container_state(key) != "running":
+        return out
+    usage = docker_ops.workspace_disk_usage(key, spec.get("readonly_paths") or [])
+    over = usage > quota_mb * 1024 * 1024
+    REGISTRY.set_disk(key, {"usage": usage, "quota_mb": quota_mb,
+                            "over": over, "at": time.time()}, over)
+    out["usage"] = usage
+    out["over"] = over
+    return out
 
 
 # ── Assets (geteilte public-Dateien/Datasets je Aufgabe) ──────────

@@ -124,6 +124,9 @@ Testverhalten von test.sh/.test_private.sh).
     (z. B. 2).
   * "workspace_memory": Zahl in GB (z. B. 4) — RAM-Limit des
     Student-Containers (RAM, kein Disk-Speicher).
+  * "workspace_disk_quota": Zahl in GB (z. B. 1) — Disk-Limit des
+    Student-Volumes (0 = ohne Limit). Nur deutlich erhöhen, wenn die
+    Lösung große Dateien schreiben muss (Modelle, Checkpoints, Logs).
   * "workspace_internet": bool — Internet-Zugriff für den Student-Container
     ZUR LAUFZEIT. Nur true, wenn die Lösung selbst Pakete/Daten nachladen
     muss (der init.sh-Build hat ohnehin immer Internet).

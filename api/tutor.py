@@ -125,6 +125,14 @@ def _apply_workspace_env_fields(task: Task, body: dict) -> None:
         if not _WS_MEM_RE.match(m):
             raise HTTPException(400, "workspace_memory: Zahl in GB (z. B. 4) oder String mit Einheit (z. B. '512m').")
         task.workspace_memory = m
+    if "workspace_disk_quota" in body and body["workspace_disk_quota"] is not None:
+        try:
+            d = float(body["workspace_disk_quota"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, "workspace_disk_quota muss eine Zahl sein.")
+        if not (0 <= d <= 100):
+            raise HTTPException(400, "workspace_disk_quota muss zwischen 0 und 100 GB liegen (0 = ohne Limit).")
+        task.workspace_disk_quota = d
     if "workspace_internet" in body:
         task.workspace_internet = bool(body["workspace_internet"])
     if "workspace_main_file" in body:
@@ -430,6 +438,7 @@ async def get_task(
             result["workspace_timeout"] = task.workspace_timeout
             result["workspace_cpu"] = task.workspace_cpu
             result["workspace_memory"] = task.workspace_memory
+            result["workspace_disk_quota"] = task.workspace_disk_quota
             result["workspace_internet"] = task.workspace_internet
             result["workspace_assets_status"] = task.workspace_assets_status
     
@@ -1071,6 +1080,7 @@ async def ai_generate_task(
                 "workspace_timeout": task.workspace_timeout,
                 "workspace_cpu": task.workspace_cpu,
                 "workspace_memory": task.workspace_memory,
+                "workspace_disk_quota": task.workspace_disk_quota,
                 "workspace_internet": task.workspace_internet,
                 "workspace_main_file": task.workspace_main_file or "",
             }
@@ -1191,6 +1201,7 @@ async def ai_generate_task(
             response["workspace_timeout"] = task.workspace_timeout
             response["workspace_cpu"] = task.workspace_cpu
             response["workspace_memory"] = task.workspace_memory
+            response["workspace_disk_quota"] = task.workspace_disk_quota
             response["workspace_internet"] = task.workspace_internet
             response["workspace_main_file"] = task.workspace_main_file
             ws_changed = True

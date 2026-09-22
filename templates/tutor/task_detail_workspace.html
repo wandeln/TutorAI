@@ -74,6 +74,10 @@
         <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-memory">Speicher (RAM) <span class="text-gray-400">(GB, z. B. 4)</span></label>
         <input type="number" id="ws-env-memory" step="0.1" min="0.1" max="64" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="4">
       </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-disk">Speicher (Disk) <span class="text-gray-400">(GB, z. B. 1; 0 = ohne Limit)</span></label>
+        <input type="number" id="ws-env-disk" min="0" max="100" step="0.1" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="1">
+      </div>
       <div class="flex items-end pb-1.5">
         <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer"
                title="Internet-Zugriff für den Student-Container zur Laufzeit (der init.sh-Build hat immer Internet)">
@@ -212,6 +216,7 @@
   const WS_TIMEOUT_INIT = {{ (task.workspace_timeout if task else None) | tojson }};
   const WS_CPU_INIT = {{ (task.workspace_cpu if task else None) | tojson }};
   const WS_MEMORY_INIT = {{ (task.workspace_memory if task else None) | tojson }};
+  const WS_DISK_INIT = {{ (task.workspace_disk_quota if task else None) | tojson }};
   const WS_INTERNET_INIT = {{ (task.workspace_internet if task else false) | tojson }};
   const WS_MAIN_FILE_INIT = {{ ((task.workspace_main_file if task else None) or "") | tojson }};
   const WS_TUTOR_FILES_API = WS_TASK_ID ? "/api/tasks/" + WS_TASK_ID + "/workspace" : null;
@@ -221,6 +226,7 @@
   const wsTimeoutInput = document.getElementById("ws-env-timeout");
   const wsCpuInput = document.getElementById("ws-env-cpu");
   const wsMemoryInput = document.getElementById("ws-env-memory");
+  const wsDiskInput = document.getElementById("ws-env-disk");
   const wsInternetChk = document.getElementById("ws-env-internet");
 
   // Speicher: DB/LLM liefern „4g“-Strings → UI zeigt eine GB-Zahl
@@ -239,6 +245,7 @@
     if (WS_TIMEOUT_INIT != null) wsTimeoutInput.value = WS_TIMEOUT_INIT;
     if (WS_CPU_INIT != null) wsCpuInput.value = WS_CPU_INIT;
     if (WS_MEMORY_INIT != null) wsMemoryInput.value = wsMemToGb(WS_MEMORY_INIT);
+    if (WS_DISK_INIT != null) wsDiskInput.value = WS_DISK_INIT;
     wsInternetChk.checked = !!WS_INTERNET_INIT;
   })();
 
@@ -252,6 +259,8 @@
     if (c > 0) out.workspace_cpu = c;
     const memGb = parseFloat(wsMemoryInput.value);
     if (memGb > 0) out.workspace_memory = memGb + "g";
+    const diskGb = parseFloat(wsDiskInput.value);
+    if (!Number.isNaN(diskGb) && diskGb >= 0) out.workspace_disk_quota = diskGb;
     out.workspace_internet = wsInternetChk.checked;
     out.workspace_main_file = wsUI.getMainFile() || null;
     return out;
@@ -769,11 +778,13 @@
     const applied = [];
     // Umgebungsfelder (flache Keys aus der LLM-Antwort)
     const envKeys = ["workspace_timeout", "workspace_cpu", "workspace_memory",
-                     "workspace_internet", "workspace_main_file"];
+                     "workspace_disk_quota", "workspace_internet",
+                     "workspace_main_file"];
     if (envKeys.some(k => data[k] !== undefined)) {
       if (data.workspace_timeout != null) wsTimeoutInput.value = data.workspace_timeout;
       if (data.workspace_cpu != null) wsCpuInput.value = data.workspace_cpu;
       if (data.workspace_memory != null) wsMemoryInput.value = wsMemToGb(data.workspace_memory);
+      if (data.workspace_disk_quota != null) wsDiskInput.value = data.workspace_disk_quota;
       if (data.workspace_internet !== undefined) wsInternetChk.checked = !!data.workspace_internet;
       if (data.workspace_main_file !== undefined) wsUI.setMainFile(data.workspace_main_file || "");
       applied.push("Umgebung");

@@ -924,17 +924,49 @@ def write_starter_files(key: str, files: list[dict]) -> int:
     return n
 
 
-def snapshot(key: str) -> bytes:
+def snapshot(key: str, cap: int | None = None) -> bytes:
     """tar.gz des /workspace-Volumes (mit Größen-Cap)."""
     _ensure_running(key)
     code, out_b, _err, _ = _run_capped(
         ["docker", "exec", container_name(key),
          "tar", "-czf", "-", "-C", "/workspace", "."],
-        timeout=600, cap=config.MAX_SNAPSHOT_SIZE,
+        timeout=600, cap=cap or config.MAX_WORKSPACE_SIZE,
     )
     if code != 0:
         raise DockerError("Snapshot fehlgeschlagen", 500)
     return out_b
+
+
+def workspace_disk_usage(key: str, exclude_paths: list[str] | None = None) -> int:
+    """Belegte Bytes im /workspace-Volume (Summe der Datei-Größen).
+
+    `exclude_paths` (🔒-Top-Level-Mounts) werden ausgespart — geteilte
+    Assets zählen nicht gegen das Student-Quota. Liefert 0, wenn der
+    Container nicht läuft oder die Messung fehlschlägt (best effort;
+    die Quota darf den Workspace nicht lahmlegen).
+    """
+    if container_state(key) != "running":
+        return 0
+    prune = ""
+    for p in exclude_paths or []:
+        prune += f" -path {shlex.quote('/workspace/' + p)} -prune -o"
+    shell = (
+        f"find /workspace{prune} -type f -printf '%s\\n' 2>/dev/null | "
+        "{ s=0; while read -r n; do s=$((s + n)); done; echo $s; }"
+    )
+    try:
+        code, out_b, _err, _timed = _run_capped(
+            ["docker", "exec", container_name(key), "sh", "-c", shell],
+            timeout=120, cap=4096,
+        )
+    except Exception:
+        return 0
+    if code != 0:
+        return 0
+    try:
+        return int(out_b.decode(errors="replace").strip() or 0)
+    except ValueError:
+        return 0
 
 
 # ── Assets (geteilte public-Dateien je Aufgabe) ───────────────────

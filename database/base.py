@@ -135,6 +135,7 @@ def migrate_schema():
             "workspace_timeout": "INTEGER DEFAULT 900",  # Run-Timeout (s, 1–7200)
             "workspace_cpu": "REAL DEFAULT 2",  # CPU-Limit
             "workspace_memory": "VARCHAR DEFAULT '4g'",  # Memory-Limit
+            "workspace_disk_quota": "REAL DEFAULT 1.0",  # Disk-Quota des Student-Volumes in GB (0 = ohne Limit)
             "workspace_internet": "BOOLEAN DEFAULT 0",  # Internet für Studenten-Läufe
         },
         "submissions": {

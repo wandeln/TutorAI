@@ -220,8 +220,18 @@
     if (!el || !s || s.degraded) return;
     const parts = [];
     if (s.timeout) parts.push("Zeitlimit: " + s.timeout + " s");
-    el.textContent = parts.join(" · ");
-    el.title = "Skripte: run.sh → ▶ Ausführen, test.sh → 🧪 Tests";
+    if (s.disk && s.disk.quota_mb) {
+      parts.push("Speicher: " + Math.ceil((s.disk.usage || 0) / 1048576)
+                 + " MB / " + s.disk.quota_mb + " MB");
+    }
+    const over = !!(s.disk && s.disk.over);
+    el.textContent = (over ? "⚠️ " : "") + parts.join(" · ");
+    el.title = over
+      ? "Speicherlimit erreicht — bitte temporäre Dateien (z. B. Checkpoints/Logs) löschen. Neue Läufe sind blockiert, bis unter dem Limit."
+      : "Skripte: run.sh → ▶ Ausführen, test.sh → 🧪 Tests";
+    el.classList.toggle("text-gray-400", !over);
+    el.classList.toggle("text-red-600", over);
+    el.classList.toggle("font-semibold", over);
   }
 
   async function wsResetWorkspace() {
@@ -380,6 +390,7 @@
           document.getElementById("ws-run-duration").textContent = "⏱ " + mm + ":" + ss;
           setRunButtonsDisabled(false);
           wsUI.refresh();  // neue/geänderte Dateien im Datei-Tree zeigen
+          wsLoadStatus();  // Banner + Disk-Anzeige (z. B. Quota-Nachlauf) aktualisieren
         }
       } catch (err) {
         // Agent kurz down? Weiter pollen (Backend fällt auf DB-Historie zurück).

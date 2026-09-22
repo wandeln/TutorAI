@@ -201,6 +201,7 @@ class TaskBase(SQLModel):
     workspace_timeout: int = Field(default=900)                 # Run-Timeout (s, 1–7200)
     workspace_cpu: float = Field(default=2.0)                   # CPU-Limit des Student-Containers
     workspace_memory: str = Field(default="4g", max_length=10)  # Memory-Limit („512m“, „4g“, …)
+    workspace_disk_quota: float = Field(default=1.0)            # Disk-Quota des Student-Volumes in GB (0 = ohne Limit)
     workspace_internet: bool = Field(default=False)             # Internet für Studenten-Läufe (Build hat immer)
     workspace_main_file: Optional[str] = Field(default=None, max_length=200)  # Editor-Hauptdatei (relativ)
     workspace_assets_status: Optional[str] = Field(default=None)  # JSON je Agent: assets + task_image-Status
@@ -243,6 +244,7 @@ class TaskCreate(SQLModel):
     workspace_timeout: int = Field(default=900)
     workspace_cpu: float = Field(default=2.0)
     workspace_memory: str = Field(default="4g", max_length=10)
+    workspace_disk_quota: float = Field(default=1.0)
     workspace_internet: bool = Field(default=False)
     workspace_main_file: Optional[str] = Field(default=None, max_length=200)
     workspace_assets_status: Optional[str] = Field(default=None)
@@ -275,6 +277,7 @@ class TaskUpdate(SQLModel):
     workspace_timeout: Optional[int] = None
     workspace_cpu: Optional[float] = None
     workspace_memory: Optional[str] = None
+    workspace_disk_quota: Optional[float] = None
     workspace_internet: Optional[bool] = None
     workspace_main_file: Optional[str] = None
     workspace_assets_status: Optional[str] = None

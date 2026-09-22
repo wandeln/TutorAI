@@ -302,6 +302,90 @@
       matchBrackets: true,
     });
 
+    // ── Trenner Tree/Editor (ziehen → Baum/Editor vergrößern) ──────
+    // Orientation folgt dem Layout-Breakpoint (sm = 640 px):
+    // Desktop (Zeilen) ändert die Breite des Tree-Panels,
+    // Mobile (Spalten) seine Höhe. Doppelklick = Standardgröße.
+    const splitHandle = document.getElementById("ws-split-handle");
+    const splitPanel = splitHandle && treeEl ? treeEl.parentElement : null;
+    const splitWrap = splitHandle ? splitHandle.closest(".ws-tree-editor-wrap") : null;
+    const SPLIT_MIN = 180;
+    if (splitHandle && splitPanel && splitWrap) {
+      splitHandle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const horizontal = window.innerWidth >= 640;
+        const rect = splitPanel.getBoundingClientRect();
+        const startX = e.clientX, startY = e.clientY;
+        const startSize = horizontal ? rect.width : rect.height;
+        const maxSize = () => {
+          const r = splitWrap.getBoundingClientRect();
+          return Math.floor((horizontal ? r.width : r.height) * 0.6);
+        };
+        let raf = 0;
+        function onMove(ev) {
+          const delta = (horizontal ? ev.clientX : ev.clientY)
+                        - (horizontal ? startX : startY);
+          const size = Math.max(SPLIT_MIN, Math.min(startSize + delta, maxSize()));
+          if (horizontal) splitPanel.style.width = size + "px";
+          else splitPanel.style.height = size + "px";
+          if (!raf) raf = requestAnimationFrame(() => { raf = 0; cm.refresh(); });
+        }
+        function onUp() {
+          splitHandle.removeEventListener("pointermove", onMove);
+          splitHandle.removeEventListener("pointerup", onUp);
+          splitHandle.removeEventListener("pointercancel", onUp);
+          splitHandle.classList.remove("ws-split-dragging");
+          document.body.classList.remove("ws-split-drag", "ws-split-drag-h", "ws-split-drag-v");
+          cm.refresh();
+        }
+        splitHandle.setPointerCapture(e.pointerId);
+        splitHandle.classList.add("ws-split-dragging");
+        document.body.classList.add("ws-split-drag",
+                                     horizontal ? "ws-split-drag-h" : "ws-split-drag-v");
+        splitHandle.addEventListener("pointermove", onMove);
+        splitHandle.addEventListener("pointerup", onUp);
+        splitHandle.addEventListener("pointercancel", onUp);
+      });
+      splitHandle.addEventListener("dblclick", () => {
+        splitPanel.style.width = "";
+        splitPanel.style.height = "";
+        cm.refresh();
+      });
+      // Inline-Maß beim Breakpoint-Übergang verwerfen (sonst bliebe
+      // z. B. die Desktop-Breite im Mobile-Layout hängen).
+      window.addEventListener("resize", () => {
+        if (window.innerWidth < 640) splitPanel.style.width = "";
+        else splitPanel.style.height = "";
+      });
+    }
+
+    // ── Vollbild (Tree + Editor füllt das ganze Browser-Fenster) ─────
+    // Toggle-Button in der Tree-Toolbar (beide Templates). ESC beendet
+    // den Modus — das CodeMirror-Search-Dialog konsumiert ESC vor uns
+    // (e_stop → stopPropagation), daher keine Kollision.
+    const fsBtn = document.getElementById("ws-fullscreen-btn") ||
+                  document.getElementById("ws-files-fullscreen-btn");
+    const fsWrap = fsBtn ? fsBtn.closest(".ws-tree-editor-wrap") : null;
+    function setFullscreen(on) {
+      if (!fsWrap) return;
+      fsWrap.classList.toggle("ws-fullscreen", on);
+      document.body.classList.toggle("ws-fs-lock", on);
+      if (fsBtn) {
+        fsBtn.classList.toggle("ws-tree-btn-active", on);
+        fsBtn.title = on ? "Vollbild beenden (Esc)" : "Vollbild";
+      }
+      // CodeMirror bemerkt Größenänderungen nicht selbst → Refresh.
+      requestAnimationFrame(() => cm.refresh());
+    }
+    if (fsBtn && fsWrap) {
+      fsBtn.addEventListener("click", () =>
+        setFullscreen(!fsWrap.classList.contains("ws-fullscreen")));
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && fsWrap.classList.contains("ws-fullscreen"))
+          setFullscreen(false);
+      });
+    }
+
     // ── Status ─────────────────────────────────────────────────────
     function setSaveState(txt) {
       if (saveStateEl) saveStateEl.textContent = txt || "";

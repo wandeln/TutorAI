@@ -99,7 +99,7 @@
 .ws-tree-btn:hover:not(:disabled) { background: #f3f4f6; }
 .ws-tree-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* ─── Editor-Bereich (nahtlos an den Dateibaum) ────────────────── */
+/* ─── Editor-Bereich (nahtlos an den Dateibaum) ──────────────────────── */
 /* CodeMirror füllt die Editor-Spalte komplett aus (kein eigener Rahmen,
    der Rahmen kommt vom gemeinsamen Baum+Editor-Container). */
 .ws-editor .CodeMirror {
@@ -107,3 +107,67 @@
   border: none;
   border-radius: 0;
 }
+
+/* ─── Vollbild (Tree + Editor füllt das ganze Browser-Fenster) ────────── */
+/* Der Container hat feste Tailwind-Höhen (h-[540px] sm:h-[480px]) — der
+   spezifischere 2-Klassen-Selector gewinnt ohne !important.
+   Das Kontextmenü (z-index 10000) bleibt darüber. */
+.ws-tree-editor-wrap.ws-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  border: none;
+  border-radius: 0;
+}
+/* Body-Scroll im Vollbild gesperrt */
+body.ws-fs-lock { overflow: hidden; }
+/* Vollbild-Button im aktiven Zustand */
+.ws-tree-btn.ws-tree-btn-active {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #a5b4fc;
+}
+
+/* ─── Trenner Tree/Editor (ziehbar zum Resize) ─────────────────── */
+.ws-split-handle {
+  flex-shrink: 0;
+  background-color: #f3f4f6; /* dezent, Tönung wie die Verzeichnisbar */
+  transition: background-color 0.15s;
+  touch-action: none; /* Touch-Drag statt Scroll */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+/* Drei Punkte mittig — Größe/Abstand/Grauton wie die Drag-Handles
+   im Dateibaum (⠿, #9ca3af); mobile gedreht auf waagerecht. */
+.ws-split-handle::before {
+  content: "";
+  width: 3px;
+  height: 15px;
+  background-image:
+    radial-gradient(circle 2px, #9ca3af, transparent 98%),
+    radial-gradient(circle 2px, #9ca3af, transparent 98%),
+    radial-gradient(circle 2px, #9ca3af, transparent 98%);
+  background-size: 3px 3px;
+  background-position: center top, center center, center bottom;
+  background-repeat: no-repeat;
+}
+/* Orientation folgt dem Layout: Mobile = Spalten (row-resize),
+   sm+ (640 px) = Zeilen (col-resize) — Breakpoint wie Tailwind sm. */
+@media (max-width: 639px) {
+  .ws-split-handle { width: 100%; height: 6px; cursor: row-resize; }
+  .ws-split-handle::before { transform: rotate(90deg); }
+}
+@media (min-width: 640px) {
+  .ws-split-handle { width: 6px; cursor: col-resize; }
+}
+.ws-split-handle:hover,
+.ws-split-handle.ws-split-dragging { background-color: #d1d5db; }
+/* Während des Drags: globaler Cursor + keine Textauswahl */
+body.ws-split-drag { user-select: none; -webkit-user-select: none; }
+body.ws-split-drag-h { cursor: col-resize; }
+body.ws-split-drag-v { cursor: row-resize; }

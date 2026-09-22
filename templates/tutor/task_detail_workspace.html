@@ -142,7 +142,7 @@
          nahtlos aneinandergesetzt (Mobile: Baum oben, Editor unten).
          Die Toolbar ist Geschwister des Tree-Elements — workspace.js
          räumt treeEl.innerHTML bei jedem Render auf. -->
-    <div class="flex flex-col sm:flex-row h-[540px] sm:h-[480px] border border-gray-200 rounded-lg overflow-hidden bg-white">
+    <div class="ws-tree-editor-wrap flex flex-col sm:flex-row h-[540px] sm:h-[480px] border border-gray-200 rounded-lg overflow-hidden bg-white">
       <div class="flex flex-col h-[220px] sm:h-auto sm:w-64 shrink-0 border-b sm:border-b-0 sm:border-r border-gray-200 bg-gray-50">
         <div class="flex items-center gap-1 p-1.5 border-b border-gray-200">
           <button type="button" id="ws-files-refresh-btn" title="Aktualisieren" class="ws-tree-btn">⟳</button>
@@ -150,11 +150,17 @@
           <button type="button" id="ws-files-new-folder-btn" title="Neuen Ordner in der Wurzel anlegen" class="ws-tree-btn">＋ 📁</button>
           <button type="button" id="ws-files-upload-btn" title="Datei hochladen (Dataset / Binär)" class="ws-tree-btn">⬆</button>
           <span id="ws-file-save-state" class="ml-auto text-[10px] text-gray-400 truncate"></span>
+          <button type="button" id="ws-files-fullscreen-btn" title="Vollbild" class="ws-tree-btn">⛶</button>
         </div>
-        <div id="ws-files-tree" class="flex-1 overflow-y-auto p-2 text-sm">
+        <div id="ws-files-tree" class="flex-1 overflow-y-auto p-1 text-sm">
           <div class="text-gray-400 text-xs p-1">Dateien werden geladen …</div>
         </div>
       </div>
+
+      <!-- Ziehbarer Trenner (Tree ↔ Editor; Doppelklick = Standardgröße) -->
+      <div id="ws-split-handle" class="ws-split-handle"
+           role="separator"
+           title="Ziehen: Baum/Editor vergrößern · Doppelklick: Standardgröße"></div>
 
       <!-- Editor (CodeMirror, nahtlos — Name/Zugriffs-Klasse stehen im Dateibaum,
            Speichern läuft automatisch, Löschen über Kontextmenü) -->

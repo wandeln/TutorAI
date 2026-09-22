@@ -2,9 +2,12 @@
 Asynchrone Run-Jobs (langlaufende Trainings etc.).
 
 Jeder Job: docker-exec-Prozess im Hintergrund-Thread, Log-Tail in
-Speicher (letzte N Zeilen je Stream), Stop per Prozessgruppen-Kill,
-Timeout-Kill. GPU-Jobs gehen durch eine Semaphore (FIFO-Queue, max.
-GPU_MAX_JOBS parallel — die GPU soll bewusst nicht voll ausgelastet werden).
+Speicher (letzte N Zeilen je Stream). Stop/Timeout killen zuerst den
+Prozessbaum IM Container (PID-Datei + /proc-Walk) und dann den
+docker-exec-Client — Client-kill allein würde die Container-Prozesse
+verorphanen (ohne TTY räumt der Daemon sie nicht auf). GPU-Jobs gehen
+durch eine Semaphore (FIFO-Queue, max. GPU_MAX_JOBS parallel — die GPU
+soll bewusst nicht voll ausgelastet werden).
 
 Die Jobs leben in-memory; nach Agent-Neustart sind laufende Jobs verloren
 (TutorAI zeigt dann „Lauf nicht mehr verfügbar" — Workspace/State bleibt
@@ -98,6 +101,37 @@ def active_keys() -> set[str]:
         return {j.key for j in RUNS.values() if j.status in ("queued", "running")}
 
 
+# ── In-Container-Kill ─────────────────────────────────────────────
+# docker exec -i (ohne TTY): stirbt der Client, überlebt der
+# Container-Prozess, bis er selbst auf stdout schreibt (SIGPIPE) —
+# z. B. ein Trainingsloop läuft sonst ewig weiter (CPU-Leak je
+# gestopptem Run). → Beim Start notiert der exec-Prozess seine PID in
+# eine PID-Datei; Stop/Timeout killen den kompletten Prozessbaum im
+# Container per /proc-Walk (kein procps/setsid nötig).
+_TREE_KILL = (
+    'kt(){ r=$1; for d in /proc/[0-9]*; do p=${d#/proc/}; '
+    '[ "$p" = "$r" ] && continue; s=$(cat "$d/stat" 2>/dev/null) || continue; '
+    's=${s##*) }; set -- $s; [ "$2" = "$r" ] && kt $p; done; '
+    'kill -9 "$r" 2>/dev/null; }'
+)
+
+
+def _pidfile(run_id: str) -> str:
+    return f"/tmp/.tutorai_run_{run_id}.pid"
+
+
+def _kill_in_container(job: RunJob) -> None:
+    """Prozessbaum des Runs im Container killen (best effort)."""
+    pidfile = _pidfile(job.run_id)
+    cmd = (f"{_TREE_KILL}; pid=$(cat {pidfile} 2>/dev/null); "
+           f"rm -f {pidfile}; [ -n \"$pid\" ] && kt \"$pid\"")
+    try:
+        docker_ops._docker("exec", docker_ops.container_name(job.key),
+                           "sh", "-c", cmd, timeout=30, check=False)
+    except Exception:
+        pass  # Container weg/Daemon-Problem → Client-Kill greift noch
+
+
 def _drain(pipe, lines: deque, lock: threading.Lock) -> None:
     buf = ""
     try:
@@ -126,6 +160,7 @@ def _watchdog(job: RunJob) -> None:
         proc.wait(timeout=job.timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
+        _kill_in_container(job)
         try:
             os.killpg(proc.pid, 9)
         except (ProcessLookupError, PermissionError, OSError):
@@ -163,8 +198,11 @@ def start_run(key: str, command: str, working_dir: str = "/workspace",
                 GPU_SEM.acquire()
                 with job._lock:
                     job.status = "running"
+            # PID-Datei: der exec-Prozess (sh) notiert seine eigene PID →
+            # Stop/Timeout können den kompletten Baum IM Container killen.
+            wrapped = f"echo $$ > {_pidfile(run_id)}; {job.command}"
             cmd = ["docker", "exec", "-i", "-w", job.working_dir,
-                   docker_ops.container_name(key), "sh", "-c", job.command]
+                   docker_ops.container_name(key), "sh", "-c", wrapped]
             job.proc = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, start_new_session=True,
@@ -191,12 +229,13 @@ def start_run(key: str, command: str, working_dir: str = "/workspace",
 
 
 def stop_run(key: str, run_id: str) -> bool:
-    """Laufenden Job killen (Prozessgruppe)."""
+    """Laufenden Job killen (Prozessbaum im Container + exec-Client)."""
     job = get_run(key, run_id)
     if job is None or job.proc is None:
         return False
     if job.status not in ("queued", "running"):
         return False
+    _kill_in_container(job)
     try:
         os.killpg(job.proc.pid, 9)
     except (ProcessLookupError, PermissionError, OSError):

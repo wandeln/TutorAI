@@ -1291,7 +1291,7 @@
       return deleteFileQuiet(path);
     }
 
-    async function deleteFileQuiet(path) {
+    async function deleteFileQuiet(path, doRefresh = true) {
       try {
         const res = await fetch(apiBase + "/files/" + encPath(path), {
           method: "DELETE", credentials: "same-origin",
@@ -1300,6 +1300,7 @@
         if (!res.ok) throw new Error(data.detail || res.status);
         if (state.currentFile === path) clearEditorState();
         if (state.mainFile === path) setMainFileState("");
+        if (doRefresh) await refresh();  // deleteDir aktualisiert am Ende selbst
         return true;
       } catch (err) {
         toast("Löschen fehlgeschlagen: " + err.message, "error");

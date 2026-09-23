@@ -716,6 +716,18 @@ def stop_container_only(key: str) -> None:
     remove_ws_network(key)
 
 
+def stop_container_soft(key: str) -> None:
+    """Container stoppen OHNE zu entfernen (manueller Stopp + Quota-Kill).
+
+    Der (exited) Container bleibt bestehen, damit Datei-/Port-Operationen
+    ihn per docker start wiederbeleben können (s. _ensure_running) —
+    Voraussetzung, dass ein Student nach einem Quota-Kill überhaupt noch
+    aufräumen kann. Der Idle-Reaper entfernt ihn nach IDLE_TIMEOUT.
+    Volume bleibt erhalten (in beiden Fällen)."""
+    if container_state(key) in ("running", "created"):
+        _docker("stop", container_name(key), timeout=60, check=False)
+
+
 def list_workspaces() -> list[dict]:
     proc = _docker("ps", "-a", "--filter", "label=tutorai.ws",
                    "--format", "{{.Labels}}\t{{.Status}}", check=False)
@@ -769,6 +781,18 @@ def _ensure_running(key: str) -> None:
         return
     if state is None:
         raise DockerError("Workspace existiert nicht — erst POST /workspaces", 409)
+    # Gestoppter Workspace (hold "user" = manuell, "quota" = Watchdog):
+    # NICHT on-demand starten — der Stopp bleibt bestehen, Start läuft nur
+    # per ▶ Starten. (Quota: erst starten, DANN aufräumen per Dateibaum.)
+    from . import reaper  # Lazy: reaper importiert docker_ops (Zyklus)
+    hold = (reaper.REGISTRY.get(key) or {}).get("hold") or {}
+    if hold.get("reason") == "user":
+        raise DockerError("Arbeitsumgebung ist gestoppt — bitte erst starten (▶ Starten).", 409)
+    if hold.get("reason") == "quota":
+        raise DockerError(
+            "Arbeitsumgebung ist gestoppt: Disk-Limit um mehr als 50% "
+            "überschritten (neueste Dateien wurden automatisch gelöscht) "
+            "— bitte ▶ Starten.", 409)
     _docker("start", container_name(key), timeout=60)
 
 
@@ -1151,14 +1175,49 @@ def snapshot(key: str, cap: int | None = None) -> bytes:
     return out_b
 
 
+def _volume_mountpoint(key: str) -> str | None:
+    """Host-Mountpoint des /workspace-Named-Volumes (für die hostseitige
+    Disk-Messung + Aufräumen); None, wenn das Volume fehlt."""
+    proc = _docker("volume", "inspect", "-f", "{{.Mountpoint}}",
+                   volume_name(key), check=False)
+    if proc.returncode != 0:
+        return None
+    p = proc.stdout.decode(errors="replace").strip()
+    return p or None
+
+
 def workspace_disk_usage(key: str, exclude_paths: list[str] | None = None) -> int:
     """Belegte Bytes im /workspace-Volume (Summe der Datei-Größen).
 
-    `exclude_paths` (🔒-Top-Level-Mounts) werden ausgespart — geteilte
-    Assets zählen nicht gegen das Student-Quota. Liefert 0, wenn der
-    Container nicht läuft oder die Messung fehlschlägt (best effort;
-    die Quota darf den Workspace nicht lahmlegen).
+    Primär HOSTSEITIG (os.walk über den Volume-Mountpoint) — funktioniert
+    auch bei gestopptem Container und ist vom Student-Container aus nicht
+    beeinflussbar (Quota-Safety-Net, s. plan + reaper._check_disk_quota).
+    Fallback: docker exec (nur mit laufendem Container). `exclude_paths`
+    (🔒-Top-Level-Mounts) werden immer ausgespart — geteilte Assets
+    zählen nicht gegen das Student-Quota. Liefert 0 bei Fehlschlag
+    (best effort; die Quota darf den Workspace nicht lahmlegen).
     """
+    mp = _volume_mountpoint(key)
+    if mp and os.path.isdir(mp):
+        try:
+            excl = {str(p).strip("/") for p in (exclude_paths or [])
+                    if str(p).strip("/")}
+            total = 0
+            for root, dirs, files in os.walk(mp):
+                rel = os.path.relpath(root, mp)
+                top = None if rel == "." else rel.split(os.sep)[0]
+                if top in excl:
+                    dirs[:] = []
+                    files = []
+                    continue
+                for name in files:
+                    try:
+                        total += os.lstat(os.path.join(root, name)).st_size
+                    except OSError:
+                        pass
+            return total
+        except Exception:
+            pass  # z. B. kein ro-Mount im Agent (Fremd-Data-Root) → Fallback
     if container_state(key) != "running":
         return 0
     prune = ""
@@ -1181,6 +1240,119 @@ def workspace_disk_usage(key: str, exclude_paths: list[str] | None = None) -> in
         return int(out_b.decode(errors="replace").strip() or 0)
     except ValueError:
         return 0
+
+
+def purge_newest_files(key: str, target_bytes: int,
+                       exclude_paths: list[str] | None = None
+                       ) -> tuple[int, int]:
+    """Löscht die NEUESTEN Dateien im /workspace-Volume (hostseitig),
+    bis die Summe der restlichen Dateien ≤ target_bytes ist.
+
+    Heuristik: die Eigen-Dateien des Students sind „von Anfang an“ da
+    (alte mtime); das Volumen füllt sich typischerweise mit neuen
+    Artefakten (Logs, Checkpoints) → die werden zuerst weggenommen.
+    `exclude_paths` (🔒-Top-Level-Mounts) werden nicht angefasst. Liefert
+    (Anzahl gelöschter Dateien, freigegebene Bytes); (0, 0), wenn nichts
+    zu tun ist oder die Messung nicht geht (Fremd-Data-Root ohne Mount).
+    """
+    mp = _volume_mountpoint(key)
+    if not (mp and os.path.isdir(mp)):
+        return 0, 0
+    excl = {str(p).strip("/") for p in (exclude_paths or [])
+            if str(p).strip("/")}
+    entries: list[tuple[float, int, str]] = []
+    total = 0
+    try:
+        for root, dirs, files in os.walk(mp):
+            rel = os.path.relpath(root, mp)
+            top = None if rel == "." else rel.split(os.sep)[0]
+            if top in excl:
+                dirs[:] = []
+                continue
+            for name in files:
+                p = os.path.join(root, name)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                entries.append((st.st_mtime, st.st_size, p))
+                total += st.st_size
+        if total <= target_bytes:
+            return 0, 0
+        entries.sort(key=lambda e: e[0], reverse=True)  # neueste zuerst
+        freed = 0
+        count = 0
+        for _mtime, size, p in entries:
+            if total - freed <= target_bytes:
+                break
+            try:
+                os.remove(p)
+                freed += size
+                count += 1
+            except OSError:
+                continue
+        return count, freed
+    except Exception:
+        return 0, 0
+
+
+_MEM_UNIT_MULT = {
+    "B": 1, "KB": 1024, "KiB": 1024, "MB": 1024**2, "MiB": 1024**2,
+    "GB": 1024**3, "GiB": 1024**3, "TB": 1024**4, "TiB": 1024**4,
+}
+
+
+def workspace_mem_usage(key: str) -> int | None:
+    """Aktueller RAM-Verbrauch des Containers in Bytes (docker stats).
+
+    Liest die erste Komponente von MemUsage („1.2GiB / 4GiB"); None,
+    wenn der Container nicht läuft oder die Messung fehlschlägt
+    (best effort — reine UI-Info).
+    """
+    if container_state(key) != "running":
+        return None
+    try:
+        proc = _docker("stats", "--no-stream",
+                       "--format", "{{.MemUsage}}",
+                       container_name(key),
+                       check=False, timeout=30)
+        if proc.returncode != 0:
+            return None
+        line = proc.stdout.decode(errors="replace").strip()
+        m = re.match(r"([\d.]+)\s*([KMGTPE]?i?B)\b", line)
+        if not m:
+            return None
+        return int(float(m.group(1)) * _MEM_UNIT_MULT.get(m.group(2), 1))
+    except Exception:
+        return None
+
+
+def all_workspace_mem_usage() -> dict[str, int]:
+    """RAM-Verbrauch aller LAUFENDEN Workspaces in EINEM
+    docker-stats-Call (statt je ein Call pro Container, der 1–3 s
+    kostet). Liefert {key: bytes}; fehlgeschlagene Einträge fehlen
+    einfach (best effort — reine UI-Info)."""
+    try:
+        proc = _docker("stats", "--no-stream",
+                       "--format", "{{.Name}} {{.MemUsage}}",
+                       check=False, timeout=30)
+        if proc.returncode != 0:
+            return {}
+        out: dict[str, int] = {}
+        for line in proc.stdout.decode(errors="replace").splitlines():
+            parts = line.split(" ", 1)
+            if len(parts) != 2:
+                continue
+            name, mem = parts
+            if not name.startswith("tutorai-ws-"):
+                continue
+            m = re.match(r"([\d.]+)\s*([KMGTPE]?i?B)\b", mem)
+            if m:
+                out[name[len("tutorai-"):]] = int(
+                    float(m.group(1)) * _MEM_UNIT_MULT.get(m.group(2), 1))
+        return out
+    except Exception:
+        return {}
 
 
 # ── Assets (geteilte public-Dateien je Aufgabe) ───────────────────

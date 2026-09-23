@@ -17,10 +17,25 @@
             <span id="solve-timer" class="text-sm font-mono text-blue-600 ml-auto tabular-nums">00:00</span>
           </h2>
 
-          <!-- Container-Status-Banner -->
-          <div id="ws-banner"
-               class="mb-3 px-3 py-2 rounded-lg text-sm bg-blue-50 border border-blue-200 text-blue-800">
-            <span class="animate-spin inline-block">⏳</span> Arbeitsumgebung wird vorbereitet …
+          <!-- Container-Status + RAM/Disk-Nutzung + Start/Stop-Toggle +
+               Zurücksetzen (eine dezente graue Reihe) -->
+          <div class="mb-3 flex items-center gap-x-3 gap-y-1.5 flex-wrap rounded-lg bg-gray-100 border border-gray-200 px-3 py-1.5">
+            <span id="ws-status-dot" class="h-2.5 w-2.5 shrink-0 rounded-full bg-blue-400 animate-pulse"></span>
+            <span id="ws-banner" class="min-w-0 text-sm text-gray-700"><span class="animate-spin inline-block">⏳</span> Arbeitsumgebung wird vorbereitet …</span>
+            <span id="ws-usage" class="shrink-0 text-xs text-gray-500 tabular-nums"></span>
+            <div class="ml-auto flex items-center gap-1.5">
+              <button id="ws-toggle-btn" type="button"
+                      class="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition"
+                      title="Container starten">
+                <span id="ws-toggle-icon" class="inline-flex items-center"><svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></span>
+                <span id="ws-toggle-label">Starten</span>
+              </button>
+              <button id="ws-reset-btn" type="button"
+                      class="text-xs px-2.5 py-1 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50 transition"
+                      title="Alle Dateien zurücksetzen auf die Vorlage (deine Änderungen gehen verloren!)">
+                ↺ Zurücksetzen
+              </button>
+            </div>
           </div>
 
           <!-- ─── Datei-Tree + Editor (gemeinsamer, nahtloser Container) ──
@@ -103,44 +118,6 @@
             </div>
           </div>
 
-          <!-- ─── Reset (Neu-Anlegen via Tree-Toolbar, Rest per Kontextmenü) ── -->
-          <div class="flex items-center gap-2 mt-3 flex-wrap">
-            <button id="ws-reset-btn" type="button"
-                    class="text-xs px-2.5 py-1 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50 transition"
-                    title="Alle Dateien zurücksetzen auf die Vorlage (deine Änderungen gehen verloren!)">
-              ↺ Zurücksetzen
-            </button>
-          </div>
-
-          <!-- ─── Toolbar Ausführung ───────────────────────────── -->
-          <div class="flex items-center gap-3 mt-4 flex-wrap">
-            <button id="ws-run-btn"
-                    class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition flex items-center gap-2">
-              <span>▶</span> Ausführen
-            </button>
-            <button id="ws-test-btn" type="button"
-                    class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition flex items-center gap-2 hidden"
-                    title="Öffentliche Tests ausführen (Self-Check)">
-              <span>🧪</span> Tests
-            </button>
-            <span id="ws-run-meta" class="text-xs text-gray-400"></span>
-          </div>
-
-          <!-- ─── Terminal-Panel ───────────────────────────────── -->
-          <div id="ws-terminal" class="hidden mt-3">
-            <div class="bg-gray-900 rounded-lg p-3 font-mono">
-              <div class="flex items-center justify-between mb-2">
-                <span class="text-gray-400 text-xs">Konsolen-Ausgabe</span>
-                <div class="flex items-center gap-3">
-                  <span id="ws-run-duration" class="text-gray-400 text-xs"></span>
-                  <button id="ws-clear-terminal-btn" type="button"
-                          class="text-gray-500 hover:text-gray-300 text-xs">✕</button>
-                </div>
-              </div>
-              <pre id="ws-terminal-text" class="whitespace-pre-wrap text-xs text-green-300 overflow-y-auto max-h-80"></pre>
-            </div>
-          </div>
-
           <!-- ─── Grading Progress (ID-Vereinbarung mit Base) ──── -->
           <div id="grading-progress" class="hidden mt-3">
             <div class="flex items-center gap-2 text-sm text-green-700">
@@ -164,12 +141,12 @@
             <a href="/api/student/tasks/{{ task.id }}/package"
                class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-2 rounded-lg transition text-sm"
                title="Aufgaben-Vorlage inkl. Laufumgebung als docker-Paket (ohne Musterlösung/private Tests) — lokal auf dem eigenen Rechner ausführbar">
-              ⬇️ Aufgaben-Vorlage (docker-Paket)
+              ⬇️ Aufgaben-Vorlage
             </a>
             <a href="/api/student/tasks/{{ task.id }}/workspace/package"
                class="text-blue-700 hover:text-blue-900 border border-blue-300 hover:border-blue-500 px-3 py-2 rounded-lg transition text-sm"
                title="Deine aktuelle Lösung (eigene + generierte Dateien) inkl. Laufumgebung als docker-Paket — lokal auf dem eigenen Rechner ausführbar">
-              ⬇️ Meine Lösung (docker-Paket)
+              ⬇️ Meine Lösung
             </a>
           </div>
         </div>
@@ -189,7 +166,7 @@
   // Image-Specs: Chevron kippt, solange die Liste geöffnet ist).
   // Der Status-Poll rendert die Listen regelmäßig neu — daher wird
   // der Collapse-State hier gehalten und in wsSecSync re-angewendet.
-  const wsSecs = { terminals: true, ports: true };
+  const wsSecs = { terminals: false, ports: false };  // per Default einklappen
   function wsSecSync(sec) {
     const list = document.getElementById(sec === "terminals" ? "ws-terminals-list" : "ws-ports-list");
     const btn = document.getElementById(sec === "terminals" ? "ws-terminals-toggle" : "ws-ports-toggle");
@@ -223,9 +200,9 @@
 
   // Gemeinsame Baum/Editor-Komponente (workspace.js). Student-Config:
   // nur Bereiche der effektiven Klasse ✏️ edit sind editierbar;
-  // Run/Tests/Terminal bleiben hier. Ordner-Umbenennen/-Löschen nur für
-  // editierbare Ordner ohne fixe Zugriffs-Klasse (dirOpGate blockiert
-  // 🔒/👤-Inhalt und explizite Ordner-Klassen).
+  // Skript-Runs/Terminals bleiben hier. Ordner-Umbenennen/-Löschen nur
+  // für editierbare Ordner ohne fixe Zugriffs-Klasse (dirOpGate
+  // blockiert 🔒/👤-Inhalt und explizite Ordner-Klassen).
   const wsUI = WorkspaceUI.init({
     treeEl: document.getElementById("ws-filetree"),
     editorEl: document.getElementById("ws-editor"),
@@ -248,9 +225,11 @@
         ? { ok: true }
         : { ok: false, reason: "Verschieben ist nur innerhalb der editierbaren Bereiche möglich." },
     onViewChanged: (view) => wsSetView(view),
+    onRunScript: wsRunScript,
+    onStopScript: wsStopScript,
   });
-  // Run-/Job-Status (Datei-/Editor-Status lebt in wsUI)
-  const wsState = { status: null, activeRun: null };
+  // Container-Status (Datei-/Editor-Status lebt in wsUI)
+  const wsState = { status: null };
 
   // ─── View-Schalter (Editor | Medien | Terminal | Preview) ────────
   // Die rechte Fläche zeigt genau eine Ansicht; workspace.js meldet
@@ -295,48 +274,113 @@
       const data = await res.json();
       wsState.status = data;
       wsRenderBanner();
-      wsUpdateRunMeta();
       wsPortsRender();
-      // Buttons pro Skript-Konvention (Datei existiert in der Aufgabe)
-      const runBtn = document.getElementById("ws-run-btn");
-      if (runBtn) runBtn.classList.toggle("hidden", !data.has_run);
-      const testBtn = document.getElementById("ws-test-btn");
-      if (testBtn) testBtn.classList.toggle("hidden", !data.has_test);
       if (!data.degraded) {
-        if (refreshFiles) await wsUI.refresh();
+        // Gestoppt (hold „user“ oder „quota“): Dateibetrieb ist blockiert
+        // (409) → Baum bleibt beim letzten Zustand (kein Auto-Start).
+        if (refreshFiles && !(data.container && data.container.held))
+          await wsUI.refresh();
       } else {
         setWsToolbarEnabled(false);
       }
     } catch (err) {
-      banner.className = "mb-3 px-3 py-2 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700";
       banner.innerHTML = "⚠️ Status nicht abrufbar — Arbeitsumgebung derzeit nicht verfügbar.";
+      const dot = document.getElementById("ws-status-dot");
+      if (dot) dot.className = "h-2.5 w-2.5 shrink-0 rounded-full bg-red-500";
       setWsToolbarEnabled(false);
     }
   }
 
+  // Icons für den Start/Stop-Toggle (SVG statt Emoji — geräteunabhängig).
+  const WS_PLAY_SVG = '<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  const WS_STOP_SVG = '<svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+
+  // Busy-State für den Start/Stop-Toggle: während des Requests bleibt
+  // der Button deaktiviert (Label „Stoppt …“/„Startet …“). Ohne den
+  // Guard würde der 8-s-Status-Poll (wsRenderBanner) ihn reaktivieren,
+  // obwohl der Agent noch stoppt/startet.
+  let wsToggling = false;
+
   function wsRenderBanner() {
     const banner = document.getElementById("ws-banner");
+    const dot = document.getElementById("ws-status-dot");
     const s = wsState.status;
     if (!s) return;
+    const dotBase = "h-2.5 w-2.5 shrink-0 rounded-full ";
     if (s.degraded) {
-      banner.className = "mb-3 px-3 py-2 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700";
+      if (dot) dot.className = dotBase + "bg-red-500";
       banner.innerHTML = "⚠️ <strong>Compute-Server nicht erreichbar</strong> — " +
-        (escapeHtml(s.error || "") ) +
+        (escapeHtml(s.error || "")) +
         " Ausführung und Abgabe erst wieder möglich, wenn er online ist.";
     } else if (s.container && s.container.state === "running") {
-      banner.className = "mb-3 px-3 py-2 rounded-lg text-sm bg-green-50 border border-green-200 text-green-700";
+      if (dot) dot.className = dotBase + "bg-green-500";
       let txt = "✅ Arbeitsumgebung bereit";
       if (s.container.fresh) txt += " (neue Umgebung — Starter-Dateien wurden entpackt)";
-      banner.innerHTML = "🐳 " + txt;
+      banner.innerHTML = txt;
+    } else if (s.container && s.container.held === "quota") {
+      if (dot) dot.className = dotBase + "bg-amber-500";
+      const d = s.disk || {};
+      const lim = (d.usage != null && d.quota_mb)
+        ? " (" + wsBytesGb(d.usage) + " von " + (+((d.quota_mb / 1024).toFixed(1))) + " GB)"
+        : "";
+      const purged = (d.purged && d.purged.count)
+        ? " Automatisch aufgeräumt: " + d.purged.count + " neueste Datei(en) " +
+          "(" + wsBytesGb(d.purged.bytes) + ") gelöscht. "
+        : "";
+      banner.innerHTML = "<strong>Gestoppt: Disk-Limit um mehr als 50% überschritten</strong>" +
+        lim + purged + "Deine (älteren) Dateien bleiben erhalten.";
+    } else if (s.container && s.container.held === "user") {
+      if (dot) dot.className = dotBase + "bg-gray-400";
+      banner.innerHTML = "⏸ Gestoppt (manuell) — deine Dateien bleiben erhalten.";
     } else {
-      banner.className = "mb-3 px-3 py-2 rounded-lg text-sm bg-blue-50 border border-blue-200 text-blue-800";
+      if (dot) dot.className = dotBase + "bg-blue-400 animate-pulse";
       banner.innerHTML = '<span class="animate-spin inline-block">⏳</span> Arbeitsumgebung wird vorbereitet …';
     }
+    wsRenderUsage();
     setWsToolbarEnabled(!s.degraded);
+    const toggle = document.getElementById("ws-toggle-btn");
+    if (toggle && !wsToggling) {
+      const running = !s.degraded && s.container && s.container.state === "running";
+      toggle.disabled = !!s.degraded;
+      document.getElementById("ws-toggle-icon").innerHTML = running ? WS_STOP_SVG : WS_PLAY_SVG;
+      document.getElementById("ws-toggle-label").textContent = running ? "Stoppen" : "Starten";
+      toggle.title = running
+        ? "Container stoppen (Deine Dateien bleiben erhalten)"
+        : "Container starten";
+    }
+  }
+
+  // RAM/Disk-Nutzung in der Status-Leiste (dezent, tabellarische Ziffern).
+  function wsRenderUsage() {
+    const el = document.getElementById("ws-usage");
+    if (!el) return;
+    const s = wsState.status;
+    if (!s || s.degraded) {
+      el.textContent = "";
+      return;
+    }
+    const parts = [];
+    if (s.memory) {
+      parts.push("RAM " +
+        (s.disk && s.disk.mem_usage != null ? wsBytesGb(s.disk.mem_usage) + " / " : "") +
+        wsMemGb(s.memory));
+    }
+    if (s.disk && s.disk.quota_mb) {
+      parts.push("Disk " + wsBytesGb(s.disk.usage || 0) + " / " +
+                 (+((s.disk.quota_mb / 1024).toFixed(1))) + " GB");
+    }
+    const over = !!(s.disk && s.disk.over);
+    el.textContent = (over ? "⚠️ " : "") + parts.join(" · ");
+    el.title = over
+      ? "Disk-Limit erreicht — ab 50% Überschreitung wird der Container gestoppt und die neuesten Dateien (z. B. Checkpoints/Logs) automatisch gelöscht, bis das Limit wieder eingehalten ist. Ältere Dateien bleiben erhalten; danach einfach „▶ Starten“."
+      : "RAM/Disk = Container-Nutzung / Limit";
+    el.classList.toggle("text-red-600", over);
+    el.classList.toggle("font-semibold", over);
+    el.classList.toggle("text-gray-500", !over);
   }
 
   function setWsToolbarEnabled(enabled) {
-    ["ws-run-btn", "ws-test-btn", "submit-btn", "ws-new-file-btn", "ws-new-folder-btn",
+    ["submit-btn", "ws-new-file-btn", "ws-new-folder-btn",
      "ws-tree-refresh-btn", "ws-reset-btn", "ws-new-terminal-btn"].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !enabled;
@@ -418,6 +462,7 @@
   }
 
   function wsTermClose(s) {
+    wsTermClearRun(s);
     // Handler abkoppeln + xterm-Instanz entsorgen (kein Leck pro
     // geschlossenem Terminal; onmessage könnte sonst noch auf die
     // disposed Instanz schreiben).
@@ -441,14 +486,17 @@
     wsTreeAutoRefreshUpdate();
   }
 
-  function wsTermNew() {
+  function wsTermNew(opts) {
     if (typeof Terminal === "undefined" || !window.FitAddon) {
       showToast("Terminal-Bibliothek nicht geladen — Seite neu laden (Strg+Shift+R).", "error");
-      return;
+      return null;
     }
     wsTerm.seq += 1;
-    const s = { id: wsTerm.seq, label: "Terminal " + wsTerm.seq,
-                ws: null, term: null, fit: null, holder: null, dead: false };
+    const s = { id: wsTerm.seq,
+                label: (opts && opts.label) || ("Terminal " + wsTerm.seq),
+                ws: null, term: null, fit: null, holder: null, dead: false,
+                scriptPath: (opts && opts.scriptPath) || null,
+                runActive: false };
     s.holder = document.createElement("div");
     s.holder.className = "w-full h-full";
     s.holder.style.display = "none";
@@ -464,7 +512,10 @@
     s.term.open(s.holder);
 
     const wsProto = location.protocol === "https:" ? "wss://" : "ws://";
-    s.ws = new WebSocket(wsProto + location.host + WS_API + "/terminal");
+    // ?cmd=<pfad>: PTY startet das Skript direkt als Hauptprozess
+    // (statt interaktiver Shell) — für die Play-Buttons im Baum.
+    s.ws = new WebSocket(wsProto + location.host + WS_API + "/terminal"
+      + ((opts && opts.cmd) ? "?cmd=" + encodeURIComponent(opts.cmd) : ""));
     s.ws.binaryType = "arraybuffer";
     s.ws.onopen = () => {
       try { s.ws.send(JSON.stringify({ cols: s.term.cols, rows: s.term.rows })); } catch (err) { /* ignore */ }
@@ -479,11 +530,14 @@
       try { ctrl = JSON.parse(e.data); } catch (err) { s.term.write(e.data); return; }
       if (ctrl && ctrl.type === "exit") {
         s.dead = true;
+        wsTermClearRun(s);
+        if (s.scriptPath) wsUI.refresh();  // Skript-Artefakte im Baum
         s.term.write("\r\n[Prozess beendet" + (ctrl.code != null ? " (exit " + ctrl.code + ")" : "") + "]\r\n");
         wsTermRenderList();
         wsTreeAutoRefreshUpdate();
       } else if (ctrl && ctrl.type === "error") {
         s.dead = true;
+        wsTermClearRun(s);
         s.term.write("\r\n[Fehler: " + (ctrl.message || "unbekannt") + "]\r\n");
         wsTermRenderList();
         wsTreeAutoRefreshUpdate();
@@ -492,6 +546,7 @@
       }
     };
     s.ws.onclose = () => {
+      wsTermClearRun(s);
       if (!s.dead) {
         s.dead = true;
         s.term.write("\r\n[Verbindung getrennt]\r\n");
@@ -515,10 +570,12 @@
       }
     });
     wsTerm.sessions.push(s);
+    wsSecs.terminals = true;  // neue Session soll in der Liste sichtbar sein
     wsTermRenderList();
     wsTermSelect(s);
     requestAnimationFrame(() => { try { s.fit.fit(); } catch (err) { /* ignore */ } });
     wsTreeAutoRefreshUpdate();
+    return s;
   }
 
   // ─── Terminal-Input-Fallback (Focus-unabhängig) ─────────────
@@ -549,11 +606,26 @@
               t.closest("input, textarea, select") ||
               (t.classList && t.classList.contains("xterm-helper-textarea")));
   }
+  // Fallback darf nur greifen, wenn der Fokus „irgendwo harmlos" liegt:
+  // auf <body> oder im xterm-Bereich der aktiven Session. Auf Buttons
+  // oder anderen Fokus-Elementen gehören die Keys dem Browser (Enter
+  // aktiviert den Button, nicht \r im PTY), und bei aktiver Text-
+  // selektion muss Strg-C & Co. kopieren — nicht in das Terminal
+  // wandern.
+  function wsTermFallbackBlocked() {
+    const sel = window.getSelection ? window.getSelection() : null;
+    if (sel && sel.type === "Range" && sel.toString().length > 0) return true;
+    const ae = document.activeElement;
+    if (!ae || ae === document.body) return false;
+    const holder = wsTerm.active && wsTerm.active.holder;
+    return !(holder && holder.contains(ae));
+  }
   function wsTermKeyFallback(e) {
     if (wsView !== "terminal" || !wsTerm.active || wsTerm.active.dead) return;
     if (e.metaKey || e.defaultPrevented) return;  // Browser-Shortcuts (Ctrl+S = workspace.js-Save)
     if (wsTermEditableTarget(e.target)) return;   // xterm-Weg bzw. echte Eingabefelder
     if (document.querySelector(".ws-ctx-menu")) return;
+    if (wsTermFallbackBlocked()) return;
     let data = null;
     if (e.ctrlKey) {
       const k = (e.key || "").toLowerCase();
@@ -578,6 +650,7 @@
     if (wsView !== "terminal" || !wsTerm.active || wsTerm.active.dead) return;
     if (wsTermEditableTarget(e.target)) return;
     if (document.querySelector(".ws-ctx-menu")) return;
+    if (wsTermFallbackBlocked()) return;
     const cd = e.clipboardData || window.clipboardData;
     const text = cd ? cd.getData("text") : "";
     if (!text) return;
@@ -595,6 +668,38 @@
       requestAnimationFrame(() => { try { wsTerm.active.term.focus(); } catch (err) { /* ignore */ } });
     }
   });
+
+  // ─── Play/Stop für .sh-Skripte im Baum (▶ zwischen Access-Icon ──
+  // und Name, s. workspace.js fileRow) ──────────────────────────────
+  // Ein Terminal pro Skript (wiederverwendbar). Die PTY startet das
+  // Skript direkt als Hauptprozess (WS-Query-Param ?cmd=<pfad>); bei
+  // Skript-Ende schließt die PTY → {"type":"exit"} dreht den Button
+  // um (wsTermClearRun). Stop = Ctrl+C (SIGINT an Foreground-Prozess).
+  // Der Zustand wird per wsUI.setScriptRun im Baum umgeflaggt (▶↔⏹).
+  function wsTermClearRun(s) {
+    if (s && s.runActive) {
+      s.runActive = false;
+      wsUI.setScriptRun(s.scriptPath, false);
+    }
+  }
+  function wsScriptSessionFor(path) {
+    return wsTerm.sessions.find(x => !x.dead && x.scriptPath === path) || null;
+  }
+  function wsRunScript(path) {
+    const s = wsScriptSessionFor(path) || wsTermNew({ label: path, scriptPath: path, cmd: path });
+    if (!s) return;
+    wsTermSelect(s);
+    s.runActive = true;
+    wsUI.setScriptRun(path, true);
+  }
+  function wsStopScript(path) {
+    const s = wsScriptSessionFor(path);
+    if (s && s.ws && s.ws.readyState === WebSocket.OPEN) {
+      try { s.ws.send(wsTermEncoder.encode("\x03")); } catch (err) { /* ignore */ }
+    }
+    if (s) s.runActive = false;
+    wsUI.setScriptRun(path, false);
+  }
 
   // Fenster-Resize → aktives Terminal neu fitten. Der Fit MUSS im
   // requestAnimationFrame laufen (nicht synchron im Resize-Event!):
@@ -743,24 +848,43 @@
     wsLoadStatus({ refreshFiles: false });
   }
 
-  function wsUpdateRunMeta() {
-    const el = document.getElementById("ws-run-meta");
+  // „512m" / "4g" → GB (1 Dezimalstelle, ohne Nachtrag bei Ganzzahlen).
+  function wsMemGb(str) {
+    const m = String(str || "").match(/^(\d+(?:\.\d+)?)\s*([mgMG])?/);
+    if (!m) return String(str);
+    const v = parseFloat(m[1]);
+    const gb = (m[2] || "g").toLowerCase() === "m" ? v / 1024 : v;
+    return (+gb.toFixed(1)) + " GB";
+  }
+  function wsBytesGb(n) {
+    if (n == null) return "";
+    return (+((n / 1073741824).toFixed(1))) + " GB";
+  }
+  // Ein Toggle-Button: läuft → /stop, sonst → /start. Während des
+  // Requests: deaktiviert + „Stoppt …“/„Startet …“ (wsToggling). Danach
+  // stellt wsRenderBanner (via finally) Label/Icon/Disabled ein.
+  async function wsToggleWorkspace() {
+    const btn = document.getElementById("ws-toggle-btn");
+    if (!btn || btn.disabled) return;
     const s = wsState.status;
-    if (!el || !s || s.degraded) return;
-    const parts = [];
-    if (s.timeout) parts.push("Zeitlimit: " + s.timeout + " s");
-    if (s.disk && s.disk.quota_mb) {
-      parts.push("Speicher: " + Math.ceil((s.disk.usage || 0) / 1048576)
-                 + " MB / " + s.disk.quota_mb + " MB");
+    const running = !!(s && !s.degraded && s.container && s.container.state === "running");
+    btn.disabled = true;
+    wsToggling = true;
+    document.getElementById("ws-toggle-label").textContent = running ? "Stoppt …" : "Startet …";
+    try {
+      const res = await fetch(WS_API + (running ? "/stop" : "/start"), {
+        method: "POST", credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.status);
+      await wsLoadStatus(running ? { refreshFiles: false } : {});
+    } catch (err) {
+      showToast((running ? "Stoppen" : "Starten") + " fehlgeschlagen: " + err.message, "error");
+    } finally {
+      wsToggling = false;
+      btn.disabled = false;
+      wsRenderBanner();
     }
-    const over = !!(s.disk && s.disk.over);
-    el.textContent = (over ? "⚠️ " : "") + parts.join(" · ");
-    el.title = over
-      ? "Speicherlimit erreicht — bitte temporäre Dateien (z. B. Checkpoints/Logs) löschen. Neue Läufe sind blockiert, bis unter dem Limit."
-      : "Skripte: run.sh → ▶ Ausführen, test.sh → 🧪 Tests";
-    el.classList.toggle("text-gray-400", !over);
-    el.classList.toggle("text-red-600", over);
-    el.classList.toggle("font-semibold", over);
   }
 
   async function wsResetWorkspace() {
@@ -770,9 +894,6 @@
       "• Laufende Berechnungen werden gestoppt." + NL +
       "• Bereits eingereichte Versuche bleiben unverändert.";
     if (!confirm(warn)) return;
-    if (wsState.activeRun && wsState.activeRun.timer) clearInterval(wsState.activeRun.timer);
-    wsState.activeRun = null;
-    wsUnmorph();
     const btn = document.getElementById("ws-reset-btn");
     btn.disabled = true;
     try {
@@ -789,186 +910,6 @@
     }
   }
 
-  // ─── Ausführen (Sync oder Job mit Polling) ────────────────────
-  function setRunButtonsDisabled(disabled) {
-    ["ws-run-btn", "ws-test-btn"].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = disabled;
-    });
-  }
-
-  // Während eines Runs morphen der gestartete Button in einen Stoppen-Button
-  // (kein extra Stop-Button nebenbei).
-  let wsStopMorphBtn = null;
-  function wsMorphToStop(btn) {
-    if (!btn) return;
-    wsUnmorph();
-    btn.dataset.origClass = btn.className;
-    btn.dataset.origHtml = btn.innerHTML;
-    btn.className = "bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition flex items-center gap-2";
-    btn.innerHTML = '<span>⏹</span> Stoppen';
-    btn.disabled = false;  // trotz setRunButtonsDisabled(true) klickbar
-    wsStopMorphBtn = btn;
-  }
-  function wsUnmorph() {
-    if (!wsStopMorphBtn) return;
-    const btn = wsStopMorphBtn;
-    wsStopMorphBtn = null;
-    if (btn.dataset.origClass) btn.className = btn.dataset.origClass;
-    if (btn.dataset.origHtml != null) btn.innerHTML = btn.dataset.origHtml;
-    delete btn.dataset.origClass;
-    delete btn.dataset.origHtml;
-  }
-
-  // kind: "run" (run.sh) | "test" (tests/test_public.sh) — Studenten senden
-  // keine freien Commands, das Backend mappt auf die Skript-Befehle.
-  async function wsRun(kind, srcBtn) {
-    if (wsState.activeRun) return;  // laufender Job → keine parallelen Runs
-    if (wsUI.isDirty()) {
-      await wsUI.saveFile();  // aktuelle Datei vor dem Lauf speichern
-    }
-    const terminal = document.getElementById("ws-terminal");
-    const termText = document.getElementById("ws-terminal-text");
-
-    setRunButtonsDisabled(true);
-    terminal.classList.remove("hidden");
-    termText.textContent = "Lauf wird gestartet …";
-    termText.style.color = "#9ca3af";
-
-    try {
-      const res = await fetch(WS_API + "/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({ kind: kind || "run" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || res.status);
-
-      if (data.async) {
-        wsStartPolling(data.run_id, srcBtn);
-      } else {
-        wsRenderRunResult(data);
-        setRunButtonsDisabled(false);
-        wsUI.refresh();  // neue Artefakte (z. B. Plots) im Datei-Tree zeigen
-      }
-    } catch (err) {
-      termText.textContent = "Fehler: " + err.message;
-      termText.style.color = "#f87171";
-      setRunButtonsDisabled(false);
-    }
-  }
-
-  function wsStartPolling(runId, stopBtn) {
-    wsState.activeRun = { runId, startedAt: Date.now() };
-    wsMorphToStop(stopBtn);
-    document.getElementById("ws-run-duration").textContent = "⏳ läuft seit 00:00";
-
-    const tick = setInterval(() => {
-      const s = Math.floor((Date.now() - wsState.activeRun.startedAt) / 1000);
-      const mm = String(Math.floor(s / 60)).padStart(2, "0");
-      const ss = String(s % 60).padStart(2, "0");
-      document.getElementById("ws-run-duration").textContent =
-        "⏳ läuft seit " + mm + ":" + ss;
-    }, 1000);
-
-    const poll = async () => {
-      if (!wsState.activeRun || wsState.activeRun.runId !== runId) return;
-      try {
-        const res = await fetch(WS_API + "/runs/" + runId, { credentials: "same-origin" });
-        const st = await res.json();
-        if (st.status === "running" || st.status === "queued") {
-          // Live-Log-Tail (Backend liefert stdout/stderr als String oder Array)
-          const norm = (v) => Array.isArray(v) ? v.join("\n") : String(v || "");
-          const out = norm(st.stdout);
-          const err = norm(st.stderr);
-          const combined = [out, err].filter(Boolean).join("\n");
-          const termText = document.getElementById("ws-terminal-text");
-          if (combined) {
-            termText.textContent = combined;
-            termText.style.color = "#86efac";
-            termText.scrollTop = termText.scrollHeight;
-          } else {
-            termText.textContent = "⏳ Läuft … (noch keine Ausgabe)";
-            termText.style.color = "#9ca3af";
-          }
-          if (st.status === "queued") {
-            let qText = "⏳ wartet auf Start (GPU-Queue) …";
-            if (st.queue_position != null) {
-              qText = "⏳ wartet auf GPU (" + st.queue_position + " vor dir) …";
-            }
-            document.getElementById("ws-run-duration").textContent = qText;
-          }
-          wsState.activeRun.timer = setTimeout(poll, 2500);
-        } else {
-          // Fertig
-          clearInterval(tick);
-          const s = Math.floor((Date.now() - wsState.activeRun.startedAt) / 1000);
-          const mm = String(Math.floor(s / 60)).padStart(2, "0");
-          const ss = String(s % 60).padStart(2, "0");
-          wsState.activeRun = null;
-          wsUnmorph();
-          wsRenderRunResult({
-            status: st.status,
-            exit_code: st.exit_code,
-            stdout: st.stdout,
-            stderr: st.stderr,
-            timed_out: st.status === "timeout",
-            duration: st.duration,
-          });
-          document.getElementById("ws-run-duration").textContent = "⏱ " + mm + ":" + ss;
-          setRunButtonsDisabled(false);
-          wsUI.refresh();  // neue/geänderte Dateien im Datei-Tree zeigen
-          wsLoadStatus();  // Banner + Disk-Anzeige (z. B. Quota-Nachlauf) aktualisieren
-        }
-      } catch (err) {
-        // Agent kurz down? Weiter pollen (Backend fällt auf DB-Historie zurück).
-        wsState.activeRun.timer = setTimeout(poll, 5000);
-      }
-    };
-    wsState.activeRun.timer = setTimeout(poll, 2000);
-  }
-
-  async function wsStopRun() {
-    if (!wsState.activeRun) return;
-    const runId = wsState.activeRun.runId;
-    try {
-      const res = await fetch(WS_API + "/runs/" + runId + "/stop", {
-        method: "POST", credentials: "same-origin",
-      });
-      if (!res.ok && res.status !== 404) {
-        const data = await res.json();
-        showToast("Stoppen fehlgeschlagen: " + (data.detail || res.status), "error");
-      }
-    } catch (err) {
-      showToast("Stoppen fehlgeschlagen: " + err.message, "error");
-    }
-  }
-
-  function wsRenderRunResult(data) {
-    const termText = document.getElementById("ws-terminal-text");
-    let output = "";
-    if (data.stdout && String(data.stdout).trim()) output += String(data.stdout);
-    if (data.stderr && String(data.stderr).trim()) {
-      if (output) output += "\n\n";
-      output += "--- FEHLER ---\n" + data.stderr.trim();
-    }
-    if (!output.trim()) output = "(Keine Ausgabe)";
-    if (data.timed_out || data.status === "timeout") {
-      output += "\n\n[⏰ TIMEOUT: Zeitlimit erreicht]";
-    }
-    termText.textContent = output;
-    const failed = (data.exit_code != null && data.exit_code !== 0) || data.timed_out;
-    termText.style.color = (failed && data.stderr) ? "#f87171" : "#86efac";
-    termText.scrollTop = termText.scrollHeight;
-
-    if (data.exit_code != null) {
-      document.getElementById("ws-run-duration").textContent =
-        (data.duration ? "⏱ " + Math.round(data.duration) + " s · " : "") +
-        "Exit-Code: " + data.exit_code;
-    }
-  }
-
   // ─── Submit (Base-JS) bekommt eine Kurzbeschreibung des Snapshots ─
   window._workspaceSubmitLabel = () => {
     const n = wsUI.files.length;
@@ -976,23 +917,11 @@
   };
 
   // ─── Buttons ──────────────────────────────────────────────────
-  // Laufender Job: Button (der gerade als „Stoppen“ morphed ist) stoppt,
-  // sonst startet er den Run.
-  document.getElementById("ws-run-btn").addEventListener("click", (e) => {
-    if (wsState.activeRun) wsStopRun();
-    else wsRun("run", e.currentTarget);
-  });
-  document.getElementById("ws-test-btn").addEventListener("click", (e) => {
-    if (wsState.activeRun) wsStopRun();
-    else wsRun("test", e.currentTarget);
-  });
   document.getElementById("ws-tree-refresh-btn").addEventListener("click", () => wsUI.refresh());
   document.getElementById("ws-new-file-btn").addEventListener("click", () => wsUI.newFileIn(""));
   document.getElementById("ws-new-folder-btn").addEventListener("click", () => wsUI.newFolderIn(""));
   document.getElementById("ws-reset-btn").addEventListener("click", wsResetWorkspace);
-  document.getElementById("ws-clear-terminal-btn").addEventListener("click", () => {
-    document.getElementById("ws-terminal").classList.add("hidden");
-  });
+  document.getElementById("ws-toggle-btn").addEventListener("click", wsToggleWorkspace);
   document.getElementById("ws-new-terminal-btn").addEventListener("click", (e) => {
     e.stopPropagation(); wsTermNew();
   });

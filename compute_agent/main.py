@@ -139,6 +139,14 @@ def workspace_create(body: dict,
             "Image-Spec der Aufgabe injiziert)")
     docker_ops.key_parts(key)  # Key-Format validiert
     REGISTRY.register(key, spec_dict)
+    # Auto-Start-Hold: "user" = manuell gestoppt (endet mit ▶ Starten),
+    # "quota" = Sperre nach Quota-Kill + Auto-Aufräumen (endet, wenn der
+    # Student per ▶ Starten neu startet — s. reaper).
+    info = REGISTRY.get(key) or {}
+    hold = info.get("hold")
+    if hold and docker_ops.container_state(key) != "running":
+        return {"key": key, "state": "stopped", "fresh": False,
+                "held": hold.get("reason")}
     result = docker_ops.ensure_container(key, spec_dict)
     if result.get("fresh"):
         # Frisches Volume: erst die ✏️-Init-Artefakt-Seeds aus dem
@@ -166,6 +174,38 @@ def workspace_delete(key: str, payload: dict = Depends(auth.verify_token)) -> di
     docker_ops.remove_workspace(key)
     REGISTRY.remove(key)
     return {"ok": True}
+
+
+@app.post("/workspaces/{key}/stop")
+@_translate
+def workspace_stop(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
+    """Manueller Container-Stopp (Volume + Dateien bleiben erhalten).
+
+    Setzt einen Hold, damit der Status-Poll (POST /workspaces) den
+    Container nicht sofort wieder auto-startet."""
+    _op(payload, f"ws:{key}")
+    if not REGISTRY.get(key):
+        raise HTTPException(status_code=404, detail="Workspace unbekannt")
+    REGISTRY.set_hold(key, {"reason": "user", "until": None})
+    docker_ops.stop_container_soft(key)
+    _touch(key)
+    return {"ok": True, "state": "stopped"}
+
+
+@app.post("/workspaces/{key}/start")
+@_translate
+def workspace_start(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
+    """Expliziter Container-Start (hebt manuellen/Quota-Hold)."""
+    _op(payload, f"ws:{key}")
+    info = REGISTRY.get(key)
+    if not info or not info.get("spec"):
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace unbekannt — erst POST /workspaces (mit Spec)")
+    REGISTRY.clear_hold(key)
+    result = docker_ops.ensure_container(key, info["spec"])
+    _touch(key)
+    return result
 
 
 # ── Dateien ───────────────────────────────────────────────────────
@@ -278,14 +318,8 @@ def exec_cmd(key: str, body: dict,
             status_code=409,
             detail="Workspace unbekannt — erst POST /workspaces (mit Spec)")
     sp = info["spec"]
-    if info.get("over_quota"):
-        d = info.get("disk") or {}
-        usage_mb = (d.get("usage") or 0) // (1024 * 1024)
-        quota_mb = d.get("quota_mb") or sp.get("disk_quota_mb") or 0
-        raise HTTPException(
-            status_code=409,
-            detail=(f"Speicherlimit erreicht ({usage_mb} MB von {quota_mb} MB) — "
-                    "bitte temporäre Dateien löschen und erneut versuchen."))
+    # (Kein Quota-Block hier mehr: der Watchdog warnt bei 100% und
+    # stoppt den Container hart bei 150% — s. reaper._check_disk_quota.)
     # Freie Commands kommen NUR von TutorAI (Backend baut sie aus den
     # Task-Skripten); es gibt kein Default mehr aus der Spec.
     command = str(body.get("command") or "")
@@ -359,9 +393,12 @@ def workspace_port_kill(key: str, port: int,
 async def terminal_ws(ws_conn: WebSocket, key: str) -> None:
     """Terminal (PTY) im Workspace-Container.
 
-    Token per Query-Param (kein Header-Mechanismus bei WS). Protokoll:
-    Binary = rohes Terminal-Input/Output · Text = Kontrolle
-    ({"cols","rows"} init/resize · {"type":"exit","code"} bei Shell-Ende).
+    Token per Query-Param (kein Header-Mechanismus bei WS). Optional
+    ?cmd=<relativer Pfad>: PTY startet das Skript direkt als
+    Hauptprozess (statt interaktiver Shell) — für die Play-Buttons im
+    Dateibaum. Protokoll: Binary = rohes Terminal-Input/Output ·
+    Text = Kontrolle ({"cols","rows"} init/resize ·
+    {"type":"exit","code"} bei Prozess-Ende).
     """
     try:
         docker_ops.key_parts(key)
@@ -376,6 +413,14 @@ async def terminal_ws(ws_conn: WebSocket, key: str) -> None:
     if payload.get("op") not in ("*", f"ws:{key}"):
         await ws_conn.close(code=4403)
         return
+    raw_cmd = ws_conn.query_params.get("cmd")
+    script_path = None
+    if raw_cmd:
+        cp = raw_cmd.replace("\\", "/").lstrip("/")
+        if not cp or any(seg == ".." for seg in cp.split("/")):
+            await ws_conn.close(code=4409)
+            return
+        script_path = cp
     await ws_conn.accept()
     loop = asyncio.get_running_loop()
     try:
@@ -397,7 +442,8 @@ async def terminal_ws(ws_conn: WebSocket, key: str) -> None:
         exit_code["code"] = code
         exit_event.set()
 
-    session = terminal.TerminalSession(key, loop, _on_output, _on_exit)
+    session = terminal.TerminalSession(
+        key, loop, _on_output, _on_exit, script_path)
 
     async def _keepalive() -> None:
         while True:
@@ -487,18 +533,32 @@ def snapshot(key: str, payload: dict = Depends(auth.verify_token)) -> Response:
 @app.get("/workspaces/{key}/disk")
 @_translate
 def workspace_disk(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
-    """Disk-Quota-Status des Workspaces: {usage (Bytes), quota_mb, over}.
+    """Disk-Quota-Status des Workspaces: {usage, quota_mb, over, mem_usage}.
 
-    Usage kommt aus dem Reaper-Cache (alle 30 s gemessen); bei fehlendem
-    oder >90 s altem Cache wird frisch gemessen. Ohne Quota: usage=None.
+    Usage kommt aus dem Reaper-Cache (Reaper-Zyklus, default 10 s); bei
+    fehlendem oder >90 s altem Cache wird frisch gemessen. Ohne Quota:
+    usage=None. mem_usage = aktueller RAM-Verbrauch (Bytes, UI-Info).
+    purged = letzter automatischer Aufräum-Schritt (Count/Bytes).
     """
     _op(payload, f"ws:{key}")
     _touch(key)
-    out = {"usage": None, "quota_mb": None, "over": False}
+    out = {"usage": None, "quota_mb": None, "over": False, "hard": False,
+           "mem_usage": None}
     info = REGISTRY.get(key)
     if not info:
         return out
     spec = info.get("spec") or {}
+    # RAM-Usage (Reaper-Cache, Reaper-Zyklus) — reine UI-Info. Fresh-
+    # Fallback, solange der Cache leer ist (direkt nach Agent-/Container-
+    # Start): docker stats dauert 1–3 s, akzeptabel im Status-Poll.
+    mem = info.get("mem")
+    if mem and (time.time() - (mem.get("at") or 0)) < 90:
+        out["mem_usage"] = mem.get("usage")
+    elif docker_ops.container_state(key) == "running":
+        usage = docker_ops.workspace_mem_usage(key)
+        if usage is not None:
+            REGISTRY.set_mem(key, {"usage": usage, "at": time.time()})
+            out["mem_usage"] = usage
     quota_mb = spec.get("disk_quota_mb")
     if not quota_mb:
         return out
@@ -507,15 +567,23 @@ def workspace_disk(key: str, payload: dict = Depends(auth.verify_token)) -> dict
     if disk and (time.time() - (disk.get("at") or 0)) < 90:
         out["usage"] = disk.get("usage")
         out["over"] = bool(disk.get("over"))
+        out["hard"] = bool(disk.get("hard"))
+        if disk.get("purged"):
+            out["purged"] = disk["purged"]
         return out
     if docker_ops.container_state(key) != "running":
         return out
     usage = docker_ops.workspace_disk_usage(key, spec.get("readonly_paths") or [])
     over = usage > quota_mb * 1024 * 1024
-    REGISTRY.set_disk(key, {"usage": usage, "quota_mb": quota_mb,
-                            "over": over, "at": time.time()}, over)
+    hard = usage > int(quota_mb * config.QUOTA_KILL_FACTOR) * 1024 * 1024
+    new_disk = {"usage": usage, "quota_mb": quota_mb, "over": over,
+                "hard": hard, "at": time.time()}
+    if disk and disk.get("killed_at"):
+        new_disk["killed_at"] = disk["killed_at"]
+    REGISTRY.set_disk(key, new_disk)
     out["usage"] = usage
     out["over"] = over
+    out["hard"] = hard
     return out
 
 

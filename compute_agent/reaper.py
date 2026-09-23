@@ -19,8 +19,13 @@ class WorkspaceRegistry:
         self._items: dict[str, dict] = {}
 
     def register(self, key: str, spec: dict) -> None:
+        # Merge statt Replace: POST /workspaces kommt bei jedem Status-Poll,
+        # und der Zustand (disk/mem/hold) darf dabei NIE wegfallen.
         with self._lock:
-            self._items[key] = {"spec": spec, "last_activity": time.time()}
+            item = self._items.get(key) or {}
+            item["spec"] = spec
+            item["last_activity"] = time.time()
+            self._items[key] = item
 
     def touch(self, key: str) -> None:
         with self._lock:
@@ -42,15 +47,36 @@ class WorkspaceRegistry:
         with self._lock:
             return [(k, dict(v)) for k, v in self._items.items()]
 
-    def set_disk(self, key: str, disk: dict | None, over: bool) -> None:
-        """Disk-Quota-Zustand je Workspace (Cache für UI + exec-Blockade).
+    def set_disk(self, key: str, disk: dict | None) -> None:
+        """Disk-Quota-Zustand je Workspace (Cache für UI + Watchdog).
 
         `all_items()`/`get()` liefern Kopien — Mutationen gehen nur so.
         """
         with self._lock:
             if key in self._items:
                 self._items[key]["disk"] = disk
-                self._items[key]["over_quota"] = over
+
+    def set_hold(self, key: str, hold: dict) -> None:
+        """Auto-Start-Hold: {reason: "user"|"quota"}.
+
+        "user"  = manuelles Stoppen (endet erst mit explizitem Start),
+        "quota" = Sperre nach Quota-Kill + Auto-Aufräumen (endet, wenn
+                  der Student per ▶ Starten neu startet).
+        """
+        with self._lock:
+            if key in self._items:
+                self._items[key]["hold"] = hold
+
+    def clear_hold(self, key: str) -> None:
+        with self._lock:
+            if key in self._items:
+                self._items[key].pop("hold", None)
+
+    def set_mem(self, key: str, mem: dict | None) -> None:
+        """RAM-Usage je Workspace (UI-Cache, Reaper-Zyklus)."""
+        with self._lock:
+            if key in self._items:
+                self._items[key]["mem"] = mem
 
     def rebuild_from_docker(self) -> int:
         """Nach Neustart: bekannte Container mit Grace-Periode auffüllen."""
@@ -73,11 +99,19 @@ REGISTRY = WorkspaceRegistry()
 
 
 def _sweep() -> None:
-    """Ein Reaper-Durchlauf: Disk-Quota prüfen + idle Container stoppen."""
+    """Ein Reaper-Durchlauf: Disk-Quota, RAM-Cache, idle Container.
+
+    RAM kommt aus EINEM docker-stats-Call für alle Container (ein Call
+    je Container kostet 1–3 s — für den 10-s-Zyklus zu teuer).
+    """
     now = time.time()
     active = runs.active_keys()
+    mems = docker_ops.all_workspace_mem_usage()
     for key, info in REGISTRY.all_items():
         _check_disk_quota(key, info)
+        mem = mems.get(key)
+        if mem is not None:
+            REGISTRY.set_mem(key, {"usage": mem, "at": now})
         if key in active:
             continue
         if now - info["last_activity"] <= config.IDLE_TIMEOUT:
@@ -90,33 +124,73 @@ def _sweep() -> None:
 
 
 def _check_disk_quota(key: str, info: dict) -> None:
-    """Soft-Disk-Quota: Volume-Usage messen (🔒-ro-Mounts ausgenommen).
+    """Disk-Quota-Watchdog: Warnung bei 100%, Stopp + Aufräumen bei 150%.
 
-    Beim Übergang in die Überschreitung werden alle aktiven Runs gestoppt;
-    neue Runs blockiert main.exec_cmd per `over_quota`. Fehlende Quota
-    (None/0) = kein Limit. Fehler bleiben stumm (best effort).
+    Die Messung läuft hostseitig (Volume-Mountpoint des Docker-Daemons,
+    s. docker_ops.workspace_disk_usage) — vom Container aus nicht
+    killbar und auch bei gestopptem Container möglich. Bei >150% wird
+    der Container SOFT-gestoppt (Volume bleibt) und automatisch
+    aufgeräumt: die neuesten Dateien (typ. Logs/Checkpoints, s.
+    purge_newest_files) werden gelöscht, bis wieder unter 100% liegt —
+    die (älteren) Eigen-Dateien des Students bleiben erhalten. Danach
+    bleibt der Auto-Start gesperrt (hold "quota"); der Student startet
+    die Umgebung in Ruhe selbst per ▶ Starten (hebt die Sperre auf).
+    Fehlende Quota (None/0) = kein Limit. Fehler bleiben stumm (best
+    effort).
     """
     try:
         spec = info.get("spec") or {}
         quota_mb = spec.get("disk_quota_mb")
         if not quota_mb:
-            REGISTRY.set_disk(key, None, False)
+            REGISTRY.set_disk(key, None)
             return
-        if docker_ops.container_state(key) != "running":
-            return  # letzter gemessener Wert bleibt erhalten
         usage = docker_ops.workspace_disk_usage(
             key, spec.get("readonly_paths") or [])
         over = usage > quota_mb * 1024 * 1024
-        REGISTRY.set_disk(key, {"usage": usage, "quota_mb": quota_mb,
-                                "over": over, "at": time.time()}, over)
-        if over and not info.get("over_quota"):
-            _stop_runs_for_quota(key, usage, quota_mb)
+        hard = usage > int(quota_mb * config.QUOTA_KILL_FACTOR) * 1024 * 1024
+        disk = dict(info.get("disk") or {})
+        disk.update({"usage": usage, "quota_mb": quota_mb,
+                     "over": over, "hard": hard, "at": time.time()})
+        if hard:
+            if docker_ops.container_state(key) == "running":
+                _note_runs_for_quota_kill(key, usage, quota_mb)
+                # SOFT-Stopp (kein rm!): exited-Container + Volume bleiben.
+                docker_ops.stop_container_soft(key)
+                disk["killed_at"] = time.time()
+            # Automatisches Aufräumen (hostseitig, geht auch bei
+            # gestopptem Container): neueste Dateien weg, bis wieder
+            # unter 100% — danach kann der Student in Ruhe ▶ Starten.
+            n_purged, freed = docker_ops.purge_newest_files(
+                key, quota_mb * 1024 * 1024,
+                spec.get("readonly_paths") or [])
+            if n_purged:
+                disk["purged"] = {"count": n_purged, "bytes": freed,
+                                  "at": time.time()}
+                usage -= freed
+                disk.update({"usage": usage,
+                             "over": usage > quota_mb * 1024 * 1024,
+                             "hard": usage > int(quota_mb *
+                                                 config.QUOTA_KILL_FACTOR)
+                                                 * 1024 * 1024})
+            # Auto-Start bleibt gesperrt, bis der Student per ▶ Starten
+            # neu startet (kein Auto-Start, kein Kill-Loop). Ein
+            # manuelles Stoppen (hold "user") hat Vorrang und wird nicht
+            # überschrieben.
+            if (info.get("hold") or {}).get("reason") != "user":
+                REGISTRY.set_hold(key, {"reason": "quota"})
+        else:
+            disk["killed_at"] = None
+        REGISTRY.set_disk(key, disk)
     except Exception:
         pass
 
 
-def _stop_runs_for_quota(key: str, usage: int, quota_mb: int) -> None:
-    """Alle aktiven Runs eines Workspaces stoppen (Quota-Überschreitung)."""
+def _note_runs_for_quota_kill(key: str, usage: int, quota_mb: int) -> None:
+    """Vor dem Quota-Kill: aktive Runs informieren + stoppen.
+
+    Der Container-Kill beendet die Prozesse ohnehin; die Notiz macht den
+    Grund in der Konsolen-Ausgabe verständlich.
+    """
     usage_mb = usage // (1024 * 1024)
     for rid in runs.active_run_ids(key):
         job = runs.get_run(key, rid)
@@ -124,8 +198,12 @@ def _stop_runs_for_quota(key: str, usage: int, quota_mb: int) -> None:
             with job._lock:
                 if job.status in ("queued", "running"):
                     job.stderr.append(
-                        f"[agent] Gestoppt: Speicherlimit erreicht "
-                        f"({usage_mb} MB von {quota_mb} MB).")
+                        f"[agent] Gestoppt: Speicherlimit um 50%+ "
+                        f"überschritten ({usage_mb} MB von {quota_mb} MB) — "
+                        "Container wurde beendet. Die neuesten Dateien "
+                        "(z. B. Checkpoints/Logs) wurden automatisch "
+                        "gelöscht, bis das Limit wieder eingehalten ist; "
+                        "ältere Dateien bleiben erhalten.")
         runs.stop_run(key, rid)
 
 
@@ -143,4 +221,4 @@ def reaper_loop(stop_event: threading.Event) -> None:
                 docker_ops.prune_build_artifacts()  # Build-Cache + Dangling
         except Exception:
             pass
-        stop_event.wait(30)
+        stop_event.wait(config.REAPER_INTERVAL)

@@ -186,10 +186,25 @@ class ComputeClient:
                       task_id=task, student_id=student)
 
     def disk(self, key: str) -> dict:
-        """Disk-Quota-Status des Workspaces: {usage (Bytes), quota_mb, over}."""
+        """Disk-Quota-Status des Workspaces: {usage (Bytes), quota_mb,
+        over, hard, mem_usage (Bytes)}."""
         course, task, student = _key_parts(key)
         resp = self._request("GET", f"/workspaces/{key}/disk", op=f"ws:{key}",
                              task_id=task, student_id=student, timeout=60)
+        return resp.json()
+
+    def stop_workspace(self, key: str) -> dict:
+        """Manueller Container-Stopp (Volume/Dateien bleiben erhalten)."""
+        course, task, student = _key_parts(key)
+        resp = self._request("POST", f"/workspaces/{key}/stop", op=f"ws:{key}",
+                             task_id=task, student_id=student, timeout=120)
+        return resp.json()
+
+    def start_workspace(self, key: str) -> dict:
+        """Expliziter Container-Start (hebt Stop- Sperre)."""
+        course, task, student = _key_parts(key)
+        resp = self._request("POST", f"/workspaces/{key}/start", op=f"ws:{key}",
+                             task_id=task, student_id=student, timeout=120)
         return resp.json()
 
     def ports(self, key: str) -> list[dict]:

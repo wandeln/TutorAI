@@ -36,9 +36,14 @@ from . import docker_ops
 
 class TerminalSession:
     def __init__(self, key: str, loop: asyncio.AbstractEventLoop,
-                 on_output, on_exit) -> None:
+                 on_output, on_exit,
+                 script_path: str | None = None) -> None:
         """on_output(data: bytes) / on_exit(code: int | None) — sync
-        Callbacks; dürfen Tasks anlegen, blockieren aber nicht."""
+        Callbacks; dürfen Tasks anlegen, blockieren aber nicht.
+
+        script_path: PTY startet das Skript direkt als Hauptprozess
+        (statt interaktiver Shell) — für die Play-Buttons im
+        Dateibaum. Ende → PTY schließt → on_exit."""
         self._key = key
         self._sid = uuid.uuid4().hex[:12]
         self._loop = loop
@@ -62,13 +67,19 @@ class TerminalSession:
         # Prompt. ${CONDA_DEFAULT_ENV:+…} zeigt eine aktive Conda-
         # Env im Prompt an (wird vom bash je Prompt neu ausgewertet).
         pidfile = f"/tmp/.tutorai_term_{self._sid}.pid"
-        shell_cmd = (
-            f"echo $$ > {pidfile}; "
-            "if command -v bash >/dev/null 2>&1; then "
-            r"PS1='\u@\h:\w${CONDA_DEFAULT_ENV:+($CONDA_DEFAULT_ENV)}\$ '; "
-            "export PS1; exec bash; "
-            r"else PS1='$ '; export PS1; exec sh; fi"
-        )
+        if script_path:
+            # Einfache-Quote-Escape schützt vor ' im Pfad. exec erhält
+            # die sh-PID → Orphan-Kill (comm-Check) deckt bash ab.
+            esc = script_path.replace("'", "'\\''")
+            shell_cmd = f"echo $$ > {pidfile}; exec bash '{esc}'"
+        else:
+            shell_cmd = (
+                f"echo $$ > {pidfile}; "
+                "if command -v bash >/dev/null 2>&1; then "
+                r"PS1='\u@\h:\w${CONDA_DEFAULT_ENV:+($CONDA_DEFAULT_ENV)}\$ '; "
+                "export PS1; exec bash; "
+                r"else PS1='$ '; export PS1; exec sh; fi"
+            )
         self._proc = subprocess.Popen(
             ["docker", "exec", "-i", "-t",
              "-e", "TERM=xterm-256color",

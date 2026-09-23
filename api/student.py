@@ -1332,6 +1332,7 @@ async def workspace_status(
         "has_run": "run.sh" in file_paths,
         "has_test": "test.sh" in file_paths,
         "timeout": task.workspace_timeout,
+        "memory": task.workspace_memory,
         "assets": [],
         "disk": None,
         "ports": [],
@@ -1358,7 +1359,9 @@ async def workspace_status(
         ws = await asyncio.to_thread(
             workspace_service.ensure_workspace, session, task, user.id)
         out["agent"] = ws.get("agent")
-        out["container"] = {"state": ws.get("state"), "fresh": bool(ws.get("fresh"))}
+        out["container"] = {"state": ws.get("state"),
+                            "fresh": bool(ws.get("fresh")),
+                            "held": ws.get("held")}
         assets = await asyncio.to_thread(client.list_assets, task.course_id, task.id)
         out["assets"] = [{"path": a.get("path"), "size": a.get("size")} for a in assets]
         # Disk-Quota-Status (Usage/Quota/over) — isoliert, damit ein
@@ -1400,9 +1403,11 @@ async def workspace_port_kill(
 async def workspace_terminal(ws: WebSocket, task_id: int) -> None:
     """Terminal (PTY) im eigenen Workspace-Container.
 
-    1:1-WS-Weiterleitung zum Agenten (Token per Query-Param). Protokoll:
+    1:1-WS-Weiterleitung zum Agenten (Token per Query-Param). Optional
+    ?cmd=<relativer Pfad>: PTY startet das Skript direkt (Play-Button
+    im Dateibaum); 👤-Dateien werden abgewiesen. Protokoll:
     Binary = rohes Terminal-Input/Output · Text = Kontrolle
-    ({"cols","rows"} init/resize · {"type":"exit","code"} · {"type":"error"]).
+    ({"cols","rows"} init/resize · {"type":"exit","code"} · {"type":"error"}).
     """
     # Cookie-Auth manuell (FastAPI-WS unterstützt keine Depends)
     token = ws.cookies.get("access_token", "")
@@ -1413,7 +1418,7 @@ async def workspace_terminal(ws: WebSocket, task_id: int) -> None:
         return
     await ws.accept()
 
-    agent_url = agent_key = key = None
+    agent_url = agent_key = key = cmd_path = None
     student_id = None
     try:
         with Session(engine) as session:
@@ -1442,6 +1447,14 @@ async def workspace_terminal(ws: WebSocket, task_id: int) -> None:
                 return
             key = _ws_key(task, user)
             student_id = user.id
+            raw_cmd = ws.query_params.get("cmd")
+            if raw_cmd:
+                cmd_path = _safe_ws_path(raw_cmd)
+                # 👤-Dateien existieren für den Studenten nicht;
+                # readonly/edit dürfen ausgeführt werden
+                # (ausführen ≠ schreiben).
+                if _ws_effective_access(session, task, cmd_path) == "hidden":
+                    raise HTTPException(404, "Datei nicht gefunden.")
     except Exception:
         logger.warning("Workspace-Terminal: Setup fehlgeschlagen", exc_info=True)
         await _ws_error_close(ws, "Terminal derzeit nicht verfügbar.")
@@ -1452,7 +1465,8 @@ async def workspace_terminal(ws: WebSocket, task_id: int) -> None:
     uri = (agent_url.replace("https://", "wss://")
                   .replace("http://", "ws://").rstrip("/")
            + f"/workspaces/{key}/terminal"
-           + f"?token={quote(agent_token, safe='')}")
+           + f"?token={quote(agent_token, safe='')}"
+           + (f"&cmd={quote(cmd_path, safe='')}" if cmd_path else ""))
     try:
         async with websockets.connect(uri, max_size=None, open_timeout=10) as up:
             async def _browser_to_agent() -> None:
@@ -1790,6 +1804,40 @@ async def workspace_reset(
     key = _ws_key(task, user)
     try:
         await asyncio.to_thread(client.delete_workspace, key)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/stop")
+async def workspace_stop(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Container manuell stoppen (Dateien/Volume bleiben erhalten)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        await asyncio.to_thread(client.stop_workspace, key)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/start")
+async def workspace_start(
+    task_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Container explizit starten (hebt die manuelle Stop-Sperre)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    try:
+        await asyncio.to_thread(client.start_workspace, key)
     except ComputeAgentError as e:
         raise _agent_http(e)
     return {"ok": True}

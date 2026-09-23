@@ -57,6 +57,8 @@ RELAY_PATH: str = os.getenv(
 # ── Container-Defaults ────────────────────────────────────────────
 # Idle-Timeout: Container nach Inaktivität entfernen (Volume bleibt).
 IDLE_TIMEOUT: int = int(os.getenv("IDLE_TIMEOUT", "1200"))  # 20 min
+# Reaper-Sweep-Intervall in s (Disk-Quota + RAM-Cache + Idle-Stop).
+REAPER_INTERVAL: float = float(os.getenv("REAPER_INTERVAL", "10"))
 # Max. parallele GPU-Jobs auf diesem Node (FIFO-Queue via Semaphore).
 GPU_MAX_JOBS: int = int(os.getenv("GPU_MAX_JOBS", "8"))
 # Timeout für den Init-Build (init.sh im Build-Container) — Downloads
@@ -85,6 +87,10 @@ MAX_FILE_SIZE: int = 50 * 1024 * 1024          # 50 MB pro Datei
 # Quota gesetzt hat) + Cap für Snapshots (tar.gz) — mit der Task-Quota
 # zusammengelegt: Snapshot-Cap = Quota (bei Überschreitung erst aufräumen).
 MAX_WORKSPACE_SIZE: int = 1024 * 1024 * 1024   # 1 GB
+# Disk-Quota-Watchdog (reaper): ab Faktor × Quota wird der Container
+# hart gestoppt (Volume bleibt) und der Auto-Start gesperrt, bis der
+# Usage wieder unter der Schwelle fällt (s. reaper._check_disk_quota).
+QUOTA_KILL_FACTOR: float = float(os.getenv("QUOTA_KILL_FACTOR", "1.5"))
 MAX_ASSET_FILE: int = 5 * 1024 * 1024 * 1024   # 5 GB pro Asset-Datei (Datasets)
 MAX_TIMEOUT: int = 7200                         # 2 h harte Obergrenze
 DEFAULT_TIMEOUT: int = 900                      # 15 min

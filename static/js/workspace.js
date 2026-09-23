@@ -46,6 +46,11 @@
   const ACCESS_RANK = { edit: 0, readonly: 1, hidden: 2 };
   const ACCESS_BY_RANK = ["edit", "readonly", "hidden"];
 
+  // Play/Stop-Icons für .sh-Skripte (SVG statt Emoji — geräteunabhängige
+  // Darstellung).
+  const WPLAY_SVG = '<svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>';
+  const WSTOP_SVG = '<svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>';
+
   function accessLabel(a) {
     if (a === "readonly") return "🔒 read-only";
     if (a === "hidden") return "👤 versteckt";
@@ -208,6 +213,9 @@
   //                         anlegen/möbeln/löschen via /folders-Endpoints,
   //                         auch wenn leer (bleibt nach Reload sichtbar)
   //   moveGate              fn(src, dst) -> {ok, reason?}
+  //   onRunScript(path) / onStopScript(path)
+  //                         ▶/⏹-Button an .sh-Dateien im Baum (Student:
+  //                         Terminal-Run, s. task_solve_workspace.html)
   //   saveStateEl           optionales HTMLElement (Auto-Save-Status)
   //   emptyMsg / noTaskMsg  Platzhalter im Baum
   //   onMainFileChange(p) / onFilesLoaded(files)
@@ -224,6 +232,7 @@
       folderApi = false,
       localOrderKey = null,
       moveGate = () => ({ ok: true }),
+      onRunScript = null, onStopScript = null,
       saveStateEl = null,
       emptyMsg = "(keine Dateien)", noTaskMsg = null,
       onMainFileChange = null, onFilesLoaded = null,
@@ -256,6 +265,7 @@
       selected: new Set(),  // Mehrfachauswahl (Datei-Pfade; markiert ab 2)
       selAnchor: null,      // Anker-Pfad für Shift-Bereichsauswahl
       visibleFiles: [],     // sichtbare Datei-Pfade in Baum-Reihenfolge
+      scriptRuns: new Set(),  // laufende .sh-Skripte (▶→⏹ im Baum)
     };
 
     // ── Lokale Reihenfolge (Student: nur eigene Ansicht) ──────────
@@ -767,6 +777,9 @@
       const isMain = allowMain && path === state.mainFile;
       const active = path === state.currentFile && state.fileFocused;
       const ro = readOnlyCheck(path);
+      // ▶/⏹ an .sh-Dateien (Template-Callback: Terminal-Run)
+      const isSh = !!(onRunScript && /\.sh$/i.test(name));
+      const runActive = isSh && state.scriptRuns.has(path);
       // Alle Dateien sind per Handle ziehbar; Zugriffs-Klassen/skriptfeste
       // Pfade blockt der Drop-Gate (mit Fehlermeldung, nicht ohne Handle).
       const draggable = !!(canMove || canReorder);
@@ -790,6 +803,14 @@
         (isInit
           ? '<span title="init.sh-Ergebnis — read-only">📦</span>'
           : '<span title="' + esc(accDef.label) + '">' + accDef.icon + "</span>") +
+        (isSh
+          ? '<button type="button" class="ws-runbtn shrink-0 select-none inline-flex items-center justify-center h-5 w-5 rounded text-white ' +
+            (runActive ? "bg-red-600 hover:bg-red-700"
+                       : "bg-green-600 hover:bg-green-700") +
+            '" data-path="' + esc(path) + '" title="' +
+            (runActive ? "Skript stoppen" : "Skript ausführen") + '">' +
+            (runActive ? WSTOP_SVG : WPLAY_SVG) + "</button>"
+          : "") +
         '<span class="truncate flex-1">' + esc(name) + "</span>" +
         (isMain ? '<span class="shrink-0" title="Main-Datei (Editor-Fokus)">⭐</span>' : "") +
         '<span class="text-[10px] text-gray-400 shrink-0">' + fmtBytes(meta.size) + "</span>";
@@ -847,6 +868,15 @@
           state.dragRejected = null;
           clearDropMarks();
           if (rejected) toast(rejected, "warning");
+        };
+      }
+      if (isSh) {
+        const rb = div.querySelector(".ws-runbtn");
+        rb.onclick = e => {
+          e.stopPropagation();
+          if (state.scriptRuns.has(path)) {
+            if (onStopScript) onStopScript(path);
+          } else if (onRunScript) onRunScript(path);
         };
       }
       // Drop-Target: in den Ordner dieser Datei ziehen (auch über Dateien in
@@ -1931,6 +1961,22 @@
       get dirty() { return state.dirty; },
       accessOf: effectiveAccess,
       isInitPath,
+      // ▶/⏹-Zustand je .sh-Datei (Template: Terminal-Run Start/Stop)
+      setScriptRun: (path, running) => {
+        path = String(path || "");
+        if (running) state.scriptRuns.add(path);
+        else state.scriptRuns.delete(path);
+        treeEl.querySelectorAll(".ws-runbtn").forEach(b => {
+          if (b.dataset.path !== path) return;
+          const on = state.scriptRuns.has(path);
+          b.innerHTML = on ? WSTOP_SVG : WPLAY_SVG;
+          b.title = on ? "Skript stoppen" : "Skript ausführen";
+          b.classList.toggle("bg-red-600", on);
+          b.classList.toggle("hover:bg-red-700", on);
+          b.classList.toggle("bg-green-600", !on);
+          b.classList.toggle("hover:bg-green-700", !on);
+        });
+      },
       refresh,
       openFile,
       saveFile,

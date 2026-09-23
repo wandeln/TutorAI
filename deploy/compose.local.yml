@@ -68,6 +68,13 @@ services:
       # Der Agent verwaltet den Docker-Daemon des HOSTS (Workspace-Container,
       # Images, Volumes leben dort — auch für GPU-Passthrough nötig)
       - /var/run/docker.sock:/var/run/docker.sock
+      # Disk-Quota-Watchdog: Volumes des Docker-Daemons hostseitig
+      # (rw), damit der Agent den Beleg messen und automatisch aufräumen
+      # kann (neueste Dateien bei Quota-Überschreitung löschen) — robust
+      # gegen Killen vom Student-Container aus, auch bei gestopptem
+      # Container. Bei anderem Docker-Data-Root automatisch inaktiv
+      # (Fallback: Messung via docker exec, Aufräumen wird übersprungen).
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
       # Bind-Mount statt Named Volume: Der Agent übergibt Asset-Pfade an
       # den Docker-Daemon, der sie als HOST-Pfad auflöst. Ein Named Volume
       # wäre dem Daemon nicht als Pfad zugänglich → leere Asset-Mounts.

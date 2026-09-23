@@ -224,8 +224,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # At startup, hash every file in static/ and build a lookup map.
 # `asset("css/main.css")` → "/static/css/main.css?v=a1b2c3d4"
 # Changing the file content changes the hash → browser fetches fresh.
+# Dev-Modus (TUTORAI_DEV=1, Live-Code via compose.dev.yml): ?v= kommt
+# aus der Datei-Mtime statt aus der Startup-Map → jeder Save erzeugt
+# eine neue URL, ohne dass die App neu starten muss.
 
 _static_hashes: dict[str, str] = {}
+_dev_mode = os.environ.get("TUTORAI_DEV") == "1"
 
 if (BASE_DIR / "static").exists():
     for root, _dirs, files in os.walk(BASE_DIR / "static"):
@@ -241,6 +245,11 @@ if (BASE_DIR / "static").exists():
 def _asset(path: str) -> str:
     """Tornado-style static_url: append content hash as ?v= query param."""
     key = path.lstrip("/")
+    if _dev_mode:
+        fpath = BASE_DIR / "static" / key
+        if fpath.is_file():
+            return f"/static/{key}?v={fpath.stat().st_mtime_ns}"
+        return f"/static/{key}"
     v = _static_hashes.get(key)
     if v:
         return f"/static/{key}?v={v}"

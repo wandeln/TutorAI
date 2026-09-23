@@ -1,0 +1,35 @@
+# TutorAI — Entwicklungs-Overlay: Live-Code + Auto-Reload (kein --build)
+#
+# Immer ZUSAMMEN mit dem Basissetzen (vom Repo-Root):
+#   docker compose -f deploy/compose.local.yml -f deploy/compose.dev.yml up -d tutorai
+#
+# Danach genügt bei Code-Änderungen KEIN Rebuild und KEIN weiterer Aufruf:
+#   - Python: uvicorn --reload startet die App automatisch neu
+#   - Templates: greifen sofort (Jinja2 auto-reload)
+#   - CSS/JS: greifen sofort (Bind-Mount; ?v= kommt per TUTORAI_DEV=1
+#     aus der Datei-Mtime, statt vom (beim Start gebauten) Inhalts-Hash)
+#
+# Das Basimage (tutorai-app:local) stellt nur die Abhängigkeiten — es wird
+# nur nach requirements.txt-Änderungen (oder beim allerersten Setup)
+# neu gebaut:  ... up -d --build tutorai
+#
+# Zurück zum Normalbetrieb (ohne Overlay):
+#   docker compose -f deploy/compose.local.yml up -d tutorai
+#
+# Der compute-agent-Dienst bleibt bewusst unberührt (Agent-Änderungen
+# weiterhin wie üblich mit --build compute-agent).
+
+services:
+  tutorai:
+    environment:
+      TUTORAI_DEV: "1"
+    volumes:
+      # Repo live in den Container (überlagert den eingebackenen Code).
+      # data/ wird zusätzlich spezifischer gemountet — gleicher Inhalt.
+      - ../:/app
+    command: >-
+      python -m uvicorn main:app
+      --host 0.0.0.0 --port 8000
+      --reload
+      --reload-dir /app
+      --reload-exclude /app/data

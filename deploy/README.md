@@ -44,6 +44,25 @@ docker compose -f deploy/compose.local.yml logs -f compute-agent  # Agent
   GPU-Zugang wird je Engine in der Engine-UI gewählt (Checkboxen;
   Default alle, „keine“ = nur CPU).
 
+### Entwicklungsmodus (Live-Code + Auto-Reload, ohne `--build`)
+
+`deploy/compose.dev.yml` ist ein Overlay, das das Repo live in den
+TutorAI-Container bindet und uvicorn mit `--reload` startet:
+
+```bash
+docker compose -f deploy/compose.local.yml -f deploy/compose.dev.yml up -d tutorai
+```
+
+- Python-Änderungen → App startet automatisch neu (watchfiles);
+  Templates/CSS/JS greifen sofort, ohne Rebuild oder Neustart
+  (`TUTORAI_DEV=1` lässt das statische `?v=` aus der Mtime kommen).
+- `--build` fällt komplett weg — nur nach `requirements.txt`-Änderungen
+  oder beim allerersten Setup: `… up -d --build tutorai`.
+- `compute-agent` bleibt unberührt (Agent-Änderungen wie üblich mit
+  `--build compute-agent`).
+- Zurück zum Normalbetrieb: `docker compose -f deploy/compose.local.yml up -d tutorai`
+  (der Container wird ohne Overlay neu angelegt).
+
 ## Modus B — Nativ-Systemd (Bestand)
 
 Bestehende Installation (uvicorn via `tutorai.service` + nginx) bleibt

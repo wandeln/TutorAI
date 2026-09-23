@@ -54,6 +54,28 @@ def volume_name(key: str) -> str:
     return f"tutorai-{key}"
 
 
+def ws_network_name(key: str) -> str:
+    return f"tutorai-net-{key}"
+
+
+def ensure_ws_network(key: str) -> None:
+    """Isoliertes Bridge-Netzwerk für den Workspace-Container (idempotent).
+
+    Nur für internet=true-Workspaces: Outbound ins Internet funktioniert
+    weiter (NAT), aber der Container ist für andere Container unsichtbar
+    — und umgekehrt (kein gegenseitiger Port-Zugriff zwischen Studenten).
+    """
+    proc = _docker("network", "create", ws_network_name(key),
+                   check=False, timeout=30)
+    if proc.returncode != 0 and "already exists" not in proc.stderr.decode():
+        raise DockerError("Workspace-Netzwerk konnte nicht angelegt werden", 500)
+
+
+def remove_ws_network(key: str) -> None:
+    """Best effort: klappt nur, wenn kein Container mehr daran hängt."""
+    _docker("network", "rm", ws_network_name(key), check=False, timeout=30)
+
+
 def asset_dir(course: int, task: int) -> Path:
     return Path(config.ASSET_ROOT) / str(course) / str(task)
 
@@ -534,7 +556,9 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
         "--tmpfs", _TMPFS_SPEC,
         "-v", f"{volume_name(key)}:/workspace",
         "--pids-limit", "256",
-        "--network", "bridge" if spec["internet"] else "none",
+        # Isoliertes Netz pro Container (Outbound via NAT, KEINE
+        # Container-Sichtbarkeit) — nicht die geteilte Default-Bridge.
+        "--network", (ws_network_name(key) if spec["internet"] else "none"),
         "-w", spec["working_dir"],
         "-e", "PYTHONDONTWRITEBYTECODE=1",
         "-e", "HOME=/tmp",
@@ -633,6 +657,8 @@ def _container_image(key: str) -> str | None:
 def create_container(key: str, spec: dict) -> str:
     """Container erzeugen (und starten). Liefert das aufgelöste Image."""
     _gpu_args(spec)  # list[int] ohne GPU-Fähigkeit → klarer 409
+    if spec["internet"]:
+        ensure_ws_network(key)
     image = resolve_image(_desired_image(key, spec))
     args = _build_create_args(key, spec, image)
     _docker(*args, timeout=120)
@@ -679,6 +705,7 @@ def remove_workspace(key: str) -> None:
         _docker("rm", "-f", c, timeout=60, check=False)
     invalidate_relay_cache(key)
     _docker("volume", "rm", volume_name(key), check=False)
+    remove_ws_network(key)
 
 
 def stop_container_only(key: str) -> None:
@@ -686,6 +713,7 @@ def stop_container_only(key: str) -> None:
     if container_state(key) is not None:
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
     invalidate_relay_cache(key)
+    remove_ws_network(key)
 
 
 def list_workspaces() -> list[dict]:

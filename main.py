@@ -55,7 +55,7 @@ from database.models import (
     Submission,
 )
 from services.auth_service import get_current_user, hash_password, require_course_access
-from services import media_service, import_service
+from services import media_service, import_service, preview_proxy
 from services import image_spec_service
 from services.workspace_service import workspace_service
 from services.slides_service import (
@@ -251,6 +251,21 @@ templates.env.globals["asset"] = _asset
 
 
 @app.middleware("http")
+async def _no_store_for_html(request: Request, call_next):
+    """HTML-Seiten nie cachen (auch nicht heuristisch).
+
+    Die Seiten tragen ihr JS inline — eine vom Browser gecachte alte
+    Version waere dauerhaft defekt, bis manuell hart neu geladen wird
+    (Cache-Control: no-store macht das obsolet).
+    """
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if "text/html" in ctype and not request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.middleware("http")
 async def _cors_for_static_fonts(request: Request, call_next):
     """CORS für statische Fonts (woff2/woff/ttf/otf).
 
@@ -284,6 +299,7 @@ app.include_router(script_api.router)
 app.include_router(forum.router)
 app.include_router(script_questions.router)
 app.include_router(importer.router)
+app.include_router(preview_proxy.router)  # /preview/{task}/{port}/… (same-origin, s. plan-workspace-preview.md)
 
 
 # ═══════════════════════════════════════════════════════════════════

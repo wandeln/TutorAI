@@ -36,10 +36,13 @@ WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 SUBMISSION_DIR = BASE_DIR / "data" / "submissions"
 SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
 
-# ─── Server ──────────────────────────────────────────────────────
+# ─── Server ──────────────────────────────────────────
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 DEBUG = os.getenv("DEBUG", "true").lower() in ("true", "1", "yes")
+# Port des Agent-Preview-Servers (compute_agent, PREVIEW_AGENT_PORT dort;
+# nur Agent-Netz, kein Host-Publish) — Ziel des Backend-Preview-Proxy.
+PREVIEW_AGENT_PORT = int(os.getenv("PREVIEW_AGENT_PORT", "8701"))
 
 # ─── Datenbank ──────────────────────────────────────────────────
 DATABASE_URL = os.getenv(

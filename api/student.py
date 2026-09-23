@@ -10,19 +10,23 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+import websockets
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, SQLModel, select
+from starlette.websockets import WebSocketDisconnect
 
-from database.base import get_session
+from compute_agent.auth import make_token
+from database.base import engine, get_session
 from database.models import (
     User, Task, Submission, Feedback, HintExchange, ScriptSection,
     TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
     WorkspaceRun, WorkspaceRunStatus,
 )
-from services.auth_service import get_current_user
+from services.auth_service import decode_access_token, get_current_user
 from services.compute_client import (
     ComputeAgentError,
     ComputeClient,
@@ -1274,6 +1278,18 @@ def _ws_key(task: Task, user: User) -> str:
     return workspace_key(task.course_id, task.id, user.id)
 
 
+async def _ws_error_close(ws: WebSocket, message: str) -> None:
+    """WS-Fehlermeldung (JSON) + Close — für die Terminal-Route."""
+    try:
+        await ws.send_text(json.dumps({"type": "error", "message": message}))
+    except Exception:
+        pass
+    try:
+        await ws.close(code=1011)
+    except Exception:
+        pass
+
+
 def _ws_effective_access(session: Session, task: Task, path: str) -> str:
     """Effektive Zugriffs-Klasse eines Pfads (eigene + Ordner-Vorfahren)."""
     fm = workspace_service.folder_map(session, task)
@@ -1318,6 +1334,7 @@ async def workspace_status(
         "timeout": task.workspace_timeout,
         "assets": [],
         "disk": None,
+        "ports": [],
     }
     if not out["enabled"]:
         out["degraded"] = True
@@ -1350,10 +1367,143 @@ async def workspace_status(
             out["disk"] = await asyncio.to_thread(client.disk, _ws_key(task, user))
         except ComputeAgentError:
             out["disk"] = None
+        # Lauschende Ports (Preview-UI) — isoliert wie disk.
+        try:
+            out["ports"] = await asyncio.to_thread(
+                client.ports, _ws_key(task, user))
+        except ComputeAgentError:
+            out["ports"] = []
     except ComputeAgentError as e:
         out["degraded"] = True
         out["error"] = e.message
     return out
+
+
+@router.post("/tasks/{task_id}/workspace/ports/{port}/kill")
+async def workspace_port_kill(
+    task_id: int,
+    port: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Prozess eines lauschenden Ports beenden (Preview-UI: × beim Port)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    try:
+        await asyncio.to_thread(client.kill_port, _ws_key(task, user), port)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.websocket("/tasks/{task_id}/workspace/terminal")
+async def workspace_terminal(ws: WebSocket, task_id: int) -> None:
+    """Terminal (PTY) im eigenen Workspace-Container.
+
+    1:1-WS-Weiterleitung zum Agenten (Token per Query-Param). Protokoll:
+    Binary = rohes Terminal-Input/Output · Text = Kontrolle
+    ({"cols","rows"} init/resize · {"type":"exit","code"} · {"type":"error"]).
+    """
+    # Cookie-Auth manuell (FastAPI-WS unterstützt keine Depends)
+    token = ws.cookies.get("access_token", "")
+    payload = decode_access_token(token) if token else None
+    user_id = payload.get("sub") if payload else None
+    if not user_id:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+
+    agent_url = agent_key = key = None
+    student_id = None
+    try:
+        with Session(engine) as session:
+            user = session.get(User, user_id)
+            if user is None:
+                await _ws_error_close(ws, "Nicht authentifiziert.")
+                return
+            task = await _load_ws_task(task_id, session, user)
+            try:
+                if not workspace_service.is_enabled(session, task.course_id):
+                    raise HTTPException(
+                        503, "Workspace-Aufgaben sind derzeit deaktiviert.")
+                not_ready = workspace_service.validate_task_ready(session, task)
+                if not_ready:
+                    raise HTTPException(503, not_ready)
+                agent = workspace_service.pick_task_agent(session, task)
+                if agent is None:
+                    raise HTTPException(
+                        503, workspace_service.pick_agent_error(
+                            session, task.course_id,
+                            workspace_service.task_engine_names(task)))
+                agent_url = agent["url"]
+                agent_key = agent.get("key") or ""
+            except HTTPException as e:
+                await _ws_error_close(ws, str(e.detail))
+                return
+            key = _ws_key(task, user)
+            student_id = user.id
+    except Exception:
+        logger.warning("Workspace-Terminal: Setup fehlgeschlagen", exc_info=True)
+        await _ws_error_close(ws, "Terminal derzeit nicht verfügbar.")
+        return
+
+    agent_token = make_token(agent_key, f"ws:{key}",
+                             task_id=task_id, student_id=student_id)
+    uri = (agent_url.replace("https://", "wss://")
+                  .replace("http://", "ws://").rstrip("/")
+           + f"/workspaces/{key}/terminal"
+           + f"?token={quote(agent_token, safe='')}")
+    try:
+        async with websockets.connect(uri, max_size=None, open_timeout=10) as up:
+            async def _browser_to_agent() -> None:
+                try:
+                    while True:
+                        msg = await ws.receive()
+                        mtype = msg.get("type")
+                        if mtype == "websocket.disconnect":
+                            return
+                        if mtype != "websocket.receive":
+                            continue
+                        if msg.get("bytes") is not None:
+                            await up.send(msg["bytes"])
+                        elif msg.get("text") is not None:
+                            await up.send(msg["text"])
+                except WebSocketDisconnect:
+                    pass
+                except Exception:
+                    pass
+
+            async def _agent_to_browser() -> None:
+                try:
+                    async for msg in up:
+                        if isinstance(msg, (bytes, bytearray)):
+                            await ws.send_bytes(bytes(msg))
+                        else:
+                            await ws.send_text(msg)
+                except Exception:
+                    pass
+
+            t1 = asyncio.create_task(_browser_to_agent())
+            t2 = asyncio.create_task(_agent_to_browser())
+            try:
+                await asyncio.wait(
+                    {t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for t in (t1, t2):
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+    except Exception:
+        logger.warning("Workspace-Terminal: Agent-WS fehlgeschlagen",
+                       exc_info=True)
+        await _ws_error_close(ws, "Terminal-Verbindung fehlgeschlagen.")
+        return
+    try:
+        await ws.close()
+    except Exception:
+        pass
 
 
 @router.get("/tasks/{task_id}/workspace/files")
@@ -1381,12 +1531,23 @@ async def workspace_list_files(
         row = file_rows.get(p)
         f["access"] = effective_file_access(p, row.access if row else None, fm)
         f["sort_order"] = row.sort_order if row else None
-    # Ordner-Klassen (explizite Setzungen — für die Baum-Marker/Fallbacks).
+    # Ordner: explizite Klassen-Zeilen + reale Verzeichnisse im Volume
+    # (leere Ordner — z. B. per Terminal/mkdir — wären sonst unsichtbar;
+    # own: None markiert implizite Einträge ohne eigene Zeile).
+    try:
+        vol_dirs = await asyncio.to_thread(client.list_dirs, key)
+    except ComputeAgentError:
+        vol_dirs = []
+    folder_paths = set(fm)
+    for d in vol_dirs:
+        if d and d not in folder_paths:
+            folder_paths.add(d)
     out_folders = [{
         "path": p,
         "access": effective_folder_access(p, fm),
         "own": fm.get(p),
-    } for p in sorted(fm)]
+    } for p in sorted(folder_paths)
+        if effective_folder_access(p, fm) != "hidden"]
     # no-store: nach Moves/Deletes gecachte (alte) Liste vermeiden.
     return JSONResponse(
         content={
@@ -1527,6 +1688,85 @@ async def workspace_delete_file(
     key = _ws_key(task, user)
     p = _safe_ws_path(path)
     _ws_require_writable(session, task, p)
+    try:
+        await asyncio.to_thread(client.delete_file, key, p)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True}
+
+
+@router.post("/tasks/{task_id}/workspace/folders")
+async def workspace_create_folder(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """(Möglicherweise leeren) Verzeichnis anlegen ({path}) — persistiert
+    im Volume, auch wenn der Ordner bleibt (z. B. für Terminal-Arbeit)."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    body = await request.json()
+    p = _safe_ws_path(str(body.get("path") or ""))
+    _ws_require_writable(session, task, p)
+    try:
+        await asyncio.to_thread(client.create_dir, key, p)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True, "path": p}
+
+
+@router.post("/tasks/{task_id}/workspace/folders/move")
+async def workspace_move_folder(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Verzeichnis verschieben/umbenennen ({src, dst}) — auch leere
+    Ordner, nur innerhalb der editierbaren Bereiche."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    body = await request.json()
+    src = _safe_ws_path(str(body.get("src") or ""))
+    dst = _safe_ws_path(str(body.get("dst") or ""))
+    if src == dst:
+        raise HTTPException(400, "Quelle und Ziel sind identisch.")
+    if dst.startswith(src + "/"):
+        raise HTTPException(400, "Ein Ordner kann nicht in sich selbst verschoben werden.")
+    fm = workspace_service.folder_map(session, task)
+    if effective_folder_access(src, fm) == "hidden":
+        raise HTTPException(404, "Ordner nicht gefunden.")
+    if effective_folder_access(src, fm) != "edit" \
+            or effective_folder_access(dst, fm) != "edit":
+        raise HTTPException(403, "Verschieben ist nur innerhalb der editierbaren Bereiche möglich.")
+    try:
+        await asyncio.to_thread(client.move_file, key, src, dst)
+    except ComputeAgentError as e:
+        raise _agent_http(e)
+    return {"ok": True, "path": dst}
+
+
+@router.delete("/tasks/{task_id}/workspace/folders/{path:path}")
+async def workspace_delete_folder(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Verzeichnis inkl. Inhalt aus dem eigenen Container löschen."""
+    task = await _load_ws_task(task_id, session, user)
+    client = _ws_client_or_error(session, task)
+    key = _ws_key(task, user)
+    p = _safe_ws_path(path)
+    fm = workspace_service.folder_map(session, task)
+    acc = effective_folder_access(p, fm)
+    if acc == "hidden":
+        raise HTTPException(404, "Ordner nicht gefunden.")
+    if acc != "edit":
+        raise HTTPException(403, "Dieser Ordner ist read-only (vom Tutor verwaltet).")
     try:
         await asyncio.to_thread(client.delete_file, key, p)
     except ComputeAgentError as e:

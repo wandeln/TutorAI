@@ -2,7 +2,10 @@
 {% block extra_head %}
 {{ super() }}
 <link rel="stylesheet" href="{{ asset('css/workspace.css') }}">
+<link rel="stylesheet" href="{{ asset('vendor/xterm/css/xterm.css') }}">
 <script src="{{ asset('js/workspace.js') }}"></script>
+<script src="{{ asset('vendor/xterm/js/xterm.js') }}"></script>
+<script src="{{ asset('vendor/xterm/js/addon-fit.js') }}"></script>
 {% endblock %}
 
 
@@ -25,7 +28,7 @@
                räumt treeEl.innerHTML bei jedem Render auf. -->
           <div class="ws-tree-editor-wrap flex flex-col sm:flex-row h-[540px] sm:h-[480px] border border-gray-200 rounded-lg overflow-hidden bg-white">
             <div class="flex flex-col h-[220px] sm:h-auto sm:w-52 shrink-0 border-b sm:border-b-0 sm:border-r border-gray-200 bg-gray-50">
-              <div class="flex items-center gap-1 p-1.5 border-b border-gray-200">
+              <div class="flex items-center gap-1 p-1.5 border-b border-gray-200 bg-gray-100">
                 <button type="button" id="ws-tree-refresh-btn" title="Aktualisieren" class="ws-tree-btn">⟳</button>
                 <button type="button" id="ws-new-file-btn" title="Neue Datei in der Wurzel anlegen" class="ws-tree-btn">＋ 📄</button>
                 <button type="button" id="ws-new-folder-btn" title="Neuen Ordner in der Wurzel anlegen" class="ws-tree-btn">＋ 📁</button>
@@ -34,6 +37,27 @@
               </div>
               <div id="ws-filetree" class="flex-1 overflow-y-auto p-1 text-sm">
                 <div class="text-gray-400 text-xs p-1">Dateien werden geladen …</div>
+              </div>
+              <!-- ─── Terminals (PTY im Container) ──────────────────── -->
+              <div id="ws-terminals-sec" class="hidden border-t border-gray-200">
+                <div class="flex items-center gap-1 h-7 px-1.5 bg-gray-100 border-b border-gray-200 select-none cursor-pointer">
+                  <button type="button" id="ws-terminals-toggle" title="Liste einklappen" class="p-0 shrink-0 text-gray-400 hover:text-gray-600">
+                    <svg class="ws-sec-chevron h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </button>
+                  <span class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Terminals</span>
+                  <button type="button" id="ws-new-terminal-btn" title="Neues Terminal öffnen" class="ws-tree-btn ml-auto">＋</button>
+                </div>
+                <div id="ws-terminals-list" class="p-1 text-xs overflow-y-auto max-h-24"></div>
+              </div>
+              <!-- ─── Ports (Preview der Webservices) ───────────────── -->
+              <div id="ws-ports-sec" class="hidden border-t border-gray-200">
+                <div class="flex items-center gap-1 h-7 px-1.5 bg-gray-100 border-b border-gray-200 select-none cursor-pointer">
+                  <button type="button" id="ws-ports-toggle" title="Liste einklappen" class="p-0 shrink-0 text-gray-400 hover:text-gray-600">
+                    <svg class="ws-sec-chevron h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                  </button>
+                  <span class="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Ports</span>
+                </div>
+                <div id="ws-ports-list" class="p-1 text-xs overflow-y-auto max-h-24"></div>
               </div>
             </div>
 
@@ -45,11 +69,36 @@
             <!-- Editor-Spalte (nahtlos — Name/Zugriffs-Klasse stehen im Dateibaum,
                  Speichern läuft automatisch, Löschen über Kontextmenü);
                  Medien-Ansicht (Bilder/PDF/…) belegt denselben Bereich -->
-            <div class="flex-1 min-h-0">
+            <!-- min-w-0 WICHTIG: sonst wächst die Spalte nicht unter die
+                 Canvas-Breite des Terminals (min-width:auto) und verdrängt
+                 die Tree-Spalte / der Zeilenumbruch rückt aus. -->
+            <div class="flex-1 min-h-0 min-w-0">
               <div id="ws-editor-wrap" class="ws-editor w-full h-full min-h-0">
                 <textarea id="ws-editor" class="w-full h-full font-mono text-sm"
                           spellcheck="false"></textarea>
                 <div id="ws-media-view" class="hidden h-full"></div>
+              </div>
+              <!-- Terminal-View (belegt die Editor-Fläche; View-Schalter
+                   per wsSetView, Sessions in #ws-terminals-sec) -->
+              <div id="ws-terminal-view" class="hidden w-full h-full min-h-0">
+                <div id="ws-term-host" class="w-full h-full bg-[#0a0a0a] p-1.5 pr-0 overflow-hidden"></div>
+              </div>
+              <!-- Preview-View (iframe auf den Preview-Proxy; View-Schalter
+                   per wsSetView, Ports in #ws-ports-sec) -->
+              <div id="ws-preview-view" class="hidden w-full h-full min-h-0">
+                <div class="flex flex-col h-full">
+                  <div class="flex items-center gap-1.5 px-2 py-1 border-b border-gray-200 bg-gray-50 text-xs text-gray-600 shrink-0">
+                    <span id="ws-preview-label" class="font-semibold shrink-0"></span>
+                    <input id="ws-preview-url" type="text" spellcheck="false"
+                           autocomplete="off" placeholder="/"
+                           title="Pfad eingeben (z. B. /docs) + Enter = losfahren"
+                           class="flex-1 min-w-0 font-mono bg-transparent rounded px-1 text-gray-600 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                    <button type="button" id="ws-preview-reload-btn" title="Neu laden" class="ws-tree-btn">⟳</button>
+                    <a id="ws-preview-open-btn" target="_blank" rel="noopener" title="In neuem Tab öffnen" class="ws-tree-btn">↗</a>
+                  </div>
+                  <iframe id="ws-preview-frame" class="flex-1 w-full border-0 bg-white"
+                          title="Workspace-Preview" src="about:blank"></iframe>
+                </div>
               </div>
             </div>
           </div>
@@ -132,6 +181,45 @@
   // ══════════════════════════════════════════════════════════════
   const WS_API = "/api/student/tasks/{{ task.id }}/workspace";
   const WS_MAIN_FILE = {{ task.workspace_main_file | tojson }};
+  // Preview-Proxy auf dem Haupt-Port (same-origin → kein Mixed Content)
+  const PREVIEW_BASE = "";
+
+  // ─── Section-Collapse (Terminals / Ports) ─────────────────
+  // Chevron links in der Bar: Liste ein-/ausklappen (Design wie
+  // Image-Specs: Chevron kippt, solange die Liste geöffnet ist).
+  // Der Status-Poll rendert die Listen regelmäßig neu — daher wird
+  // der Collapse-State hier gehalten und in wsSecSync re-angewendet.
+  const wsSecs = { terminals: true, ports: true };
+  function wsSecSync(sec) {
+    const list = document.getElementById(sec === "terminals" ? "ws-terminals-list" : "ws-ports-list");
+    const btn = document.getElementById(sec === "terminals" ? "ws-terminals-toggle" : "ws-ports-toggle");
+    if (!list || !btn) { return; }
+    list.classList.toggle("hidden", !wsSecs[sec]);
+    // Einklappen: untere Bar-Border weg, sonst Doppelborder
+    const bar = list.previousElementSibling;
+    if (bar) { bar.classList.toggle("border-b", wsSecs[sec]); }
+    const chev = btn.querySelector("svg");
+    // Listen wachsen nach oben (Sektionen sind unten fixiert) →
+    // Chevron zeigt geöffnet nach unten, zugeklappt nach oben.
+    if (chev) { chev.style.transform = wsSecs[sec] ? "" : "rotate(180deg)"; }
+    btn.title = wsSecs[sec] ? "Liste einklappen" : "Liste aufklappen";
+  }
+  function wsSecToggle(sec) { wsSecs[sec] = !wsSecs[sec]; wsSecSync(sec); }
+  // Ganze Bar (inkl. Heading) klickbar; die Buttons inside optieren per
+  // stopPropagation aus, sonst würden sie doppelt toggeln bzw. beim
+  // Terminal-Öffnen unbeabsichtigt einklappen.
+  document.getElementById("ws-terminals-toggle").addEventListener("click", (e) => {
+    e.stopPropagation(); wsSecToggle("terminals");
+  });
+  document.getElementById("ws-ports-toggle").addEventListener("click", (e) => {
+    e.stopPropagation(); wsSecToggle("ports");
+  });
+  document.getElementById("ws-terminals-toggle").parentElement
+    .addEventListener("click", () => wsSecToggle("terminals"));
+  document.getElementById("ws-ports-toggle").parentElement
+    .addEventListener("click", () => wsSecToggle("ports"));
+  wsSecSync("terminals");
+  wsSecSync("ports");
 
   // Gemeinsame Baum/Editor-Komponente (workspace.js). Student-Config:
   // nur Bereiche der effektiven Klasse ✏️ edit sind editierbar;
@@ -152,17 +240,55 @@
     canReorder: true,  // nur lokal (localStorage) — eigene Ansicht
     localOrderKey: "wsorder-" + {{ current_user.id }} + "-" + {{ task.id }},
     allowBulk: true,  // editierbare Ordner umbenennen/löschen (dirOpGate)
+    folderApi: true,  // Ordner on-disk verwalten (anlegen/verschieben/
+                      // löschen — auch leere bleiben nach Reload sichtbar)
     saveStateEl: document.getElementById("ws-save-state"),
     moveGate: (src, dst) =>
       (wsUI.accessOf(src) === "edit" && wsUI.accessOf(dst) === "edit")
         ? { ok: true }
         : { ok: false, reason: "Verschieben ist nur innerhalb der editierbaren Bereiche möglich." },
+    onViewChanged: (view) => wsSetView(view),
   });
   // Run-/Job-Status (Datei-/Editor-Status lebt in wsUI)
   const wsState = { status: null, activeRun: null };
 
-  // ─── Status-Banner ────────────────────────────────────────────
-  async function wsLoadStatus() {
+  // ─── View-Schalter (Editor | Medien | Terminal | Preview) ────────
+  // Die rechte Fläche zeigt genau eine Ansicht; workspace.js meldet
+  // „editor“/„media“, Terminal/Preview werden hier gewechselt.
+  // Global genau EIN fokussiertes Element über Verzeichnis/Terminals/
+  // Ports: die aktuelle View entscheidet, welche Liste ihre
+  // Aktive-Markierung zeigt (Datei-Highlight via setFileFocused).
+  let wsView = "editor";
+  function wsSetView(view) {
+    wsView = view;
+    document.getElementById("ws-editor-wrap")
+      .classList.toggle("hidden", view !== "editor" && view !== "media");
+    document.getElementById("ws-terminal-view")
+      .classList.toggle("hidden", view !== "terminal");
+    document.getElementById("ws-preview-view")
+      .classList.toggle("hidden", view !== "preview");
+    wsUI.setFileFocused(view === "editor" || view === "media");
+    wsTerm.focused = view === "terminal";
+    wsPrev.focused = view === "preview";
+    wsPortsRender();  // rendert Port-Liste + Terminal-Liste (neue Markierung)
+    if (view === "editor" || view === "media") {
+      wsUI.refreshEditor();  // CodeMirror war versteckt → neu vermessen
+    }
+    if (view === "terminal" && wsTerm.active) {
+      const act = wsTerm.active;
+      wsTerm.sessions.forEach((x) => { x.holder.style.display = (x === act) ? "" : "none"; });
+      requestAnimationFrame(() => {
+        try { act.fit.fit(); } catch (err) { /* ignore */ }
+        act.term.focus();
+      });
+    }
+  }
+
+  // ─── Status-Banner ────────────────────────────────────────
+  // opts.refreshFiles = false: nur Banner/Ports/Buttons (8-s-Poll) —
+  // den Baum NICHT rerendern (D&D/Kontextmenü blieben ungestört).
+  async function wsLoadStatus(opts) {
+    const refreshFiles = !opts || opts.refreshFiles !== false;
     const banner = document.getElementById("ws-banner");
     try {
       const res = await fetch(WS_API + "/status", { credentials: "same-origin" });
@@ -170,13 +296,14 @@
       wsState.status = data;
       wsRenderBanner();
       wsUpdateRunMeta();
+      wsPortsRender();
       // Buttons pro Skript-Konvention (Datei existiert in der Aufgabe)
       const runBtn = document.getElementById("ws-run-btn");
       if (runBtn) runBtn.classList.toggle("hidden", !data.has_run);
       const testBtn = document.getElementById("ws-test-btn");
       if (testBtn) testBtn.classList.toggle("hidden", !data.has_test);
       if (!data.degraded) {
-        await wsUI.refresh();
+        if (refreshFiles) await wsUI.refresh();
       } else {
         setWsToolbarEnabled(false);
       }
@@ -210,10 +337,410 @@
 
   function setWsToolbarEnabled(enabled) {
     ["ws-run-btn", "ws-test-btn", "submit-btn", "ws-new-file-btn", "ws-new-folder-btn",
-     "ws-tree-refresh-btn", "ws-reset-btn"].forEach(id => {
+     "ws-tree-refresh-btn", "ws-reset-btn", "ws-new-terminal-btn"].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.disabled = !enabled;
     });
+  }
+
+  // ─── Terminals (xterm.js → WS → Agent → docker-exec-PTY) ────────
+  // Sessions: {id, label, ws, term, fit, holder, dead}. Die xterm-
+  // Instanzen leben in #ws-term-host (display-Toggle je Session —
+  // NIE Container leeren, sonst wären andere Sessions weg).
+  const wsTerm = { sessions: [], seq: 0, active: null, focused: false };
+  // WS-Protokoll: Binary = rohes Terminal-Input, Text = Kontrolle (resize).
+  const wsTermEncoder = new TextEncoder();
+
+  // Auto-Refresh des Dateibaums, solange ≥1 Terminal lebt (mkdir/rm etc.
+  // erscheinen ohne manuellen „Aktualisieren“-Klick). Nur bei echtem
+  // Daten-Change (Signatur = Pfade+Größen + Ordner-Pfade).
+  const wsTreeAutoRefresh = { timer: null, sig: null };
+  function wsTreeAutoRefreshUpdate() {
+    const active = wsTerm.sessions.some((s) => !s.dead);
+    if (active && !wsTreeAutoRefresh.timer) {
+      wsTreeAutoRefresh.timer = setInterval(wsTreeAutoRefreshTick, 5000);
+    } else if (!active && wsTreeAutoRefresh.timer) {
+      clearInterval(wsTreeAutoRefresh.timer);
+      wsTreeAutoRefresh.timer = null;
+      wsTreeAutoRefresh.sig = null;
+    }
+  }
+  async function wsTreeAutoRefreshTick() {
+    try {
+      const res = await fetch(WS_API + "/files", { credentials: "same-origin", cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      const files = data.files || [];
+      const folders = data.folders || [];
+      const sig = files.map((f) => f.path + ":" + f.size).join("|") +
+        "#" + folders.map((f) => f.path).join("|");
+      if (wsTreeAutoRefresh.sig !== null && sig !== wsTreeAutoRefresh.sig) {
+        await wsUI.refresh();
+      }
+      wsTreeAutoRefresh.sig = sig;
+    } catch (err) { /* Status-Poll meldet */ }
+  }
+
+  function wsTermRenderList() {
+    const el = document.getElementById("ws-terminals-list");
+    el.innerHTML = "";
+    if (!wsTerm.sessions.length) {
+      el.innerHTML = '<div class="px-1.5 py-1 text-gray-400">Keine Terminals</div>';
+      wsSecSync("terminals");
+      return;
+    }
+    wsTerm.sessions.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer " +
+        (s === wsTerm.active && wsTerm.focused ? "bg-indigo-100 text-indigo-900" : "hover:bg-gray-100 text-gray-700") +
+        (s.dead ? " opacity-50" : "");
+      const label = document.createElement("span");
+      label.className = "truncate flex-1";
+      label.textContent = s.label;
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "text-gray-400 hover:text-red-600";
+      x.title = "Terminal schließen";
+      x.textContent = "×";
+      x.addEventListener("click", (e) => { e.stopPropagation(); wsTermClose(s); });
+      row.appendChild(label);
+      row.appendChild(x);
+      row.addEventListener("click", () => wsTermSelect(s));
+      el.appendChild(row);
+    });
+    wsSecSync("terminals");
+  }
+
+  function wsTermSelect(s) {
+    wsTerm.active = s;
+    wsTermRenderList();
+    wsSetView("terminal");
+  }
+
+  function wsTermClose(s) {
+    // Handler abkoppeln + xterm-Instanz entsorgen (kein Leck pro
+    // geschlossenem Terminal; onmessage könnte sonst noch auf die
+    // disposed Instanz schreiben).
+    try { s.ws.onopen = null; s.ws.onmessage = null; s.ws.onclose = null; } catch (err) { /* ignore */ }
+    try { s.ws.close(); } catch (err) { /* ignore */ }
+    try { s.term.dispose(); } catch (err) { /* ignore */ }
+    const i = wsTerm.sessions.indexOf(s);
+    if (i >= 0) wsTerm.sessions.splice(i, 1);
+    s.holder.remove();
+    if (wsTerm.active === s) {
+      wsTerm.active = wsTerm.sessions[wsTerm.sessions.length - 1] || null;
+      wsTermRenderList();
+      if (wsTerm.active) {
+        wsTerm.active.holder.style.display = "";
+      } else if (wsView === "terminal") {
+        wsSetView("editor");
+      }
+    } else {
+      wsTermRenderList();
+    }
+    wsTreeAutoRefreshUpdate();
+  }
+
+  function wsTermNew() {
+    if (typeof Terminal === "undefined" || !window.FitAddon) {
+      showToast("Terminal-Bibliothek nicht geladen — Seite neu laden (Strg+Shift+R).", "error");
+      return;
+    }
+    wsTerm.seq += 1;
+    const s = { id: wsTerm.seq, label: "Terminal " + wsTerm.seq,
+                ws: null, term: null, fit: null, holder: null, dead: false };
+    s.holder = document.createElement("div");
+    s.holder.className = "w-full h-full";
+    s.holder.style.display = "none";
+    document.getElementById("ws-term-host").appendChild(s.holder);
+    s.term = new Terminal({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+      theme: { background: "#0a0a0a" },
+    });
+    s.fit = new FitAddon.FitAddon();
+    s.term.loadAddon(s.fit);
+    s.term.open(s.holder);
+
+    const wsProto = location.protocol === "https:" ? "wss://" : "ws://";
+    s.ws = new WebSocket(wsProto + location.host + WS_API + "/terminal");
+    s.ws.binaryType = "arraybuffer";
+    s.ws.onopen = () => {
+      try { s.ws.send(JSON.stringify({ cols: s.term.cols, rows: s.term.rows })); } catch (err) { /* ignore */ }
+      if (wsTerm.active === s) s.term.focus();
+    };
+    s.ws.onmessage = (e) => {
+      if (e.data instanceof ArrayBuffer) {
+        s.term.write(new Uint8Array(e.data));
+        return;
+      }
+      let ctrl = null;
+      try { ctrl = JSON.parse(e.data); } catch (err) { s.term.write(e.data); return; }
+      if (ctrl && ctrl.type === "exit") {
+        s.dead = true;
+        s.term.write("\r\n[Prozess beendet" + (ctrl.code != null ? " (exit " + ctrl.code + ")" : "") + "]\r\n");
+        wsTermRenderList();
+        wsTreeAutoRefreshUpdate();
+      } else if (ctrl && ctrl.type === "error") {
+        s.dead = true;
+        s.term.write("\r\n[Fehler: " + (ctrl.message || "unbekannt") + "]\r\n");
+        wsTermRenderList();
+        wsTreeAutoRefreshUpdate();
+      } else {
+        s.term.write(String(e.data));
+      }
+    };
+    s.ws.onclose = () => {
+      if (!s.dead) {
+        s.dead = true;
+        s.term.write("\r\n[Verbindung getrennt]\r\n");
+      }
+      wsTermRenderList();
+      wsTreeAutoRefreshUpdate();
+    };
+    // WICHTIG: Methoden-Form „term.onData(cb)“ — KEINE Property-Zuweisung!
+    // In dieser xterm-Version ist Terminal.onData (wie onResize) ein
+    // getter-only-Accessor ohne Setter: „term.onData = fn“ schlägt in
+    // Non-Strict-JS stillfehend fehl und der Handler wird nie registriert.
+    s.term.onData((data) => {
+      if (s.ws.readyState !== WebSocket.OPEN) return;
+      try {
+        s.ws.send(wsTermEncoder.encode(data));
+      } catch (err) { /* ignore */ }
+    });
+    s.term.onResize((size) => {
+      if (s.ws.readyState === WebSocket.OPEN) {
+        s.ws.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }));
+      }
+    });
+    wsTerm.sessions.push(s);
+    wsTermRenderList();
+    wsTermSelect(s);
+    requestAnimationFrame(() => { try { s.fit.fit(); } catch (err) { /* ignore */ } });
+    wsTreeAutoRefreshUpdate();
+  }
+
+  // ─── Terminal-Input-Fallback (Focus-unabhängig) ─────────────
+  // xterms term.onData feuert NUR, wenn das versteckte Hilfs-Textarea
+  // (xterm-helper-textarea) den DOM-Fokus hat — der geht hier leicht
+  // verloren (Klicks auf Buttons/Body/Baum) → ohne Fallback erscheint
+  // nichts im PTY. Solange die Terminal-View aktiv ist und der Fokus
+  // auf einem „harmlosen" Element liegt, werden die Tasten hier an
+  // die aktive (sichtbare) Session weitergeleitet. Liegt der Fokus
+  // auf xterms Textarea, ist der xterm-eigene onData-Weg zuständig
+  // (→ hier überspringen, keine doppelte Eingabe).
+  const WS_TERM_KEYS = {
+    Enter: "\r", Backspace: "\x7f", Tab: "\t", Escape: "\x1b",
+    ArrowUp: "\x1b[A", ArrowDown: "\x1b[B",
+    ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D",
+    Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~",
+    PageUp: "\x1b[5~", PageDown: "\x1b[6~",
+  };
+  function wsTermSendText(s, text) {
+    if (!s || !s.ws || s.ws.readyState !== WebSocket.OPEN || s.dead) return;
+    try {
+      s.ws.send(wsTermEncoder.encode(text));
+    } catch (err) { /* ignore */ }
+  }
+  function wsTermEditableTarget(t) {
+    if (!t || !t.closest) return false;
+    return !!(t.isContentEditable ||
+              t.closest("input, textarea, select") ||
+              (t.classList && t.classList.contains("xterm-helper-textarea")));
+  }
+  function wsTermKeyFallback(e) {
+    if (wsView !== "terminal" || !wsTerm.active || wsTerm.active.dead) return;
+    if (e.metaKey || e.defaultPrevented) return;  // Browser-Shortcuts (Ctrl+S = workspace.js-Save)
+    if (wsTermEditableTarget(e.target)) return;   // xterm-Weg bzw. echte Eingabefelder
+    if (document.querySelector(".ws-ctx-menu")) return;
+    let data = null;
+    if (e.ctrlKey) {
+      const k = (e.key || "").toLowerCase();
+      if (k === "v") return;  // → paste-Event (wsTermPasteFallback)
+      if (k.length === 1 && k >= "a" && k <= "z") {
+        data = String.fromCharCode(k.charCodeAt(0) - 96);  // Ctrl+C → \x03 …
+      } else if (e.key === "Enter") {
+        data = "\r";
+      }
+    } else if (e.altKey && e.key.length === 1) {
+      data = "\x1b" + e.key;  // Alt+Leiter → ESC-Präfix
+    } else if (e.key in WS_TERM_KEYS) {
+      data = WS_TERM_KEYS[e.key];
+    } else if (e.key.length === 1) {
+      data = e.key;
+    }
+    if (data === null) return;
+    e.preventDefault();
+    wsTermSendText(wsTerm.active, data);
+  }
+  function wsTermPasteFallback(e) {
+    if (wsView !== "terminal" || !wsTerm.active || wsTerm.active.dead) return;
+    if (wsTermEditableTarget(e.target)) return;
+    if (document.querySelector(".ws-ctx-menu")) return;
+    const cd = e.clipboardData || window.clipboardData;
+    const text = cd ? cd.getData("text") : "";
+    if (!text) return;
+    e.preventDefault();
+    wsTermSendText(wsTerm.active, text);
+  }
+  document.addEventListener("keydown", wsTermKeyFallback);
+  document.addEventListener("paste", wsTermPasteFallback);
+
+  // Fokus-Verstärkung: Klick in den Terminal-Bereich → aktive Session
+  // scharf fokussieren (xterm macht das am Screen-Element, hier die
+  // Holder-Ebene zusätzlich abdecken, z. B. Rand-Pixel/Padding).
+  document.getElementById("ws-term-host").addEventListener("mousedown", () => {
+    if (wsTerm.active) {
+      requestAnimationFrame(() => { try { wsTerm.active.term.focus(); } catch (err) { /* ignore */ } });
+    }
+  });
+
+  // Fenster-Resize → aktives Terminal neu fitten. Der Fit MUSS im
+  // requestAnimationFrame laufen (nicht synchron im Resize-Event!):
+  // term.resize() triggert xterms interne Zell-Neumessung, die erst
+  // im Folgeramen fertig ist — synchron danach gemessen ist die
+  // Zellgröße noch 0 → FitAddon liefert still null (kein Resize-
+  // Message an das PTY) → die Shell behält die alte Breite → ihr
+  // Zeilenumbruch weicht vom Rendering ab → Backspace über den
+  // Zeilenumbruch bricht ab.
+  window.addEventListener("resize", () => {
+    const act = wsTerm.active;
+    if (act && !act.dead && wsView === "terminal") {
+      requestAnimationFrame(() => {
+        try { act.fit.fit(); } catch (err) { /* ignore */ }
+      });
+    }
+  });
+
+  // Layout-Change OHNE Fenster-Resize (Split-Handle losgelassen,
+  // Fullscreen-Wechsel — workspace.js feuert „ws-layout-changed“)
+  // → aktives Terminal neu fitten (gleiche rAF-Logik wie oben).
+  document.addEventListener("ws-layout-changed", () => {
+    const act = wsTerm.active;
+    if (act && !act.dead && wsView === "terminal") {
+      requestAnimationFrame(() => {
+        try { act.fit.fit(); } catch (err) { /* ignore */ }
+      });
+    }
+  });
+
+  // ─── Ports (Preview: iframe auf den Preview-Proxy) ──────────
+  const wsPrev = { port: null, url: null, sub: "/", focused: false };
+
+  function wsPortsRender() {
+    const s = wsState.status;
+    const avail = !!(s && !s.degraded);
+    document.getElementById("ws-terminals-sec").classList.toggle("hidden", !avail);
+    document.getElementById("ws-ports-sec").classList.toggle("hidden", !avail);
+    wsTermRenderList();  // Terminal-Liste aktuell halten (Placeholder „Keine Terminals")
+    if (!avail) return;
+    const list = document.getElementById("ws-ports-list");
+    const ports = s.ports || [];
+    list.innerHTML = "";
+    if (!ports.length) {
+      list.innerHTML = '<div class="px-1.5 py-1 text-gray-400">Keine Ports</div>';
+      wsSecSync("ports");
+      return;
+    }
+    ports.forEach((p) => {
+      const active = wsPrev.port === p.port && wsPrev.focused;
+      const row = document.createElement("div");
+      row.className = "flex items-center gap-1 px-1.5 py-1 rounded cursor-pointer " +
+        (active ? "bg-indigo-100 text-indigo-900" : "hover:bg-gray-100 text-gray-700");
+      const label = document.createElement("span");
+      label.className = "truncate flex-1";
+      label.textContent = "🌐 Port " + p.port;
+      label.title = "Vorschau öffnen";
+      const x = document.createElement("button");
+      x.type = "button";
+      x.className = "text-gray-400 hover:text-red-600";
+      x.title = "Prozess beenden";
+      x.textContent = "×";
+      x.addEventListener("click", (e) => { e.stopPropagation(); wsPortKill(p.port); });
+      row.appendChild(label);
+      row.appendChild(x);
+      row.addEventListener("click", () => wsPrevOpen(p.port));
+      list.appendChild(row);
+    });
+    wsSecSync("ports");
+  }
+
+  // Adresse = /preview/{task}/{port} + Subpath. In der Leiste zeigt nur
+  // das „wichtige Ende“ (Subpath, z. B. /greet/world) — die volle URL
+  // liefert „↗ In neuem Tab öffnen“.
+  function wsPrevUrl(sub) {
+    return PREVIEW_BASE + "/preview/" + {{ task.id }} + "/" + wsPrev.port +
+           (sub === "/" ? "/" : sub);
+  }
+  function wsPrevApplySub(sub, load) {
+    if (!wsPrev.port) return;
+    wsPrev.sub = sub;
+    wsPrev.url = wsPrevUrl(sub);
+    document.getElementById("ws-preview-url").value = sub;
+    document.getElementById("ws-preview-open-btn").href = wsPrev.url;
+    if (load) document.getElementById("ws-preview-frame").src = wsPrev.url;
+  }
+  function wsPrevOpen(port) {
+    wsPrev.port = port;
+    document.getElementById("ws-preview-label").textContent = "🌐 Port " + port;
+    wsPrevApplySub("/", true);
+    wsSetView("preview");
+  }
+  // Leiste editierbar: Enter navigiert. Relative Pfade ("greet/world"),
+  // absolute Pfade ("/greet/world") und Querystrings ("/search?q=1")
+  // werden gegen den Origin geparst → nur Pfad + Query bleiben.
+  document.getElementById("ws-preview-url").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !wsPrev.port) return;
+    e.preventDefault();
+    let u;
+    try { u = new URL(e.target.value.trim() || "/", window.location.origin); }
+    catch (err) { return; }
+    wsPrevApplySub(u.pathname + u.search || "/", true);
+  });
+  // App-interne Navigation im iframe (same-origin) → Leiste + ↗ mitführen,
+  // ohne laufende Eingaben zu überschreiben.
+  document.getElementById("ws-preview-frame").addEventListener("load", () => {
+    if (wsView !== "preview" || !wsPrev.port) return;
+    const input = document.getElementById("ws-preview-url");
+    if (document.activeElement === input) return;
+    try {
+      const loc = document.getElementById("ws-preview-frame").contentWindow.location;
+      if (loc.origin !== window.location.origin) return;
+      const prefix = "/preview/" + {{ task.id }} + "/" + wsPrev.port;
+      if (!loc.pathname.startsWith(prefix)) return;
+      let sub = loc.pathname.slice(prefix.length) + (loc.search || "");
+      if (!sub.startsWith("/")) sub = "/" + sub;
+      if (sub !== wsPrev.sub) {
+        wsPrev.sub = sub;
+        wsPrev.url = wsPrevUrl(sub);
+        input.value = sub;
+        document.getElementById("ws-preview-open-btn").href = wsPrev.url;
+      }
+    } catch (err) { /* Cross-Origin/Fehlerseite — ignorieren */ }
+  });
+
+  async function wsPortKill(port) {
+    if (!confirm("Prozess auf Port " + port + " beenden?")) return;
+    try {
+      const res = await fetch(WS_API + "/ports/" + port + "/kill", {
+        method: "POST", credentials: "same-origin",
+      });
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => ({}));
+        showToast("Port nicht beendet: " + (data.detail || res.status), "error");
+      }
+    } catch (err) {
+      showToast("Port nicht beendet: " + err.message, "error");
+    }
+    if (wsPrev.port === port) {
+      document.getElementById("ws-preview-frame").src = "about:blank";
+      wsPrev.port = null;
+      wsPrev.url = null;
+      wsPrev.sub = "/";
+      document.getElementById("ws-preview-url").value = "";
+    }
+    wsLoadStatus({ refreshFiles: false });
   }
 
   function wsUpdateRunMeta() {
@@ -466,6 +993,20 @@
   document.getElementById("ws-clear-terminal-btn").addEventListener("click", () => {
     document.getElementById("ws-terminal").classList.add("hidden");
   });
-  // ─── Init ─────────────────────────────────────────────────────
+  document.getElementById("ws-new-terminal-btn").addEventListener("click", (e) => {
+    e.stopPropagation(); wsTermNew();
+  });
+  document.getElementById("ws-preview-reload-btn").addEventListener("click", () => {
+    if (!wsPrev.url) return;
+    document.getElementById("ws-preview-frame").src =
+      wsPrev.url + (wsPrev.url.includes("?") ? "&" : "?") + "t=" + Date.now();
+  });
+  // ─── Init ─────────────────────────────────────────────
   wsLoadStatus();
+  // Leichter Status-Poll (Banner + Ports, OHNE Baum-Refresh) — verborgene
+  // Tabs pausieren. Offene Terminals/Previews keepalive-en den Container.
+  setInterval(() => {
+    if (document.hidden) return;
+    wsLoadStatus({ refreshFiles: false });
+  }, 8000);
 {% endblock %}

@@ -204,10 +204,16 @@
   //                         weglassen (global via /reorder-API)
   //   canSetAccess          Kontextmenü bietet „Zugriff“ (Tutor: true)
   //   folderMove            Ordner-Move = ein API-Call /folders/move (Tutor)
+  //   folderApi             Ordner werden on-disk verwaltet (Student: true):
+  //                         anlegen/möbeln/löschen via /folders-Endpoints,
+  //                         auch wenn leer (bleibt nach Reload sichtbar)
   //   moveGate              fn(src, dst) -> {ok, reason?}
   //   saveStateEl           optionales HTMLElement (Auto-Save-Status)
   //   emptyMsg / noTaskMsg  Platzhalter im Baum
   //   onMainFileChange(p) / onFilesLoaded(files)
+  //   onViewChanged(view)   fn("editor"|"media") — die Editor-Fläche hat
+  //                         gerade den Fokus (Template nutzt das für
+  //                         Terminal-/Preview-Views; default: ignoriert)
   function init(opts) {
     const {
       treeEl, editorEl, mediaEl = null, apiBase = null,
@@ -215,20 +221,28 @@
       readOnlyCheck = () => false,
       canCreate = false, canDelete = false, canMove = false, allowBulk = false,
       canReorder = false, canSetAccess = false, folderMove = false,
+      folderApi = false,
       localOrderKey = null,
       moveGate = () => ({ ok: true }),
       saveStateEl = null,
       emptyMsg = "(keine Dateien)", noTaskMsg = null,
       onMainFileChange = null, onFilesLoaded = null,
+      onViewChanged = null,
     } = opts;
 
     const state = {
       files: [],            // [{path, size, is_binary, access, file_access, init}]
-      folders: [],          // persistierte Ordner-Klassen [{path, access, own}]
+      folders: [],          // Ordner [{path, access, own}] — own: null =
+                           // impliziter on-disk-Ordner ohne Klassen-Zeile
       folderMap: {},        // path → explizite Klasse ("readonly"/"hidden")
       folderOrder: {},      // path → Anzeige-Order (Ordner + [init]-Artefakte, Backend)
       localOrder: {},       // Student: lokale Reihenfolge je Ordner (localStorage)
       currentFile: null,
+      fileFocused: true,    // Zeilen-Highlight: true, solange das Verzeichnis
+                            // „den Fokus“ hat (Student: Terminal/Preview-Views
+                            // entziehen ihn per setFileFocused; global genau
+                            // ein fokussiertes Element über alle Listen)
+      currentViewKind: "editor",  // "editor" | "media" — Ansicht der Current-Datei
       dirty: false,
       mainFile: String(mainFile || ""),
       collapsed: new Set(), // zugeklappte Ordner (Pfad ohne Slash)
@@ -341,6 +355,10 @@
           splitHandle.classList.remove("ws-split-dragging");
           document.body.classList.remove("ws-split-drag", "ws-split-drag-h", "ws-split-drag-v");
           cm.refresh();
+          // Editor-Fläche hat sich geändert (Split-Handle) — das feuert
+          // KEIN Fenster-Resize: Layout-Listener (z. B. Student-Terminal
+          // → xterm neu fitten) explizit informieren.
+          document.dispatchEvent(new CustomEvent("ws-layout-changed"));
         }
         splitHandle.setPointerCapture(e.pointerId);
         splitHandle.classList.add("ws-split-dragging");
@@ -380,6 +398,8 @@
       }
       // CodeMirror bemerkt Größenänderungen nicht selbst → Refresh.
       requestAnimationFrame(() => cm.refresh());
+      // Wie beim Split-Handle: Layout-Change ohne Fenster-Resize.
+      document.dispatchEvent(new CustomEvent("ws-layout-changed"));
     }
     if (fsBtn && fsWrap) {
       fsBtn.addEventListener("click", () =>
@@ -603,7 +623,10 @@
     // (Ordner-Klassen ändert ein Student nie). Leere client-seitige Ordner
     // (extraDirs) werden nur umgemappt, ohne API-Call.
     async function moveDirImpl(srcDir, newDir) {
-      if (state.files.some(f => f.path === newDir || f.path.startsWith(newDir + "/"))) {
+      // Auch on-disk-Ordner (implizite state.folders-Einträge) blockieren
+      // den Zielnamen — sonst würde der Ordner in sich selbst wandern.
+      if (state.files.some(f => f.path === newDir || f.path.startsWith(newDir + "/")) ||
+          state.folders.some(fd => fd.path === newDir)) {
         toast("„" + newDir + "“ existiert bereits — bitte umbenennen.", "error");
         return;
       }
@@ -627,17 +650,37 @@
         }
       } else {
         const inDir = filesInDir(srcDir);
-        for (const f of inDir) {
-          const sub = f.path.slice(srcDir.length + 1);
-          const g = moveGate(f.path, newDir + "/" + sub);
-          if (!g.ok) {
-            toast(g.reason || ("„" + f.path + "“ kann nicht verschoben werden."), "warning");
+        // On-disk-Ordner (z. B. via Terminal/mkdir) ohne Dateien: ein
+        // Call verschiebt den Ordner im Volume. Reine extraDirs-Ordner
+        // (nur client-seitig) werden unten nur umgemappt.
+        const onDisk = state.folders.some(fd => fd.path === srcDir && !fd.own);
+        if (!inDir.length && onDisk) {
+          try {
+            const res = await fetch(apiBase + "/folders/move", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "same-origin",
+              body: JSON.stringify({ src: srcDir, dst: newDir }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || res.status);
+          } catch (err) {
+            toast("Ordner-Verschieben fehlgeschlagen: " + err.message, "error");
             return;
           }
-        }
-        for (const f of inDir) {
-          const sub = f.path.slice(srcDir.length + 1);
-          if (!await moveFile(f.path, newDir + "/" + sub)) return;
+        } else {
+          for (const f of inDir) {
+            const sub = f.path.slice(srcDir.length + 1);
+            const g = moveGate(f.path, newDir + "/" + sub);
+            if (!g.ok) {
+              toast(g.reason || ("„" + f.path + "“ kann nicht verschoben werden."), "warning");
+              return;
+            }
+          }
+          for (const f of inDir) {
+            const sub = f.path.slice(srcDir.length + 1);
+            if (!await moveFile(f.path, newDir + "/" + sub)) return;
+          }
         }
       }
       // client-seitige (leere) Ordner des Subtrees neu mappen
@@ -722,7 +765,7 @@
       const acc = isInit ? "readonly" : (meta.access || effectiveAccess(path));
       const accDef = ACCESS[acc] || ACCESS.edit;
       const isMain = allowMain && path === state.mainFile;
-      const active = path === state.currentFile;
+      const active = path === state.currentFile && state.fileFocused;
       const ro = readOnlyCheck(path);
       // Alle Dateien sind per Handle ziehbar; Zugriffs-Klassen/skriptfeste
       // Pfade blockt der Drop-Gate (mit Fehlermeldung, nicht ohne Handle).
@@ -1330,7 +1373,9 @@
         state.folders = data.folders || [];
         state.folderOrder = data.folder_order || {};
         state.folderMap = {};
-        state.folders.forEach(fd => { state.folderMap[fd.path] = fd.own || "edit"; });
+        // Nur explizite Klassen in die Map (implizite on-disk-Ordner
+        // haben own: null und sind per Default editierbar).
+        state.folders.forEach(fd => { if (fd.own) state.folderMap[fd.path] = fd.own; });
         // Mehrfachauswahl auf noch existierende Dateien verjüngen.
         if (state.selected.size) {
           state.selected = new Set(
@@ -1362,7 +1407,12 @@
     async function openFile(path) {
       if (!apiBase) return;
       if (path === state.currentFile) {
-        cm.focus();
+        // Datei neu fokussieren (z. B. Rückkehr aus Terminal/Preview):
+        // Highlight wiederherstellen + View dorthin wechseln, ohne
+        // Netzwerk-Request — sonst bliebe die andere View sichtbar.
+        if (!state.fileFocused) { state.fileFocused = true; renderTree(); }
+        if (onViewChanged) onViewChanged(state.currentViewKind);
+        if (state.currentViewKind === "editor") cm.focus();
         return;
       }
       if (state.dirty) {
@@ -1389,6 +1439,8 @@
         const text = await res.text();
         closeMediaView();
         state.currentFile = path;
+        state.currentViewKind = "editor";
+        state.fileFocused = true;
         state.dirty = false;
         if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
         cm.setOption("readOnly", readOnlyCheck(path) ? "nocursor" : false);
@@ -1399,6 +1451,7 @@
         cm.setOption("mode", mode || "text/plain");
         setSaveState("");
         renderTree();
+        if (onViewChanged) onViewChanged("editor");
       } catch (err) {
         toast("Datei nicht geöffnet: " + err.message, "error");
       }
@@ -1579,6 +1632,7 @@
     // ── Editor-Reset / Medien ─────────────────────────────────────
     function clearEditorState() {
       state.currentFile = null;
+      state.currentViewKind = "editor";
       state.dirty = false;
       if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
       closeMediaView();
@@ -1586,6 +1640,7 @@
       cm.setValue("");
       setSaveState("");
       renderTree();
+      if (onViewChanged) onViewChanged("editor");
     }
 
     async function showMediaView(kind, path, res) {
@@ -1594,6 +1649,8 @@
       const url = URL.createObjectURL(blob);
       state.mediaUrl = url;
       state.currentFile = path;
+      state.currentViewKind = "media";
+      state.fileFocused = true;
       state.dirty = false;
       if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
       setSaveState("");
@@ -1638,11 +1695,13 @@
         if (frame) frame.style.height = "500px";
       }
       renderTree();
+      if (onViewChanged) onViewChanged("media");
     }
 
     function closeMediaView() {
       if (!mediaEl) {
         if (state.mediaUrl) { URL.revokeObjectURL(state.mediaUrl); state.mediaUrl = null; }
+        if (onViewChanged) onViewChanged("editor");
         return;
       }
       if (!mediaEl.classList.contains("hidden")) {
@@ -1654,6 +1713,7 @@
         URL.revokeObjectURL(state.mediaUrl);
         state.mediaUrl = null;
       }
+      if (onViewChanged) onViewChanged("editor");
     }
 
     // ── Neue Datei / Ordner ───────────────────────────────────────
@@ -1669,7 +1729,7 @@
       createFile(prefix + n);
     }
 
-    function newFolderIn(dir) {
+    async function newFolderIn(dir) {
       const prefix = dir ? dir + "/" : "";
       const name = prompt("Name des neuen Ordners in " + (dir || "Wurzel") + ":", "neuer_ordner");
       if (!name || !name.trim()) return;
@@ -1680,8 +1740,29 @@
         toast("Dieser Bereich ist read-only — dort kann kein Ordner angelegt werden.", "warning");
         return;
       }
-      if (state.files.some(f => f.path === p || f.path.startsWith(p + "/"))) {
+      if (state.files.some(f => f.path === p || f.path.startsWith(p + "/")) ||
+          state.folders.some(fd => fd.path === p)) {
         toast("Es existiert bereits eine Datei/dieser Ordner unter „" + p + "“.", "warning");
+        return;
+      }
+      if (folderApi) {
+        // On-disk anlegen (persistiert im Volume — bleibt auch leer
+        // nach Reload sichtbar).
+        try {
+          const res = await fetch(apiBase + "/folders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "same-origin",
+            body: JSON.stringify({ path: p }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || res.status);
+        } catch (err) {
+          toast("Ordner-Anlage fehlgeschlagen: " + err.message, "error");
+          return;
+        }
+        await refresh();
+        toast("Ordner angelegt.", "success");
         return;
       }
       state.extraDirs.add(p);
@@ -1714,7 +1795,8 @@
         if (effectiveAccess(dir) !== "edit") {
           return { ok: false, reason: "Ordner ist read-only/versteckt — als Student nicht editierbar." };
         }
-        if (state.folders.some(fd => fd.path === dir || fd.path.startsWith(dir + "/"))) {
+        if (state.folders.some(fd => fd.own &&
+          (fd.path === dir || fd.path.startsWith(dir + "/")))) {
           return { ok: false, reason: "Ein Unterordner hat eine fixe Zugriffs-Klasse — als Student nicht editierbar." };
         }
       }
@@ -1731,7 +1813,8 @@
       const n = nn.trim().replace(/[/\\]/g, "");
       if (!n || n === name) return;
       const newDir = parent + n;
-      if (state.files.some(f => f.path === newDir || f.path.startsWith(newDir + "/"))) {
+      if (state.files.some(f => f.path === newDir || f.path.startsWith(newDir + "/")) ||
+          state.folders.some(fd => fd.path === newDir)) {
         toast("„" + newDir + "“ existiert bereits.", "error");
         return;
       }
@@ -1754,14 +1837,34 @@
       const gate = dirOpGate(dir);
       if (!gate.ok) { toast(gate.reason, "warning"); return; }
       const inDir = filesInDir(dir);
-      const rows = state.folders.filter(fd => fd.path === dir || fd.path.startsWith(dir + "/"));
-      if (!inDir.length && !rows.length && !state.extraDirs.has(dir)) return;
+      const rows = state.folders.filter(fd => fd.own &&
+        (fd.path === dir || fd.path.startsWith(dir + "/")));
+      // Impliziter Eintrag = Ordner existiert on-disk (im Volume).
+      const onDisk = state.folders.some(fd => fd.path === dir && !fd.own);
+      if (!inDir.length && !rows.length && !onDisk && !state.extraDirs.has(dir)) return;
       if (!confirm("Ordner „" + dir + "“ löschen?\n" +
         inDir.length + " Datei(en) werden endgültig entfernt.")) return;
-      for (const f of inDir) {
-        if (!await deleteFileQuiet(f.path, false)) return;
+      if (onDisk && folderApi) {
+        // Ein Call entfernt den ganzen Subtree im Volume (rm -rf).
+        try {
+          const res = await fetch(apiBase + "/folders/" + encPath(dir), {
+            method: "DELETE", credentials: "same-origin",
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || res.status);
+        } catch (err) {
+          toast("Ordner-Löschung fehlgeschlagen: " + err.message, "error");
+          return;
+        }
+      } else {
+        for (const f of inDir) {
+          if (!await deleteFileQuiet(f.path, false)) return;
+        }
       }
-      if (state.extraDirs.has(dir)) state.extraDirs.delete(dir);
+      // Client-seitige (leere) Ordner des Subtrees bereinigen:
+      Array.from(state.extraDirs).forEach(d => {
+        if (d === dir || d.startsWith(dir + "/")) state.extraDirs.delete(d);
+      });
       // Persistierte Zugriffs-Klassen des (nun leeren) Ordners entfernen:
       for (const r of rows) {
         if (!await setAccess(r.path, true, null)) return;
@@ -1840,9 +1943,20 @@
       getMainFile,
       setMainFile,
       getCurrentFile: () => state.currentFile,
+      // Verzeichnis-Fokus an/aus (Student-Template: global genau ein
+      // fokussiertes Element über Verzeichnis/Terminals/Ports — wird in
+      // wsSetView gesteuert; andere Konsumenten rufen es nie → Default
+      // true bleibt, Verhalten unverändert).
+      setFileFocused: (on) => {
+        on = !!on;
+        if (state.fileFocused !== on) { state.fileFocused = on; renderTree(); }
+      },
       isDirty: () => state.dirty,
       clearEditorState,
       closeMediaView,
+      // CodeMirror neu vermessen (nach Unhide, z. B. Rückkehr aus
+      // Terminal-/Preview-View)
+      refreshEditor: () => { try { cm.refresh(); } catch (err) { /* ignore */ } },
       // für Tests/Debug
       _state: state,
     };

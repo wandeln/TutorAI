@@ -514,6 +514,14 @@ def _gpu_args(spec: dict) -> list[str]:
     return []
 
 
+# /tmp tmpfs: der Preview-Relay (/tmp/relay) muss dort ausführbar sein.
+# WICHTIG: `exec` explizit setzen — der Docker-Daemon ergänzt bei tmpfs
+# standardmäßig `noexec` (und `nodev`), und ohne explizites `exec`
+# gewinnt das Daemon-Default. Sicherheitsniveau bleibt gleich: der
+# Student hat auf /workspace ohnehin Exec-Rechte.
+_TMPFS_SPEC = "/tmp:rw,nosuid,exec,size=256m,mode=1777"
+
+
 def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
     course, _task, _student = key_parts(key)
     args = [
@@ -523,7 +531,7 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
         "--label", f"tutorai.course={course}",
         "--label", f"tutorai.mounts={_mounts_hash(spec, course, _task)}",
         "--read-only",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,mode=1777",
+        "--tmpfs", _TMPFS_SPEC,
         "-v", f"{volume_name(key)}:/workspace",
         "--pids-limit", "256",
         "--network", "bridge" if spec["internet"] else "none",
@@ -556,16 +564,29 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
 
 
 def _mounts_hash(spec: dict, course: int, task: int) -> str:
-    """Fingerprint des ro-Mount-Layouts (Pfad + Vorhandensein der Quelle).
+    """Fingerprint des ro-Mount-Layouts (Pfad + Quellen-Status).
 
     Ländet als Label `tutorai.mounts`; ändert sich das Layout (neuer 🔒-
-    Pfad, Quelle erscheint/vanished), wird der Container neu angelegt
-    (Volume bleibt)."""
+    Pfad, Quelle erscheint/verschwindet, 🔒-DATEI wird editiert), wird
+    der Container neu angelegt (Volume bleibt). Datei-Quellen brauchen
+    Size+Mtime im Hash: ein ro-File-Bind-Mount klebt auf der alten Inode,
+    wenn die Quelle ersetzt wird — ohne Fingerprint sähe ein laufender
+    Container ewig die alte Datei-Version. Ordner-Quellen sind live
+    (Inode stabil), da genügt Vorhandensein."""
     a_dir = asset_dir(course, task)
-    parts = []
+    parts = [f"tmpfs:{_TMPFS_SPEC}"]  # Spec-Wechsel zwingt einmalige Recreate
     for rp in sorted(spec.get("readonly_paths") or []):
         src = a_dir / rp
-        parts.append(f"{rp}:{'y' if src.exists() else 'n'}")
+        if src.is_dir():
+            parts.append(f"{rp}:d")
+        elif src.is_file():
+            try:
+                st = src.stat()
+                parts.append(f"{rp}:f:{st.st_size}:{st.st_mtime_ns}")
+            except OSError:
+                parts.append(f"{rp}:f")
+        else:
+            parts.append(f"{rp}:n")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
@@ -637,6 +658,7 @@ def ensure_container(key: str, spec: dict) -> dict:
             or _container_label(key, "tutorai.mounts") != _mounts_hash(spec, course, task)):
         # Image-/Mount-Mismatch → Container weg (Volume bleibt), neu anlegen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
+        invalidate_relay_cache(key)
         state = None
     if state == "running":
         return {"state": "running", "fresh": False}
@@ -655,6 +677,7 @@ def remove_workspace(key: str) -> None:
     c = container_name(key)
     if container_state(key) is not None:
         _docker("rm", "-f", c, timeout=60, check=False)
+    invalidate_relay_cache(key)
     _docker("volume", "rm", volume_name(key), check=False)
 
 
@@ -662,6 +685,7 @@ def stop_container_only(key: str) -> None:
     """Nur Container entfernen (Idle-Kill des Reapers), Volume bleibt."""
     if container_state(key) is not None:
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
+    invalidate_relay_cache(key)
 
 
 def list_workspaces() -> list[dict]:
@@ -718,6 +742,48 @@ def _ensure_running(key: str) -> None:
     if state is None:
         raise DockerError("Workspace existiert nicht — erst POST /workspaces", 409)
     _docker("start", container_name(key), timeout=60)
+
+
+# ── Preview-Relay ───────────────────────────────────────────────
+
+_RELAY_CACHE: set[str] = set()
+_RELAY_LOCK = threading.Lock()
+
+
+def invalidate_relay_cache(key: str) -> None:
+    """Nach Container-Recreate: /tmp (tmpfs) ist wieder leer."""
+    with _RELAY_LOCK:
+        _RELAY_CACHE.discard(key)
+
+
+def ensure_relay(key: str) -> None:
+    """Relay-Binary im Container sicherstellen (/tmp/relay, on-demand).
+
+    Gecacht je Key; Cache wird bei Container-Recreate invalidiert
+    (tmpfs /tmp ist frisch → Binary weg). KEIN docker cp: der Container
+    hat read-only Rootfs, und der Daemon lehnt cp-Ziele außerhalb der
+    Volumes (hier: tmpfs /tmp) ab („container rootfs is marked
+    read-only") — das Binary wird stattdessen per exec-stdin gestreamt
+    (sh-Redirect schreibt in die schreibbare tmpfs).
+    """
+    _ensure_running(key)
+    with _RELAY_LOCK:
+        if key in _RELAY_CACHE:
+            return
+    if not Path(config.RELAY_PATH).exists():
+        raise DockerError(
+            "Relay-Binary fehlt im Agent — compute-agent neu bauen "
+            "bzw. scripts/build_relay.sh ausführen", 500)
+    code, _out, _err, _ = _run_capped(
+        ["docker", "exec", container_name(key), "sh", "-c", "test -x /tmp/relay"],
+        timeout=30, cap=1024)
+    if code != 0:
+        _docker("exec", "-i", container_name(key), "sh", "-c",
+                "cat > /tmp/relay && chmod +x /tmp/relay",
+                input_bytes=Path(config.RELAY_PATH).read_bytes(),
+                timeout=120)
+    with _RELAY_LOCK:
+        _RELAY_CACHE.add(key)
 
 
 def _run_capped(cmd: list[str], timeout: int, cap: int,
@@ -815,6 +881,86 @@ def exec_sync(key: str, command: str, working_dir: str = "/workspace",
     }
 
 
+# ── Port-Erkennung / -Kill (Preview) ──────────────────────────────
+
+# Einmaliger Scan im Container: erst die LISTEN-Sockets aus
+# /proc/net/tcp{,6} (Inode + Port-HEX), dann der fd-Walk
+# (PID → Inode). Kein procps/ss nötig (fehlen in slim-Images);
+# mawk hat kein strtonum → Port-HEX kommt nach Python.
+_PORT_SCAN_SCRIPT = (
+    'echo "L"; '
+    'awk \'FNR>1 && $4=="0A" {split($2,a,":"); print $10" "a[2]}\' '
+    '/proc/net/tcp /proc/net/tcp6 2>/dev/null; '
+    'echo "P"; '
+    'for f in /proc/[0-9]*/fd/*; do '
+    'l=$(readlink "$f" 2>/dev/null) || continue; '
+    'case "$l" in socket:*) '
+    'ino=${l#socket:[}; ino=${ino%]}; '
+    'case "$ino" in *[!0-9]*) continue;; esac; '
+    'pid=${f#/proc/}; pid=${pid%%/*}; '
+    'echo "$pid $ino";; esac; done'
+)
+
+
+def list_workspace_ports(key: str) -> list[dict]:
+    """Im Container lauschende Ports: [{port, pid}] (sortiert, dedupliziert).
+
+    Funktioniert auch bei network=none (Loopback existiert immer).
+    """
+    _ensure_running(key)
+    code, out_b, _err, _ = _run_capped(
+        ["docker", "exec", container_name(key), "sh", "-c", _PORT_SCAN_SCRIPT],
+        timeout=30, cap=1_000_000)
+    if code != 0:
+        raise DockerError("Port-Scan im Workspace fehlgeschlagen", 500)
+    pid_by_ino: dict[str, str] = {}
+    listeners: list[tuple[str, int]] = []
+    section = None
+    for line in out_b.decode(errors="replace").splitlines():
+        if line in ("L", "P"):
+            section = line
+            continue
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        if section == "L":
+            ino, port_hex = parts
+            try:
+                port = int(port_hex, 16)
+            except ValueError:
+                continue
+            if 0 < port <= 65535:
+                listeners.append((ino, port))
+        elif section == "P":
+            pid, ino = parts
+            pid_by_ino.setdefault(ino, pid)
+    ports: list[dict] = []
+    seen: set[int] = set()
+    for ino, port in listeners:
+        if port in seen:
+            continue
+        seen.add(port)
+        ports.append({"port": port, "pid": pid_by_ino.get(ino)})
+    ports.sort(key=lambda p: p["port"])
+    return ports
+
+
+def kill_workspace_port(key: str, port: int) -> None:
+    """Prozessbaum des Ports killen (gleiche /proc-Walk-Logik wie Runs).
+
+    Port nicht (mehr) belegt → DockerError 404.
+    """
+    match = next((p for p in list_workspace_ports(key) if p["port"] == port),
+                 None)
+    if match is None or not match.get("pid"):
+        raise DockerError(f"Port {port} wird nicht (mehr) belegt", 404)
+    # Funktionslokal: runs importiert docker_ops (Zirkel).
+    from .runs import _TREE_KILL
+    cmd = f'{_TREE_KILL}; kt "{match["pid"]}"'
+    _docker("exec", container_name(key), "sh", "-c", cmd,
+            timeout=30, check=False)
+
+
 def list_files(key: str) -> list[dict]:
     _ensure_running(key)
     code, out_b, _err, _ = _run_capped(
@@ -831,6 +977,23 @@ def list_files(key: str) -> list[dict]:
         if rel:
             files.append({"path": rel, "size": int(size) if size.isdigit() else 0})
     return files
+
+
+def list_dirs(key: str) -> list[str]:
+    """Alle Verzeichnisse unter /workspace (relativ, sortiert) — auch leere,
+    damit z. B. per Terminal/mkdir angelegte Ordner im Tree sichtbar sind."""
+    _ensure_running(key)
+    code, out_b, _err, _ = _run_capped(
+        ["docker", "exec", container_name(key),
+         "sh", "-c", "find /workspace -mindepth 1 -type d -printf '%p\\n' 2>/dev/null"],
+        timeout=30, cap=1_000_000,
+    )
+    dirs = []
+    for line in out_b.decode(errors="replace").splitlines():
+        rel = line[len("/workspace/"):]
+        if rel:
+            dirs.append(rel)
+    return sorted(dirs)
 
 
 def read_file(key: str, path: str) -> bytes:
@@ -878,7 +1041,7 @@ def move_file(key: str, src: str, dst: str,
     parent = os.path.dirname(full_dst)
     code, _o, err_b, _ = _run_capped(
         ["docker", "exec", "-i", container_name(key), "sh", "-c",
-         f"test -f {shlex.quote(full_src)} && "
+         f"test -e {shlex.quote(full_src)} && "
          f"mkdir -p {shlex.quote(parent)} && "
          f"mv {shlex.quote(full_src)} {shlex.quote(full_dst)}"],
         timeout=60, cap=64 * 1024,
@@ -886,6 +1049,21 @@ def move_file(key: str, src: str, dst: str,
     if code != 0:
         msg = err_b.decode(errors="replace")[:300] or "Zielpfad belegt?"
         raise DockerError(f"Verschieben fehlgeschlagen: {msg}", 400)
+
+
+def create_dir(key: str, path: str, spec: dict | None = None) -> None:
+    full = safe_workspace_path(path)
+    if _is_readonly_workspace_path(full[len("/workspace/"):], spec):
+        raise DockerError("Ordner ist read-only (vom Tutor verwaltet)", 403)
+    _ensure_running(key)
+    code, _o, err_b, _ = _run_capped(
+        ["docker", "exec", container_name(key), "sh", "-c",
+         f"mkdir -p {shlex.quote(full)}"],
+        timeout=30, cap=64 * 1024,
+    )
+    if code != 0:
+        raise DockerError(
+            f"Ordner-Anlage fehlgeschlagen: {err_b.decode(errors='replace')[:300]}", 500)
 
 
 def delete_path(key: str, path: str, spec: dict | None = None) -> None:
@@ -916,6 +1094,8 @@ def write_starter_files(key: str, files: list[dict]) -> int:
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as fh:
                 fh.write(base64.b64decode(f["content_b64"]))
+            if os.path.basename(target).endswith(".sh"):
+                os.chmod(target, 0o755)  # Skripte ausführbar (Seed-Volumes)
             n += 1
         if n == 0:
             return 0
@@ -1009,15 +1189,45 @@ def _check_under(base: Path, target: Path) -> None:
         raise DockerError("Asset-Pfad entweicht dem Asset-Ordner", 400)
 
 
+def _file_matches(path: Path, data: bytes) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            off = 0
+            while off < len(data):
+                if fh.read(1 << 20) != data[off:off + (1 << 20)]:
+                    return False
+                off += 1 << 20
+            return fh.read(1) == b""
+    except OSError:
+        return False
+
+
 def write_asset_file(course: int, task: int, relpath: str, data: bytes) -> int:
     if len(data) > config.MAX_ASSET_FILE:
         raise DockerError("Asset zu groß (max. 5 GB)", 413)
     base = asset_dir(course, task)
     target = base / safe_asset_path(relpath)
     _check_under(base, target)
+    # Unveränderte Inhalte NICHT neu schreiben: os.replace würde die
+    # Inode tauschen — ein 🔒-Datei-Bind-Mount in einem laufenden
+    # Container klebt auf der alten Inode (Stale-View), und der
+    # Mount-Hash (Datei-Mtime) würde bei JEDM Sync ein Container-
+    # Recreate auslösen.
+    try:
+        st = target.stat()
+        if st.st_size == len(data) and _file_matches(target, data):
+            if target.name.endswith(".sh") and not st.st_mode & 0o111:
+                os.chmod(target, 0o755)
+            return len(data)
+    except OSError:
+        pass
     os.makedirs(target.parent, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".part")
     tmp.write_bytes(data)
+    # Skripte ausführbar — ro-Bind-Mounts zeigen die Bits live, der
+    # Student kann ./run.sh & Co. im Terminal direkt starten.
+    if target.name.endswith(".sh"):
+        os.chmod(tmp, 0o755)
     os.replace(tmp, target)
     return len(data)
 
@@ -1047,6 +1257,31 @@ def remove_asset_tree(course: int, task: int) -> None:
         shutil.rmtree(base, ignore_errors=True)
 
 
+def _live_mount_sources(course: int, task: int) -> set[str]:
+    """Host-Quellpfade, die gerade als Bind-Mounts in laufenden
+    Workspace-Containern der Aufgabe hängen.
+
+    rmdir/Ersetzung einer solchen Quelle desynct den Mount auf der alten
+    Inode (Stale View im Container, ggf. Kernel-Hang) — Purge/Prune
+    dürfen aktive Quellen daher nicht räumen."""
+    prefix = f"tutorai-ws-{course}-{task}-"
+    out: set[str] = set()
+    proc = _docker("ps", "--filter", f"label=tutorai.course={course}",
+                   "--format", "{{.Names}}", check=False)
+    if proc.returncode != 0:
+        return out
+    for name in proc.stdout.decode().splitlines():
+        name = name.strip()
+        if not name.startswith(prefix):
+            continue
+        p2 = _docker("inspect", "-f", "{{range .Mounts}}{{.Source}}\n{{end}}",
+                     name, check=False, timeout=30)
+        if p2.returncode == 0:
+            out.update(l.strip() for l in p2.stdout.decode().splitlines()
+                       if l.strip())
+    return out
+
+
 def purge_missing_assets(course: int, task: int, keep_paths: list[str],
                          keep_dirs: list[str] | None = None) -> list[str]:
     """Remote-Dateien löschen, die nicht mehr in keep_paths sind.
@@ -1071,9 +1306,12 @@ def purge_missing_assets(course: int, task: int, keep_paths: list[str],
     # Ordner (keep_dirs) bleiben, auch wenn sie leer sind.
     dirs = [d for d in base.rglob("*") if d.is_dir()
             and not _is_reserved_asset_part(d.relative_to(base).parts[0])]
+    live = _live_mount_sources(course, task)
     for d in sorted(dirs, key=lambda x: len(str(x)), reverse=True):
         if str(d.relative_to(base)) in keep_dirs:
             continue
+        if d.resolve() in live:
+            continue  # aktiver 🔒-Mount → rmdir würde den Mount stale machen
         try:
             if not any(d.iterdir()):
                 d.rmdir()
@@ -1216,11 +1454,15 @@ def _dir_file_snapshot(d: Path) -> set[str]:
     return {str(p.relative_to(d)) for p in d.rglob("*") if p.is_file()}
 
 
-def _prune_empty_dirs(base: Path) -> None:
-    """Leere (nicht reservierte) Ordner von unten nach oben räumen."""
+def _prune_empty_dirs(base: Path, live: set[str] | None = None) -> None:
+    """Leere (nicht reservierte) Ordner von unten nach oben räumen.
+    `live`: aktive Bind-Mount-Quellen (s. _live_mount_sources) bleiben.
+    """
     dirs = [d for d in base.rglob("*") if d.is_dir()
             and not _is_reserved_asset_part(d.relative_to(base).parts[0])]
     for d in sorted(dirs, key=lambda x: len(str(x)), reverse=True):
+        if live is not None and d.resolve() in live:
+            continue
         try:
             if not any(d.iterdir()):
                 d.rmdir()
@@ -1245,7 +1487,11 @@ def _cleanup_init_writes(base: Path, before_shared: set[str],
                 p.unlink(missing_ok=True)
     if tmp.is_dir():
         shutil.rmtree(tmp, ignore_errors=True)
-    _prune_empty_dirs(base)
+    try:
+        live = _live_mount_sources(int(base.parent.name), int(base.name))
+    except (ValueError, OSError):
+        live = set()
+    _prune_empty_dirs(base, live)
 
 
 def _set_init_status(id_key: str, status: str,

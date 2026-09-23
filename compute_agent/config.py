@@ -7,6 +7,7 @@ Docker-Daemon dieses Hosts.
 """
 
 import os
+import pathlib
 
 
 def _bool(val: str, default: bool = False) -> bool:
@@ -27,6 +28,11 @@ AGENT_KEY: str = os.getenv("AGENT_KEY", "")
 # Access (kein Port aufs Host-Netz, außer bewusst publishen).
 HOST: str = os.getenv("AGENT_HOST", "127.0.0.1")
 PORT: int = int(os.getenv("AGENT_PORT", "8700"))
+# Preview-Tunnel (raw asyncio, s. preview.py): nur über das Compose-Netz
+# erreichbar (KEIN Host-Publish); einziger Client ist der TutorAI-
+# Backend-Preview-Proxy (ASGI-Routes auf dem Backend-Haupt-Port,
+# s. services/preview_proxy.py).
+PREVIEW_PORT: int = int(os.getenv("PREVIEW_PORT", "8701"))
 
 # ── Verzeichnisse auf diesem Host ─────────────────────────────────
 # /assets: geteilte public-Dateien/Datasets je Aufgabe (read-only-Mount)
@@ -37,6 +43,16 @@ ASSET_ROOT: str = os.getenv("ASSET_ROOT", "/opt/tutorai/assets")
 # ASSET_ROOT_HOST benennt denselben Speicherort als Host-Pfad.
 # Leer (Default) = nativ: ASSET_ROOT ist bereits der Host-Pfad.
 ASSET_ROOT_HOST: str = os.getenv("ASSET_ROOT_HOST", "").strip()
+
+# ── Preview-Relay ──────────────────────────────────────────────
+# Statisch kompiliertes Go-Binary (im Image per Multi-Stage gebaut; nativ:
+# scripts/build_relay.sh). Wird beim ersten Preview-Request per docker cp
+# in den Workspace-Container (/tmp/relay) kopiert und per docker exec
+# gestartet; dailt dort 127.0.0.1:<port>.
+RELAY_PATH: str = os.getenv(
+    "RELAY_PATH",
+    str(pathlib.Path(__file__).resolve().parent / "relay" / "relay"),
+)
 
 # ── Container-Defaults ────────────────────────────────────────────
 # Idle-Timeout: Container nach Inaktivität entfernen (Volume bleibt).

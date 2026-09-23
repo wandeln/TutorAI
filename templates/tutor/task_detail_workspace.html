@@ -172,6 +172,8 @@
         <div class="ws-editor w-full h-full min-h-0">
           <textarea id="ws-file-editor" class="w-full h-full font-mono text-sm" spellcheck="false"
                     placeholder="Datei links auswählen, um sie zu bearbeiten …"></textarea>
+          <!-- Medien-Vorschau (Bilder/PDF/…) belegt denselben Bereich wie der Editor -->
+          <div id="ws-file-media-view" class="hidden h-full"></div>
         </div>
       </div>
     </div>
@@ -705,6 +707,7 @@
   const wsUI = WorkspaceUI.init({
     treeEl: document.getElementById("ws-files-tree"),
     editorEl: document.getElementById("ws-file-editor"),
+    mediaEl: document.getElementById("ws-file-media-view"),
     apiBase: WS_TUTOR_FILES_API,
     mainFile: WS_MAIN_FILE_INIT || "",
     allowMain: true,

@@ -112,6 +112,18 @@ class ComputeClient:
                              task_id=task, student_id=student)
         return resp.json()["files"]
 
+    def list_dirs(self, key: str) -> list[str]:
+        course, task, student = _key_parts(key)
+        resp = self._request("GET", f"/workspaces/{key}/dirs", op=f"ws:{key}",
+                             task_id=task, student_id=student)
+        return resp.json().get("dirs") or []
+
+    def create_dir(self, key: str, path: str) -> None:
+        course, task, student = _key_parts(key)
+        self._request("POST", f"/workspaces/{key}/dirs", op=f"ws:{key}",
+                      task_id=task, student_id=student,
+                      json_body={"path": path})
+
     def read_file(self, key: str, path: str) -> bytes:
         course, task, student = _key_parts(key)
         resp = self._request("GET", f"/workspaces/{key}/files/{path}", op=f"ws:{key}",
@@ -179,6 +191,19 @@ class ComputeClient:
         resp = self._request("GET", f"/workspaces/{key}/disk", op=f"ws:{key}",
                              task_id=task, student_id=student, timeout=60)
         return resp.json()
+
+    def ports(self, key: str) -> list[dict]:
+        """Im Container lauschende Ports: [{port, pid}] (Preview-UI)."""
+        course, task, student = _key_parts(key)
+        resp = self._request("GET", f"/workspaces/{key}/ports", op=f"ws:{key}",
+                             task_id=task, student_id=student, timeout=60)
+        return resp.json().get("ports") or []
+
+    def kill_port(self, key: str, port: int) -> None:
+        """Prozessbaum eines lauschenden Ports killen (frei → 404)."""
+        course, task, student = _key_parts(key)
+        self._request("POST", f"/workspaces/{key}/ports/{port}/kill",
+                      op=f"ws:{key}", task_id=task, student_id=student)
 
     def snapshot(self, key: str) -> bytes:
         course, task, student = _key_parts(key)

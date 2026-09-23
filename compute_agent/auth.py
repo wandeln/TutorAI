@@ -44,9 +44,13 @@ def make_token(key: str, op: str, task_id: int | None = None,
     return f"{raw}.{_b64e(sig)}"
 
 
-def verify_token(request: Request,
-                 token: str | None = Header(default=None, alias="X-Agent-Token")):
-    """FastAPI-Dependency: liefert das verifizierte Payload-Dict."""
+def verify_token_raw(token: str | None) -> dict:
+    """Token verifizieren (Signatur + Expiry) OHNE Request-Objekt.
+
+    Wird von der FastAPI-Dependency und vom WS-/Preview-Code geteilt
+    (die haben keinen Header-Mechanismus). Wirft ValueError bei
+    fehlendem/defektem/ungültigem/abgelaufenem Token.
+    """
     global _WARNED_NO_KEY
     if not config.AGENT_KEY:
         if not _WARNED_NO_KEY:
@@ -55,7 +59,7 @@ def verify_token(request: Request,
             _WARNED_NO_KEY = True
         return {"op": "*", "task_id": None, "student_id": None}
     if not token or token.count(".") != 1:
-        raise HTTPException(status_code=401, detail="Token fehlt oder defekt")
+        raise ValueError("Token fehlt oder defekt")
     raw, sig = token.split(".")
     try:
         expected = hmac.new(config.AGENT_KEY.encode(), raw.encode(),
@@ -64,10 +68,19 @@ def verify_token(request: Request,
             raise ValueError
         payload = json.loads(_b64d(raw))
     except Exception:
-        raise HTTPException(status_code=401, detail="Token-Signatur ungültig")
+        raise ValueError("Token-Signatur ungültig") from None
     if time.time() > float(payload.get("exp", 0)):
-        raise HTTPException(status_code=401, detail="Token abgelaufen")
+        raise ValueError("Token abgelaufen")
     return payload
+
+
+def verify_token(request: Request,
+                 token: str | None = Header(default=None, alias="X-Agent-Token")):
+    """FastAPI-Dependency: liefert das verifizierte Payload-Dict."""
+    try:
+        return verify_token_raw(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Token fehlt oder ungültig")
 
 
 def require_op(payload: dict, op: str) -> None:

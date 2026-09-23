@@ -32,6 +32,7 @@ TASK_WS = {
     "workspace_timeout": 900,
     "workspace_cpu": 2.0,
     "workspace_memory": "4g",
+    "workspace_disk_quota": 1.0,
     "workspace_internet": False,
     "workspace_assets_status": '{"http://compute-agent:8700": {"assets": "ready", '
                                '"task_image": "building", "image": "ready"}}',
@@ -79,6 +80,7 @@ def base_ctx(task, is_tutor, tpl_type):
         "prev_task": None,
         "next_task": {"id": 99, "title": "Nächste"},
         "LLM_TIMEOUT": 120,
+        "preview_base": "",
     }
 
 

@@ -12,6 +12,7 @@ Start:  python -m compute_agent
 import asyncio
 import base64
 import functools
+import json
 import logging
 import re
 import threading
@@ -19,10 +20,11 @@ import time
 
 logger = logging.getLogger("compute_agent")
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import Response
+from starlette.websockets import WebSocketDisconnect
 
-from . import auth, config, docker_ops, image_spec, runs, spec
+from . import auth, config, docker_ops, image_spec, preview, runs, spec, terminal
 from .reaper import REGISTRY, reaper_loop
 
 app = FastAPI(title="TutorAI Compute-Agent", version="1.0")
@@ -30,16 +32,18 @@ _stop_event = threading.Event()
 
 
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     rebuilt = REGISTRY.rebuild_from_docker()
     logger.info("Agent start (Port %s), Registry: %d Workspace(s) aus Docker",
                 config.PORT, rebuilt)
     threading.Thread(target=reaper_loop, args=(_stop_event,), daemon=True).start()
+    await preview.server.start()  # Preview-Tunnel (zweiter Port, s. preview.py)
 
 
 @app.on_event("shutdown")
-def _shutdown() -> None:
+async def _shutdown() -> None:
     _stop_event.set()
+    await preview.server.stop()
 
 
 def _op(payload: dict, op: str) -> None:
@@ -179,6 +183,31 @@ def files_list(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
     return {"files": files, "total": sum(f["size"] for f in files)}
 
 
+@app.get("/workspaces/{key}/dirs")
+@_translate
+def dirs_list(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
+    _op(payload, f"ws:{key}")
+    _touch(key)
+    return {"dirs": docker_ops.list_dirs(key)}
+
+
+@app.post("/workspaces/{key}/dirs")
+@_translate
+async def dirs_create(key: str, request: Request,
+                      payload: dict = Depends(auth.verify_token)) -> dict:
+    """(Möglicherweise leeren) Ordner anlegen ({path})."""
+    _op(payload, f"ws:{key}")
+    _touch(key)
+    body = await request.json()
+    path = str(body.get("path") or "")
+    if not path:
+        raise HTTPException(status_code=422, detail="Feld 'path' fehlt.")
+    info = REGISTRY.get(key)
+    spec_dict = info.get("spec") if info else None
+    docker_ops.create_dir(key, path, spec_dict)
+    return {"ok": True, "path": path}
+
+
 @app.get("/workspaces/{key}/files/{path:path}")
 @_translate
 def files_read(key: str, path: str,
@@ -302,6 +331,138 @@ def run_stop(key: str, run_id: str,
     if not ok:
         raise HTTPException(status_code=409, detail="Run nicht (mehr) aktiv")
     return {"ok": True}
+
+
+# ── Ports & Terminal (Preview) ─────────────────────────────────
+
+@app.get("/workspaces/{key}/ports")
+@_translate
+def workspace_ports(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
+    """Im Container lauschende Ports: {ports: [{port, pid}]} (Preview-UI)."""
+    _op(payload, f"ws:{key}")
+    _touch(key)
+    return {"ports": docker_ops.list_workspace_ports(key)}
+
+
+@app.post("/workspaces/{key}/ports/{port}/kill")
+@_translate
+def workspace_port_kill(key: str, port: int,
+                        payload: dict = Depends(auth.verify_token)) -> dict:
+    """Prozessbaum des Ports killen (Port nicht belegt → 404)."""
+    _op(payload, f"ws:{key}")
+    _touch(key)
+    docker_ops.kill_workspace_port(key, port)
+    return {"ok": True}
+
+
+@app.websocket("/workspaces/{key}/terminal")
+async def terminal_ws(ws_conn: WebSocket, key: str) -> None:
+    """Terminal (PTY) im Workspace-Container.
+
+    Token per Query-Param (kein Header-Mechanismus bei WS). Protokoll:
+    Binary = rohes Terminal-Input/Output · Text = Kontrolle
+    ({"cols","rows"} init/resize · {"type":"exit","code"} bei Shell-Ende).
+    """
+    try:
+        docker_ops.key_parts(key)
+    except docker_ops.DockerError:
+        await ws_conn.close(code=4400)
+        return
+    try:
+        payload = auth.verify_token_raw(ws_conn.query_params.get("token", ""))
+    except ValueError:
+        await ws_conn.close(code=4401)
+        return
+    if payload.get("op") not in ("*", f"ws:{key}"):
+        await ws_conn.close(code=4403)
+        return
+    await ws_conn.accept()
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, docker_ops._ensure_running, key)
+    except docker_ops.DockerError:
+        await ws_conn.send_text(json.dumps(
+            {"type": "error", "message": "Workspace-Container nicht verfügbar"}))
+        await ws_conn.close(code=1011)
+        return
+    REGISTRY.touch(key)  # offenes Terminal schützt vor Idle-Kill
+
+    exit_code: dict = {}
+    exit_event = asyncio.Event()
+
+    def _on_output(data: bytes) -> None:
+        asyncio.create_task(_safe_send_bytes(ws_conn, data))
+
+    def _on_exit(code) -> None:
+        exit_code["code"] = code
+        exit_event.set()
+
+    session = terminal.TerminalSession(key, loop, _on_output, _on_exit)
+
+    async def _keepalive() -> None:
+        while True:
+            await asyncio.sleep(60)
+            REGISTRY.touch(key)
+
+    keep_task = asyncio.create_task(_keepalive())
+
+    async def _recv() -> None:
+        try:
+            while True:
+                msg = await ws_conn.receive()
+                mtype = msg.get("type")
+                if mtype == "websocket.disconnect":
+                    return
+                if mtype != "websocket.receive":
+                    continue
+                data = msg.get("bytes")
+                if data is not None:
+                    await session.write_input(data)
+                    continue
+                text = msg.get("text")
+                if not text:
+                    continue
+                try:
+                    ctrl = json.loads(text)
+                except ValueError:
+                    # Eingabe per Text-Frame (Defensive: Clients senden
+                    # Terminal-Input primär als Binary).
+                    await session.write_input(text.encode("utf-8"))
+                    continue
+                if not isinstance(ctrl, dict):
+                    await session.write_input(text.encode("utf-8"))
+                    continue
+                cols = ctrl.get("cols")
+                if cols:
+                    await session.resize(cols, ctrl.get("rows", 40))
+        except WebSocketDisconnect:
+            return
+        finally:
+            session.close()
+
+    recv_task = asyncio.create_task(_recv())
+    try:
+        await exit_event.wait()
+    finally:
+        keep_task.cancel()
+        recv_task.cancel()
+        session.close()
+        try:
+            await ws_conn.send_text(json.dumps(
+                {"type": "exit", "code": exit_code.get("code")}))
+        except Exception:
+            pass
+        try:
+            await ws_conn.close()
+        except Exception:
+            pass
+
+
+async def _safe_send_bytes(ws_conn: WebSocket, data: bytes) -> None:
+    try:
+        await ws_conn.send_bytes(data)
+    except Exception:
+        pass
 
 
 @app.get("/workspaces/{key}/snapshot")

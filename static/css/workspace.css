@@ -104,6 +104,14 @@
 /* Chevron des Section-Collapse-Toggles (Terminals/Ports) */
 .ws-sec-chevron { transition: transform 0.2s ease; }
 
+/* ─── Dockerfile-Drop-Down (Tutor: Image-Spec) ─────────────────── */
+/* Design wie die Image-Spec-Karten (Admin-Konsole): Standard-Disclosure-
+   Marker aus, eigener Chevron rechts, der beim Öffnen dreht. */
+#ws-spec-info summary { list-style: none; }
+#ws-spec-info summary::-webkit-details-marker { display: none; }
+.ws-df-chevron { transition: transform 0.2s ease; }
+#ws-spec-info[open] .ws-df-chevron { transform: rotate(180deg); }
+
 /* ─── Editor-Bereich (nahtlos an den Dateibaum) ──────────────────────── */
 /* CodeMirror füllt die Editor-Spalte komplett aus (kein eigener Rahmen,
    der Rahmen kommt vom gemeinsamen Baum+Editor-Container). */

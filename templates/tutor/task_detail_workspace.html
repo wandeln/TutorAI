@@ -18,19 +18,14 @@
     </p>
     {% endif %}
 
-    <p class="text-xs text-gray-400 mb-3">
-      Ausführen &amp; Testen laufen über <strong>Skript-Dateien</strong> (in „Dateien &amp; Workspace“ gepflegt, immer in der Wurzel):
-      <code class="font-mono">run.sh</code> → Button „▶ Ausführen“,
-      <code class="font-mono">test.sh</code> → Button „🧪 Tests“,
-      <code class="font-mono">.test_private.sh</code> → private Grading-Tests,
-      <code class="font-mono">.run_solution.sh</code> → Button „🧪 Musterlösung testen“ (Musterlösung liegt in <code class="font-mono">.solution/</code>),
-      <code class="font-mono">init.sh</code> → einmaliger Initialisierungs-Schritt beim
-      Task-Image-Build (z.&nbsp;B. Paket-Installation, Dataset-Downloads nach <code class="font-mono">data/</code>),
-      <code class="font-mono">.init_hidden.sh</code> → private Initialisierungs-Phase (darf in 👤 schreiben).
-    </p>
 
     <!-- Image-Spec & Compute-Engine (s. plan-compute-engines-images.md) -->
     <div class="border border-gray-200 rounded-lg p-3 mb-3">
+        <p class="text-[11px] text-gray-400 mb-2">
+            🗂️ Image-Specs &amp; Engines verwalten:
+            <a href="/courses/{{ course.id }}/settings#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Kurs-Einstellungen → Compute/Workspace</a>
+            {% if is_admin %} · <a href="/admin#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Admin-Konsole → Compute/Workspace</a>{% endif %}
+        </p>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-spec-select">Image-Spec <span class="text-gray-400">(Container-Image der Aufgabe)</span></label>
@@ -40,9 +35,12 @@
           {% if task and task.task_type == 'workspace' and not task.workspace_image %}
           <p class="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1">⚠️ Noch kein Image (Image-Spec) gesetzt — die Aufgabe ist für Studierende erst nach der Auswahl startbar.</p>
           {% endif %}
-          <details id="ws-spec-info" class="hidden mt-1">
-            <summary class="cursor-pointer select-none px-2 py-1 rounded bg-white border border-gray-200 text-[11px] text-gray-600 hover:bg-gray-50">📄 Dockerfile ansehen</summary>
-            <pre id="ws-spec-dockerfile" class="mt-1 text-[11px] font-mono bg-gray-900 text-gray-200 rounded-lg p-2 max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
+          <details id="ws-spec-info" class="hidden mt-1 border border-gray-200 rounded-lg bg-white overflow-hidden">
+            <summary class="flex items-center gap-1.5 cursor-pointer select-none px-2 py-1 bg-gray-50 text-[11px] text-gray-600 hover:bg-gray-100">
+              <span>📄 Dockerfile ansehen</span>
+              <svg class="ws-df-chevron ml-auto h-3 w-3 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+            </summary>
+            <pre id="ws-spec-dockerfile" class="border-t border-gray-200 text-[11px] font-mono bg-gray-900 text-gray-200 p-2 max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
           </details>
         </div>
         <div>
@@ -53,66 +51,63 @@
           <p id="ws-engine-hint" class="text-[11px] text-gray-400 mt-1">Engine-Pool der Aufgabe — Volumes sind an die Engine gebunden.</p>
         </div>
       </div>
-      <p class="text-[11px] text-gray-400 mt-2">
-        🗂️ Image-Specs &amp; Engines verwalten:
-        <a href="/courses/{{ course.id }}/settings#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Kurs-Einstellungen → Compute/Workspace</a>
-        {% if is_admin %} · <a href="/admin#compute" class="text-blue-600 hover:text-blue-800 hover:underline">Admin-Konsole → Compute/Workspace</a>{% endif %}
-      </p>
-    </div>
 
-    <!-- Simple-Fields: Umgebung -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-      <div>
-        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-timeout">Timeout (s) <span class="text-gray-400">(1–7200)</span></label>
-        <input type="number" id="ws-env-timeout" min="1" max="7200" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="900">
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-cpu">CPU (Kerne)</label>
-        <input type="number" id="ws-env-cpu" step="0.1" min="0.1" max="32" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="2">
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-memory">Speicher (RAM) <span class="text-gray-400">(GB, z. B. 4)</span></label>
-        <input type="number" id="ws-env-memory" step="0.1" min="0.1" max="64" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="4">
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-disk">Speicher (Disk) <span class="text-gray-400">(GB, z. B. 1; 0 = ohne Limit)</span></label>
-        <input type="number" id="ws-env-disk" min="0" max="100" step="0.1" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="1">
-      </div>
-      <div class="flex items-end pb-1.5">
-        <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer"
-               title="Internet-Zugriff für den Student-Container zur Laufzeit (der init.sh-Build hat immer Internet)">
-          <input type="checkbox" id="ws-env-internet" class="rounded text-blue-600"> 🌐 Internet (Student-Container)
-        </label>
-      </div>
-    </div>
-
-    <!-- Umgebung-Status je Engine + Sync/Init-Buttons -->
-    <div class="mt-4 pt-3 border-t border-gray-200">
-      <div class="flex items-center justify-between flex-wrap gap-2">
-        <span class="text-xs font-semibold text-gray-600">
-          📦 Umgebung-Status je Engine
-          <span class="font-normal text-gray-400">(Assets → Agent · Task-Image via init.sh · Basis-Image)</span>
-        </span>
-        <div class="flex gap-2">
-          <button type="button" id="ws-init-stop-btn"
-                  class="hidden text-xs px-2.5 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition">
-            ⏹ Init abbrechen
-          </button>
-          <button type="button" id="ws-sync-btn"
-                  class="text-xs px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 transition">
-            🔄 Sync &amp; Init jetzt ausführen
-          </button>
+      <!-- Umgebung-Status je Engine + Sync/Init-Buttons -->
+      <div class="mt-4 pt-3 border-t border-gray-200">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <span class="text-xs font-semibold text-gray-600">
+            📦 Umgebung-Status je Engine
+            <span class="font-normal text-gray-400">(Assets → Agent · Task-Image via init.sh · Basis-Image)</span>
+          </span>
+          <div class="flex gap-2">
+            <button type="button" id="ws-init-stop-btn"
+                    class="hidden text-xs px-2.5 py-1 rounded-lg border border-red-300 text-red-600 hover:bg-red-50 transition">
+              ⏹ Init abbrechen
+            </button>
+            <button type="button" id="ws-sync-btn"
+                    class="text-xs px-2.5 py-1 rounded-lg border border-blue-300 text-blue-700 hover:bg-blue-50 transition">
+              🔄 Sync &amp; Init jetzt ausführen
+            </button>
+          </div>
+        </div>
+        <div id="ws-asset-status-list" class="mt-2 flex flex-wrap gap-2"></div>
+        <div id="ws-init-log-wrap" class="hidden mt-2">
+          <div class="text-[11px] text-gray-500 mb-1">Init-Build-Log (Tail):</div>
+          <pre id="ws-init-log" class="text-[11px] font-mono bg-gray-900 rounded-lg p-2 max-h-40 overflow-y-auto whitespace-pre-wrap"></pre>
         </div>
       </div>
-      <div id="ws-asset-status-list" class="mt-2 flex flex-wrap gap-2"></div>
-      <div id="ws-init-log-wrap" class="hidden mt-2">
-        <div class="text-[11px] text-gray-500 mb-1">Init-Build-Log (Tail):</div>
-        <pre id="ws-init-log" class="text-[11px] font-mono bg-gray-900 rounded-lg p-2 max-h-40 overflow-y-auto whitespace-pre-wrap"></pre>
+
+
+      <!-- Simple-Fields: Umgebung -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 pt-3 border-t border-gray-200">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-timeout">Timeout (s) <span class="text-gray-400">(1–7200)</span></label>
+          <input type="number" id="ws-env-timeout" min="1" max="7200" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="900">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-cpu">CPU (Kerne)</label>
+          <input type="number" id="ws-env-cpu" step="0.1" min="0.1" max="32" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="2">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-memory">Speicher (RAM) <span class="text-gray-400">(GB, z. B. 4)</span></label>
+          <input type="number" id="ws-env-memory" step="0.1" min="0.1" max="64" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="4">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1" for="ws-env-disk">Speicher (Disk) <span class="text-gray-400">(GB, z. B. 1; 0 = ohne Limit)</span></label>
+          <input type="number" id="ws-env-disk" min="0" max="100" step="0.1" class="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm" placeholder="1">
+        </div>
+        <div class="flex items-end pb-1.5">
+          <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer"
+                 title="Internet-Zugriff für den Student-Container zur Laufzeit (der init.sh-Build hat immer Internet)">
+            <input type="checkbox" id="ws-env-internet" class="rounded text-blue-600"> 🌐 Internet (Student-Container)
+          </label>
+        </div>
       </div>
+
     </div>
 
     {% if task and task.id and task.task_type == 'workspace' %}
-    <div class="flex items-center gap-3 mt-4 pt-3 border-t border-gray-200">
+    <div class="flex items-center gap-3 mt-4">
       <span class="text-xs text-gray-500">📦 Download:</span>
       <a href="/api/tasks/{{ task.id }}/package"
          class="text-indigo-700 hover:text-indigo-900 border border-indigo-300 hover:border-indigo-500 px-3 py-1.5 rounded-lg transition text-sm"
@@ -133,6 +128,16 @@
     <div class="flex items-center justify-between gap-2 mb-1">
       <h2 class="font-semibold text-gray-800">Dateien &amp; Workspace</h2>
     </div>
+
+    <p class="text-xs text-gray-400 mb-1">
+      Skript-Konventionen:
+      <code class="font-mono">run.sh</code>/<code class="font-mono">test.sh</code> = öffentliche Ausführung/Tests
+      (Studenten starten sie per Play-Button im Dateibaum),
+      <code class="font-mono">.run_solution.sh</code> = Button „🧪 Musterlösung testen“ (Musterlösung in <code class="font-mono">.solution/</code>),
+      <code class="font-mono">.test_private.sh</code> = private Grading-Tests für LLM,
+      <code class="font-mono">init.sh</code> + <code class="font-mono">.init_hidden.sh</code> = Initialisierung beim Task-Image-Build
+      (z.&nbsp;B. Pakete, Downloads nach <code class="font-mono">data/</code>, init_hidden.sh darf auch in hidden Verzeichnisse schreiben für private Tests).
+    </p>
     <p class="text-xs text-gray-400 mb-3">
       Zugriffsklassen (im Baum markiert, per Rechtsklick auf Datei/Ordner änderbar —
       wirkt per Erbung auf alle darunter, restriktivste Klasse gewinnt):

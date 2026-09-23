@@ -915,9 +915,15 @@ def exec_sync(key: str, command: str, working_dir: str = "/workspace",
 # /proc/net/tcp{,6} (Inode + Port-HEX), dann der fd-Walk
 # (PID → Inode). Kein procps/ss nötig (fehlen in slim-Images);
 # mawk hat kein strtonum → Port-HEX kommt nach Python.
+# 0B00007F = 127.0.0.11 (little-endian): Docker-Built-in-DNS — der
+# Daemon injiziert dort (bei User-Defined-Netzwerken, z. B. unsere
+# isolierten Internet-Netze) ephemere Loopback-Listener in den
+# Container-Netns, die keinem Container-Prozess gehören → aussortieren
+# (sowieso unerreichbar via 127.0.0.1-Preview-Relay).
 _PORT_SCAN_SCRIPT = (
     'echo "L"; '
-    'awk \'FNR>1 && $4=="0A" {split($2,a,":"); print $10" "a[2]}\' '
+    'awk \'FNR>1 && $4=="0A" {split($2,a,":"); '
+    'if (a[1]!="0B00007F") print $10" "a[2]}\' '
     '/proc/net/tcp /proc/net/tcp6 2>/dev/null; '
     'echo "P"; '
     'for f in /proc/[0-9]*/fd/*; do '

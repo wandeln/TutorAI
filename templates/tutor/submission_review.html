@@ -3,20 +3,13 @@
 {% block content %}
 <div class="max-w-7xl mx-auto">
 
+  <!-- Kurs-Header + Kurs-Tabs (wie auf den anderen Kurs-Tab-Seiten) -->
+  {% include "course/_course_header.html" %}
+  {% set tabs_max_w = "max-w-7xl" %}
+  {% include "course/_tabs.html" %}
+
   <!-- Header -->
   <div class="mb-6">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="/courses/{{ course_id }}" class="text-blue-600 hover:underline text-sm">
-        ← {{ course.name }}
-      </a>
-      <span class="text-gray-400">/</span>
-      <a href="/courses/{{ course_id }}/overview" class="text-blue-600 hover:underline text-sm">
-        Punktübersicht
-      </a>
-      <span class="text-gray-400">/</span>
-      <span class="text-sm text-gray-500">Bewertung</span>
-    </div>
-
     <!-- Task Navigation -->
     <div class="flex items-center justify-between mb-4 mt-4">
       {% if prev_task %}
@@ -68,7 +61,7 @@
   <div class="flex flex-col lg:flex-row gap-6" id="two-col-layout">
 
     <!-- ─── LEFT: Task Description + Model Solution ─────────── -->
-    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
+    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-[var(--tab-sticky-top)] lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
 
       <!-- Aufgabenstellung -->
       <div class="card">
@@ -174,6 +167,11 @@
 
 {% block extra_head %}
 <style>
+  :root {
+    --navbar-height: 60px;
+    --tab-height: 43px;
+    --tab-sticky-top: calc(var(--navbar-height, 60px) + var(--tab-height, 43px) + 0.5rem);
+  }
   {% if task_type == 'text' %}
   .solution-container {
     margin-top: 0.25rem;
@@ -218,7 +216,7 @@
   }
   .hint_toggle{
       position:sticky;
-      top: var(--navbar-height);
+      top: var(--tab-sticky-top);
       z-index:1;
   }
 </style>

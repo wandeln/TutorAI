@@ -5,16 +5,13 @@
 {% block content %}
 <div class="max-w-7xl mx-auto">
 
+  <!-- Kurs-Header + Kurs-Tabs (wie auf den anderen Kurs-Tab-Seiten) -->
+  {% include "course/_course_header.html" %}
+  {% set tabs_max_w = "max-w-7xl" %}
+  {% include "course/_tabs.html" %}
+
   <!-- Task Header -->
   <div class="mb-6">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="/courses/{{ course.id }}/tasks" class="text-blue-600 hover:underline text-sm">
-        ← {{ course.name }}
-      </a>
-      <span class="text-gray-400">/</span>
-      <span class="text-sm text-gray-500">{{ task.title }}</span>
-    </div>
-
     <!-- Task Navigation -->
     <div class="flex items-center justify-between mb-4 mt-4" style="max-height:fit-content">
       {% if prev_task %}
@@ -90,7 +87,7 @@
   <div class="flex flex-col lg:flex-row gap-6">
 
     <!-- ─── LEFT: Task Description ──────────────────────────────── -->
-    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
+    <div class="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-[var(--tab-sticky-top)] lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:align-start space-y-4" id="left-col">
 
       <!-- Aufgabenstellung (Markdown + LaTeX) -->
       <div class="card">
@@ -322,8 +319,11 @@
 {% block extra_head %}
 <style>
     :root {
-    /* Standardwert, falls JS noch nicht bereit ist */
+    /* Standardwerte, falls JS noch nicht bereit ist */
     --navbar-height: 60px;
+    --tab-height: 43px;
+    /* Sticky-Top unter Main-Nav + Kurs-Tab-Leiste */
+    --tab-sticky-top: calc(var(--navbar-height, 60px) + var(--tab-height, 43px) + 0.5rem);
     }
   @media (min-width: 1024px) {
     #left-col {
@@ -343,7 +343,7 @@
   }
   .hint_toggle{
       position:sticky;
-      top: var(--navbar-height);
+      top: var(--tab-sticky-top);
       z-index:1;
   }
 

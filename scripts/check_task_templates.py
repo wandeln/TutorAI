@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from main import templates  # noqa: E402
 
-COURSE = {"id": 1, "name": "ML-Kurs"}
+COURSE = {"id": 1, "name": "ML-Kurs", "semester": "SS 2026", "description": "Dummy"}
 
 TASK_WS = {
     "id": 42,
@@ -44,6 +44,14 @@ TASK_CODE = dict(TASK_WS, id=43, task_type="code", title="Code-Aufgabe",
 TASK_TEXT = dict(TASK_WS, id=44, task_type="text", title="Text-Aufgabe",
                  code_template=None, test_code=None)
 
+# Kurs-Tab-Leiste (wie von _course_tab_context() gebaut)
+TABS = [
+    {"key": "script", "icon": "📖", "label": "Skript", "url": "/courses/1/script", "active": False},
+    {"key": "slides", "icon": "📽️", "label": "Folien", "url": "/courses/1/slides", "active": False},
+    {"key": "tasks", "icon": "📋", "label": "Aufgaben", "url": "/courses/1/tasks", "active": True},
+    {"key": "forum", "icon": "💬", "label": "Forum", "url": "/courses/1/forum", "active": False, "badge": 0},
+]
+
 
 def base_ctx(task, is_tutor, tpl_type):
     return {
@@ -58,6 +66,7 @@ def base_ctx(task, is_tutor, tpl_type):
         "is_tutor": is_tutor,
         "is_student_view": False,
         "is_code": (task or {}).get("task_type") == "code",
+        "tabs": TABS,
         "compute_enabled": True,
         "tpl_type": tpl_type,
         "code_editor": True,
@@ -84,6 +93,24 @@ def base_ctx(task, is_tutor, tpl_type):
     }
 
 
+def review_ctx(task):
+    ctx = base_ctx(task, True, task["task_type"])
+    ctx.update({
+        "course_id": 1,
+        "task_id": task["id"],
+        "student_id": 7,
+        "task_title": task["title"],
+        "task_type": task["task_type"],
+        "task_type_display": "Workspace-Aufgabe",
+        "max_points": task["max_points"],
+        "student_name": "Teststudent",
+        "student_username": "testuser",
+        "hints": [],
+        "hints_enabled": task["hints_enabled"],
+    })
+    return ctx
+
+
 def main():
     failures = []
     cases = [
@@ -96,6 +123,8 @@ def main():
         ("tutor/task_detail_code.html", base_ctx(TASK_CODE, True, "code")),
         ("tutor/task_detail_workspace.html", base_ctx(TASK_WS, True, "workspace")),
         ("tutor/task_detail_workspace.html", base_ctx(None, True, "workspace")),  # neue Aufgabe
+        ("tutor/submission_review.html", review_ctx(TASK_WS)),
+        ("tutor/submission_review.html", review_ctx(TASK_TEXT)),
     ]
     for name, ctx in cases:
         try:

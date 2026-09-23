@@ -375,6 +375,7 @@ def _course_tab_context(
     course_id: int,
     active_tab: str,
     page_title: str | None = None,
+    role_override: CourseRole | None = None,
 ) -> tuple[UserCourse | None, dict[str, Any]]:
     """Gemeinsamer Template-Kontext für alle Kurs-Tab-Seiten.
 
@@ -383,6 +384,10 @@ def _course_tab_context(
     erweiterbar). Die Zugriffskontrolle (wer darf welche Seite öffnen)
     bleibt Aufgabe der Route: `membership` kann None sein (z. B. Admin
     ohne Membership auf der Mitglieder-Seite).
+
+    `role_override`: Tabs wie für eine andere Rolle anzeigen (z. B.
+    STUDENT für den Tutor-Preview mit ?as_student=1) — keine
+    Zugriffswirkung, rein fürs Template.
     """
     course = session.get(Course, course_id)
     if not course:
@@ -396,6 +401,8 @@ def _course_tab_context(
 
     is_admin = user.role == GlobalUserRole.ADMIN
     role = membership.role_in_course if membership else None
+    if role_override is not None:
+        role = role_override
     is_tutor = role in (CourseRole.PROF, CourseRole.TUTOR)
     is_prof = role == CourseRole.PROF
 
@@ -477,14 +484,14 @@ def _course_tab_context(
                 "active": active_tab == "overview",
             }
         )
-    if is_tutor or is_admin:
+    if is_prof or is_admin:
         tabs.append(
             {
-                "key": "references",
-                "icon": "📚",
-                "label": "Quellen",
-                "url": f"/courses/{course_id}/references",
-                "active": active_tab == "references",
+                "key": "members",
+                "icon": "👥",
+                "label": "Mitglieder",
+                "url": f"/courses/{course_id}/members",
+                "active": active_tab == "members",
             }
         )
     if is_prof or is_admin:
@@ -497,14 +504,14 @@ def _course_tab_context(
                 "active": active_tab == "media",
             }
         )
-    if is_prof or is_admin:
+    if is_tutor or is_admin:
         tabs.append(
             {
-                "key": "members",
-                "icon": "👥",
-                "label": "Mitglieder",
-                "url": f"/courses/{course_id}/members",
-                "active": active_tab == "members",
+                "key": "references",
+                "icon": "📚",
+                "label": "Quellen",
+                "url": f"/courses/{course_id}/references",
+                "active": active_tab == "references",
             }
         )
     if is_prof or is_admin:
@@ -1507,11 +1514,17 @@ async def new_task_page(
         tpl_type = "text"
     template = _pick_task_template([f"tutor/task_detail_{tpl_type}.html", "tutor/task_detail_base.html"])
 
+    # Kurs-Tab-Leiste: „Aufgaben" ist aktiv
+    _tab_membership, tab_ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="tasks"
+    )
+
     return templates.TemplateResponse(
         template,
         {
             "request": request,
             "page_title": "Neue Aufgabe",
+            "tabs": tab_ctx["tabs"],
             "current_user": _user_ctx(user, course_role),
             "courses": courses,
             "selected_course_id": course_id,
@@ -1519,6 +1532,8 @@ async def new_task_page(
             "course": {
                 "id": course.id,
                 "name": course.name,
+                "semester": course.semester,
+                "description": course.description,
             },
             "task": None,
             "tpl_type": tpl_type,
@@ -1567,6 +1582,13 @@ async def task_page(
 
     # Tutoren koennen mit ?as_student=1 die Aufgabe aus Studentensicht sehen
     is_student_view = is_tutor and request.query_params.get("as_student") in ("1", "true")
+
+    # Kurs-Tab-Leiste: „Aufgaben" ist aktiv; im as_student-Preview zeigen
+    # die Tabs dieselbe Sichtbarkeit wie für Studierende.
+    _tab_membership, tab_ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="tasks",
+        role_override=CourseRole.STUDENT if is_student_view else None,
+    )
 
     is_code = task.task_type.value == "code"
     is_workspace = task.task_type.value == "workspace"
@@ -1696,6 +1718,8 @@ async def task_page(
             "course": {
                 "id": course.id,
                 "name": course.name,
+                "semester": course.semester,
+                "description": course.description,
             },
             "task": {
                 "id": task.id,
@@ -1730,6 +1754,7 @@ async def task_page(
             "is_tutor": is_tutor,
             "is_student_view": is_student_view,
             "is_code": is_code,
+            "tabs": tab_ctx["tabs"],
             "tpl_type": tpl_type,
             "code_editor": is_code or is_tutor or is_workspace,  # Tutoren + Workspace-IDE: CodeMirror
             "my_submissions": my_submissions,
@@ -1795,6 +1820,11 @@ async def submission_review_page(
         raise HTTPException(404, "Student nicht gefunden.")
 
     courses = _get_user_courses(user, session)
+
+    # Kurs-Tab-Leiste: „Übersicht" ist aktiv (Bewertung wird dort verlinkt)
+    _tab_membership, tab_ctx = _course_tab_context(
+        session, user, request, course_id, active_tab="overview"
+    )
 
     # Previous and next visible tasks (like student view)
     prev_task_obj = session.exec(
@@ -1876,7 +1906,10 @@ async def submission_review_page(
             "course": {
                 "id": course.id,
                 "name": course.name,
+                "semester": course.semester,
+                "description": course.description,
             },
+            "tabs": tab_ctx["tabs"],
             "latest_points": latest_points,
             "total_attempts": len(student_subs),
             "hints": hints_data,

@@ -5,18 +5,13 @@
 {% block content %}
 <div class="max-w-5xl mx-auto">
 
-  <!-- Breadcrumb + Title -->
-  <div class="mb-6">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="/courses/{{ course.id }}/tasks" class="text-blue-600 hover:underline text-sm">
-        ← {{ course.name }}
-      </a>
-      {% if task and task.id %}
-      <span class="text-gray-400">/</span>
-      <span class="text-sm text-gray-500">{{ task.title }}</span>
-      {% endif %}
-    </div>
+  <!-- Kurs-Header + Kurs-Tabs (wie auf den anderen Kurs-Tab-Seiten) -->
+  {% include "course/_course_header.html" %}
+  {% set tabs_max_w = "max-w-5xl" %}
+  {% include "course/_tabs.html" %}
 
+  <!-- Title -->
+  <div class="mb-6">
     {% if prev_task or next_task %}
     <!-- Task Navigation -->
     <div class="flex items-center justify-between mb-4 mt-4" style="max-height:fit-content">

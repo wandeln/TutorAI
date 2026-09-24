@@ -1259,7 +1259,7 @@
         } else {
           const own = f ? f.file_access : null;
           items.push({ label: "🔐 Zugriff (aktuell: " + accessLabel(effectiveAccess(path)) + ")", header: true });
-          items.push({ label: (own == null ? "✓ " : "↳ ") + "Erben vom Ordner",
+          items.push({ label: (own == null ? "✓ " : "✏️ ") + "Editierbar",
                       fn: () => setAccess(path, false, null) });
           items.push({ label: (own === "readonly" ? "✓ " : "🔒 ") + "Read-only",
                       fn: () => setAccess(path, false, "readonly") });

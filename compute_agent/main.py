@@ -159,8 +159,11 @@ def workspace_create(body: dict,
                 result["seeds_written"] = n_seeds
         except docker_ops.DockerError:
             pass  # Seeds sind optional (keine/fehlgeschlagene Init-Artefakte)
-        if body.get("starter_files"):
-            n = docker_ops.write_starter_files(key, body["starter_files"])
+        if body.get("starter_files") or body.get("folders"):
+            n = docker_ops.write_starter_files(
+                key, body.get("starter_files") or [],
+                folders=[str(d) for d in (body.get("folders") or [])
+                         if str(d).strip()] or None)
             result["starter_files_written"] = n
     result["key"] = key
     result["gpu"] = spec_dict["gpus"] != "none"
@@ -208,10 +211,22 @@ def workspace_start(key: str, payload: dict = Depends(auth.verify_token)) -> dic
     return result
 
 
-# ── Dateien ───────────────────────────────────────────────────────
+# ── Dateien ─────────────────────────────────────────────────────
 
 def _touch(key: str) -> None:
     REGISTRY.touch(key)
+
+
+def _reconcile(key: str) -> None:
+    """Datei-Listings zeigen das AKTUELLE Mount-Layout: wenn das Registry
+    eine Spec hält (aus dem letzten Status-Poll), wird der Container
+    dagegen abgeglichen — sonst könnte ein reiner List-Refresh (ohne
+    Status) nach einer Tutor-Änderung der Zugriffs-Klassen noch das alte
+    ro-Mount-Layout anzeigen."""
+    info = REGISTRY.get(key)
+    sp = info.get("spec") if info else None
+    if sp:
+        docker_ops.ensure_container(key, sp)
 
 
 @app.get("/workspaces/{key}/files")
@@ -219,6 +234,7 @@ def _touch(key: str) -> None:
 def files_list(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
     _op(payload, f"ws:{key}")
     _touch(key)
+    _reconcile(key)
     files = docker_ops.list_files(key)
     return {"files": files, "total": sum(f["size"] for f in files)}
 
@@ -228,6 +244,7 @@ def files_list(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
 def dirs_list(key: str, payload: dict = Depends(auth.verify_token)) -> dict:
     _op(payload, f"ws:{key}")
     _touch(key)
+    _reconcile(key)
     return {"dirs": docker_ops.list_dirs(key)}
 
 

@@ -196,7 +196,7 @@ class TaskBase(SQLModel):
     hints_enabled: bool = Field(default=True)          # Socratic-Hints fuer Studenten
     # Workspace-Aufgaben (task_type=workspace), s. docs/plan-workspace-tasks.md:
     # Skript-basiertes Modell: Run/Tests/Init laufen über Task-Dateien
-    # (run.sh, test.sh, .test_private.sh, init.sh, .init_hidden.sh, .run_solution.sh);
+    # (run.sh, test.sh, .test_private.sh, init.sh, .init_hidden.sh, .test_solution.sh);
     # die Umgebung wird hier per einfachen Feldern konfiguriert.
     workspace_timeout: int = Field(default=900)                 # Run-Timeout (s, 1–7200)
     workspace_cpu: float = Field(default=2.0)                   # CPU-Limit des Student-Containers
@@ -345,19 +345,20 @@ class TaskWorkspaceFile(SQLModel, table=True):
 
 
 class TaskWorkspaceFolder(SQLModel, table=True):
-    """Explizite Zugriffsklasse eines Workspace-Ordners (wirkt per
-    Erbung auf alle Dateien/Unterordner darunter).
+    """Expliziter Workspace-Ordner (Zugriffsklasse wirkt per Erbung auf
+    alle Dateien/Unterordner darunter).
 
-    Nur Zeilen für "readonly"/"hidden" — explizites "edit" braucht keine
-    Zeile (restriktivste-von-Vorfahren-Regel). Leere Ordner werden erst
-    bei Setzung persistiert.
+    Eine Zeile = der Ordner ist explizit (persistiert, auch wenn er leer
+    bleibt). ``access=None`` (NULL) = explizit „edit“; "readonly"/
+    "hidden" setzen eine restriktivere Klasse. Ohne Zeile erbt der
+    Ordner nur von seinen Vorfahren.
     """
     __tablename__ = "task_workspace_folders"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     task_id: int = Field(foreign_key="tasks.id", index=True)
-    path: str = Field(max_length=500)        # relativer Ordnerpfad (ohne Slash am Ende)
-    access: str = Field(max_length=16)       # "readonly" | "hidden"
+    path: str = Field(max_length=500)                 # relativer Ordnerpfad (ohne Slash am Ende)
+    access: Optional[str] = Field(default=None, max_length=16)  # NULL=edit | "readonly" | "hidden"
     updated_at: datetime = Field(default_factory=datetime.now)
 
     __table_args__ = (UniqueConstraint("task_id", "path", name="uq_ws_folder_task_path"),)

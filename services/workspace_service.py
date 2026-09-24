@@ -71,6 +71,40 @@ def test_run_key(task: Task) -> str:
     return workspace_key(task.course_id, task.id, 0)
 
 
+def ensure_fresh_workspace(client: ComputeClient, key: str, spec: dict,
+                           starter_files: list[dict] | None,
+                           folders: list[str] | None = None) -> dict:
+    """Einweg-Workspace (Testlauf, Grading, Rerun) mit GARANTIERT frischem
+    Volume anlegen.
+
+    ``remove_workspace`` auf dem Agenten schluckt Docker-Fehler
+    (check=False): ein überlebendes Volume/Container lässt
+    ``workspace_create`` die Starter-Dateien stillschweigend überspringen
+    (fresh=False) — statt dem aktuellen Task-Stand würde der Zustand des
+    vorherigen Laufs ausgeführt (z. B. gelöschte 👤/✏️-Dateien fehlen
+    dann). In dem Fall einmal löschen + neu anlegen; immer noch nicht
+    frisch → klares Fehlerbild statt stummer Alt-Daten.
+    """
+    try:
+        client.delete_workspace(key)
+    except ComputeAgentError:
+        pass  # war schon weg
+    resp = client.create_workspace(key, spec,
+                                   starter_files=starter_files or None,
+                                   folders=folders or None)
+    if (starter_files or folders) and not resp.get("fresh"):
+        client.delete_workspace(key)
+        resp = client.create_workspace(key, spec,
+                                       starter_files=starter_files or None,
+                                       folders=folders or None)
+        if not resp.get("fresh"):
+            raise ComputeAgentError(
+                "Workspace konnte nicht frisch angelegt werden (altes "
+                "Volume blockiert noch den Container) — bitte erneut "
+                "versuchen.", 502)
+    return resp
+
+
 # ── Zugriffsklassen (explizit pro Datei/Ordner, s. Plan) ──────────
 # Effektive Klasse = restriktivste von (eigene explizite, alle Ordner-
 # Vorfahren). Restriktivität: hidden > readonly > edit.
@@ -85,7 +119,7 @@ INIT_SCRIPT = "init.sh"
 INIT_PRIVATE_SCRIPT = ".init_hidden.sh"
 TEST_SCRIPT = "test.sh"
 JUDGE_SCRIPT = ".test_private.sh"           # 👤-Datei; Judge des Grading-Laufs
-RUN_SOLUTION_SCRIPT = ".run_solution.sh"     # 👤-Datei; Tutor-Testlauf
+TEST_SOLUTION_SCRIPT = ".test_solution.sh"   # 👤-Datei; Tutor-Testlauf
 
 
 def task_workspace_dir(task_id: int) -> Path:
@@ -175,7 +209,7 @@ SYSTEM_FILE_ACCESS = {
     "test.sh": "readonly",
     ".init_hidden.sh": "hidden",
     ".test_private.sh": "hidden",
-    ".run_solution.sh": "hidden",
+    ".test_solution.sh": "hidden",
 }
 
 # Stubs: werden per ensure_system_stubs angelegt, wenn der Datei-Baum
@@ -211,15 +245,36 @@ exit 0
 echo "Noch keine privaten Tests."
 exit 0
 """,
-    ".run_solution.sh": """#!/bin/bash
+    ".test_solution.sh": """#!/bin/bash
 # Tutor-Testlauf (Button „🧪 Musterlösung testen“): legt die Musterlösung
 # aus .solution/ über die editierbaren Dateien und prüft sie gegen die
-# öffentlichen + privaten Tests (Exit-Code des ersten Fehlers zählt).
-set -e
-[ -d .solution ] && cp -rf .solution/. ./
-bash run.sh
-[ -f test.sh ] && bash test.sh
-[ -f .test_private.sh ] && bash .test_private.sh
+# öffentlichen + privaten Tests. Fehlende Skripte werden übersprungen;
+# der Exit-Code des ersten Fehlers zählt. Reihenfolge/Selektion der
+# Skripte ist frei anpassbar (z. B. mehrere Run-Skripte).
+cd /workspace
+rc=0
+
+if [ -d .solution ]; then
+  echo "── Musterlösung einbetten (.solution/) ──"
+  cp -rf .solution/. ./
+else
+  echo "Keine Lösung spezifiziert"
+  exit 0
+fi
+
+if [ -f run.sh ]; then
+  echo "── run.sh ──"
+  bash run.sh || rc=$?
+fi
+if [ -f test.sh ] && [ "$rc" -eq 0 ]; then
+  echo "── test.sh ──"
+  bash test.sh || rc=$?
+fi
+if [ -f .test_private.sh ] && [ "$rc" -eq 0 ]; then
+  echo "── .test_private.sh ──"
+  bash .test_private.sh || rc=$?
+fi
+exit $rc
 """,
 }
 
@@ -468,9 +523,11 @@ class WorkspaceService:
         client = self.client_for(agent)
         key = workspace_key(task.course_id, task.id, student_id)
         starter = self.starter_files(session, task)
+        folders = self.materialize_folders(session, task)
         spec = self.workspace_spec_for_agent(session, task, agent)
         result = client.create_workspace(key, spec,
-                                         starter_files=starter or None)
+                                         starter_files=starter or None,
+                                         folders=folders or None)
         result["agent"] = agent["name"]
         return result
 
@@ -524,11 +581,14 @@ class WorkspaceService:
         return spec
 
     def starter_files(self, session: Session, task: Task) -> list[dict]:
-        """Starter-Dateien für frische Student-Volumes: alle Dateien mit
+        """Starter-Dateien für Student-Volumes: alle Dateien mit
         effektiver Klasse ✏️ edit (b64-Liste für den Agenten).
 
         🔒-Dateien landen per ro-Mount, 👤-Dateien gar nicht im
-        Student-Container — beide gehören daher nicht hier rein."""
+        Student-Container — beide gehören daher nicht hier rein.
+        Nur bei frischem Volume (Reset) geschrieben — danach ist das
+        Volume der Stand des Studenten (Tutor-Änderungen an ✏️-Dateien
+        wirken erst ab dem nächsten Reset; 🔒 ist per Mount live)."""
         fm = self.folder_map(session, task)
         out = []
         for f in self.task_files(session, task):
@@ -542,6 +602,23 @@ class WorkspaceService:
                 "content_b64": base64.b64encode(p.read_bytes()).decode(),
             })
         return out
+
+    def materialize_folders(self, session: Session, task: Task,
+                            include_hidden: bool = False) -> list[str]:
+        """Ordner, die in frische Volumes angelegt werden müssen, obwohl
+        sie (noch) keine Dateien enthalten: explizite Ordner mit effektiver
+        Klasse ✏️ (+ mit ``include_hidden`` auch 👤 — für die Einweg-
+        Workspaces Testlauf/Grading/Rerun, die die 👤-Struktur benötigen).
+
+        🔒-Ordner entfallen: sie sind ro-Bind-Mounts, deren Mount-Points
+        das Docker-Runtime beim Container-Start anlegt. Ordner mit Dateien
+        würden ohnehin beim Schreiben der Dateien entstehen — das Mkdir
+        ist idempotent. Gleiche Konvention wie assets_sync/init_build.
+        """
+        fm = self.folder_map(session, task)
+        wanted = {"edit", "hidden"} if include_hidden else {"edit"}
+        return [p for p in sorted(fm)
+                if effective_folder_access(p, fm) in wanted]
 
     # ═══════════════════════════════════════════════════════════
     # Task-Dateien (Tutor-Datei-Manager → Disk + DB)
@@ -766,9 +843,11 @@ class WorkspaceService:
     @staticmethod
     def set_folder_access(session: Session, task: Task, path: str,
                           access: Optional[str]) -> None:
-        """Explizite Klasse eines Ordners (None = „edit“, Zeile wird gelöscht).
+        """Explizite Klasse eines Ordners (None = „edit“).
 
-        Leere Ordner werden mit dieser Setzung erst persistiert.
+        Die Zeile bleibt bei None bestehen bzw. wird angelegt — der
+        Ordner ist danach explizit (persistiert, auch wenn er leer
+        bleibt). Nur ``delete_task_folder`` entfernt die Zeile wieder.
         """
         p = str(path).replace("\\", "/").lstrip("/")
         if not p or p.endswith("/") or any(x == ".." for x in p.split("/")):
@@ -788,23 +867,82 @@ class WorkspaceService:
                         f"„{p}“ enthält das System-Skript {f.path} — der "
                         "Ordner darf es nicht verbergen (es muss für "
                         "Studenten read-only lesbar bleiben).")
+        # Self-Healing: doppelte Zeilen desselben Pfads (Race bei
+        # parallelen Setzungen) bereinigen, bevor geschrieben wird.
+        rows = session.exec(
+            select(TaskWorkspaceFolder).where(
+                TaskWorkspaceFolder.task_id == task.id,
+                TaskWorkspaceFolder.path == p,
+            )
+        ).all()
+        for dup in rows[1:]:
+            session.delete(dup)
+        row = rows[0] if rows else None
+        if row is None:
+            session.add(TaskWorkspaceFolder(task_id=task.id, path=p,
+                                            access=access))
+        else:
+            row.access = access
+            row.updated_at = datetime.now()
+            session.add(row)
+        session.commit()
+
+    @staticmethod
+    def create_task_folder(session: Session, task: Task, path: str) -> None:
+        """(Möglichlicherweise leeren) Ordner anlegen: Disk + explizite
+        Zeile (access=NULL=edit) — bleibt also auch leer sichtbar
+        (Tree, Student-Ansicht, frische Volumes). Ein bereits impliziter
+        Ordner (Dateien darunter, keine Zeile) wird nur explizit.
+        """
+        p = str(path).replace("\\", "/").lstrip("/")
+        if not p or p.endswith("/") or any(x == ".." for x in p.split("/")):
+            raise ValueError("Ungültiger Ordnerpfad.")
+        d = task_workspace_dir(task.id) / p
+        if d.is_file():
+            raise ValueError(f"„{p}“ existiert bereits als Datei.")
         row = session.exec(
             select(TaskWorkspaceFolder).where(
                 TaskWorkspaceFolder.task_id == task.id,
                 TaskWorkspaceFolder.path == p,
             )
         ).first()
-        if row is None:
-            if access is not None:
-                session.add(TaskWorkspaceFolder(task_id=task.id, path=p,
-                                                access=access))
-        else:
-            if access is None:
-                session.delete(row)
-            else:
-                row.access = access
-                row.updated_at = datetime.now()
-                session.add(row)
+        if row is not None:
+            raise ValueError("Ordner existiert bereits.")
+        d.mkdir(parents=True, exist_ok=True)
+        session.add(TaskWorkspaceFolder(task_id=task.id, path=p, access=None))
+        session.commit()
+
+    @staticmethod
+    def delete_task_folder(session: Session, task: Task, path: str) -> None:
+        """Ordner-Subtree aus dem Aufgaben-Workspace entfernen: Disk
+        (Verzeichnis inkl. Inhalt) + DB-Rows (Dateien + Ordner-Klassen,
+        auch verschachtelt)."""
+        p = str(path).replace("\\", "/").lstrip("/")
+        if not p or p.endswith("/") or any(x == ".." for x in p.split("/")):
+            raise ValueError("Ungültiger Ordnerpfad.")
+        d = task_workspace_dir(task.id) / p
+        if d.is_file():
+            raise ValueError("Pfad ist eine Datei — bitte als Datei löschen.")
+        prefix = p + "/"
+        files = [f for f in session.exec(select(TaskWorkspaceFile).where(
+            TaskWorkspaceFile.task_id == task.id)).all()
+            if f.path == p or f.path.startswith(prefix)]
+        folders = [r for r in session.exec(select(TaskWorkspaceFolder).where(
+            TaskWorkspaceFolder.task_id == task.id)).all()
+            if r.path == p or r.path.startswith(prefix)]
+        orders = [r for r in session.exec(select(TaskWorkspaceOrder).where(
+            TaskWorkspaceOrder.task_id == task.id)).all()
+            if r.path == p or r.path.startswith(prefix)]
+        if not d.is_dir() and not files and not folders:
+            raise ValueError("Ordner nicht gefunden.")
+        for f in files:
+            session.delete(f)
+        for r in folders:
+            session.delete(r)
+        for r in orders:
+            session.delete(r)
+        if d.is_dir():
+            shutil.rmtree(d)
         session.commit()
 
     @staticmethod
@@ -1102,6 +1240,26 @@ class WorkspaceService:
         base = task_workspace_dir(task.id)
         if base.exists():
             shutil.rmtree(base, ignore_errors=True)
+
+    def delete_task_db_rows(self, session: Session, task: Task) -> None:
+        """Workspace-DB-Rows der Aufgabe entfernen.
+
+        Die Tabellen haben NOT NULL-FKs auf tasks.id ohne
+        Relationship-Cascade — session.delete(task) würde sonst
+        task_id=NULL setzen und mit IntegrityError abbrechen (500).
+        """
+        for f in self.task_files(session, task):
+            session.delete(f)
+        for fo in self.task_folders(session, task):
+            session.delete(fo)
+        for row in session.exec(
+            select(TaskWorkspaceOrder).where(TaskWorkspaceOrder.task_id == task.id)
+        ).all():
+            session.delete(row)
+        for run in session.exec(
+            select(WorkspaceRun).where(WorkspaceRun.task_id == task.id)
+        ).all():
+            session.delete(run)
 
     # ═══════════════════════════════════════════════════════════
     # Abgabe (Snapshot) & Lauf-Historie

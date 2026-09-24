@@ -133,7 +133,7 @@
       Skript-Konventionen:
       <code class="font-mono">run.sh</code>/<code class="font-mono">test.sh</code> = öffentliche Ausführung/Tests
       (Studenten starten sie per Play-Button im Dateibaum),
-      <code class="font-mono">.run_solution.sh</code> = Button „🧪 Musterlösung testen“ (Musterlösung in <code class="font-mono">.solution/</code>),
+      <code class="font-mono">.test_solution.sh</code> = Button „🧪 Musterlösung testen“ (Musterlösung in <code class="font-mono">.solution/</code>),
       <code class="font-mono">.test_private.sh</code> = private Grading-Tests für LLM,
       <code class="font-mono">init.sh</code> + <code class="font-mono">.init_hidden.sh</code> = Initialisierung beim Task-Image-Build
       (z.&nbsp;B. Pakete, Downloads nach <code class="font-mono">data/</code>, init_hidden.sh darf auch in hidden Verzeichnisse schreiben für private Tests).
@@ -188,7 +188,7 @@
     <div class="mt-3">
       <button type="button" id="ws-test-solution-btn"
               class="text-xs px-2.5 py-1 rounded-lg border border-violet-300 text-violet-700 hover:bg-violet-50 transition"
-              title="Ephemere Umgebung: legt die Musterlösung aus .solution/ über die editierbaren Dateien und führt .run_solution.sh aus (öffentliche + private Tests)">
+              title="Ephemere Umgebung: legt die Musterlösung aus .solution/ über die editierbaren Dateien und führt .test_solution.sh aus (öffentliche + private Tests)">
         🧪 Musterlösung testen
       </button>
     </div>
@@ -728,6 +728,9 @@
     canReorder: true,
     canSetAccess: true,
     folderMove: true,
+    folderApi: true,  // Ordner on-disk + in der DB verwalten (anlegen/
+                      // verschieben/löschen — auch leere bleiben nach
+                      // Reload sichtbar, z. B. für .solution/)
     saveStateEl: document.getElementById("ws-file-save-state"),
     emptyMsg: "(noch keine Dateien — mit „＋ 📄“, „＋ 📁“ oder „⬆“ in der Tree-Toolbar beginnen)",
     noTaskMsg: "Erst die Aufgabe erstellen (speichern) — danach können Dateien hier gepflegt werden.",
@@ -735,7 +738,7 @@
       if (wsUI.isInitPath(src) || wsUI.isInitPath(dst))
         return { ok: false, reason: "init.sh-Ergebnisse sind read-only (per neuem Init-Build änderbar)." };
       const systemScripts = ["run.sh", "init.sh", "test.sh",
-                             ".init_hidden.sh", ".test_private.sh", ".run_solution.sh"];
+                             ".init_hidden.sh", ".test_private.sh", ".test_solution.sh"];
       if (systemScripts.includes(src))
         return { ok: false, reason: src + " ist ein System-Skript und muss in der Wurzel bleiben." };
       return { ok: true };

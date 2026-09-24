@@ -547,27 +547,30 @@ def build_package(task: Task, kind: str,
 
         if live:
             # Live-Snapshot: enthält auch die 🔒-Bind-Mounts (tar liest
-            # durch die Mounts) → 🔒/👤 entfernen, 🔒 aus der Task-Disk
-            # nachlegen (mit 🔒-Cap wie die Vorlage).
+            # durch die Mounts) → 👤/🔒 entfernen, 🔒 aus der Task-Disk
+            # nachlegen (mit 🔒-Cap wie die Vorlage). Die ✏️-Dateien
+            # bleiben in der Studenten-Version (kein Überschreiben!).
             assert snapshot_tar is not None  # live ⇒ snapshot_tar gesetzt
             _extract_tar_bytes(snapshot_tar, top / "workspace")
             for p in fmap["hid_paths"] + fmap["ro_paths"]:
                 _remove_path(top / "workspace" / p)
-            for rel, v in _ro_capped_write().items():
+            for rel, v in ((p, v) for p, v in _ro_capped_write().items()
+                           if p in ro_files):
                 dst = top / "workspace" / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(v["disk"].read_bytes())
         elif submission is not None and submission.workspace_snapshot:
             workspace_service.extract_snapshot(
                 submission.workspace_snapshot, top / "workspace")
-            # Die RO-Mount-Skripte (run.sh, init.sh, test.sh) stecken nicht
-            # zuverlässig im Snapshot → aus der Task-Disk nachliefern.
-            for name in ("run.sh", "init.sh", "test.sh"):
-                src = public.get(name)
-                dst = top / "workspace" / name
-                if src is not None and not dst.is_file():
+            # 🔒-Dateien stecken nicht zuverlässig im Snapshot (ro-Mounts)
+            # → aus der Task-Disk nachliefern, sofern sie fehlen (Standard-
+            # verhalten für alle ro-Dateien, nicht nur die System-Skripte).
+            for rel, v in ((p, v) for p, v in public.items()
+                           if p in ro_files):
+                dst = top / "workspace" / rel
+                if not dst.is_file():
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    dst.write_bytes(src["disk"].read_bytes())
+                    dst.write_bytes(v["disk"].read_bytes())
             # Defensive: 👤-Pfade gehören NIE in einen workspace/
             for p in fmap["hid_paths"]:
                 _remove_path(top / "workspace" / p)

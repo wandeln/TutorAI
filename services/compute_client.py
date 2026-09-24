@@ -89,11 +89,15 @@ class ComputeClient:
 
     # ── Workspace-Lifecycle ───────────────────────────────────────
 
-    def create_workspace(self, key: str, spec, starter_files: list | None = None) -> dict:
+    def create_workspace(self, key: str, spec,
+                         starter_files: list | None = None,
+                         folders: list | None = None) -> dict:
         course, task, student = _key_parts(key)
         body = {"key": key, "spec": spec}
         if starter_files:
             body["starter_files"] = starter_files
+        if folders:
+            body["folders"] = folders
         resp = self._request("POST", "/workspaces", op=f"ws:{key}",
                              task_id=task, student_id=student, json_body=body,
                              timeout=120)

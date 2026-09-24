@@ -704,8 +704,8 @@ class PrivateTest(unittest.TestCase):
       // Reload the page to refresh with saved data, staying on the same task
       setTimeout(() => window.location.reload(), 800);
     } else {
-      // Redirect to course task overview after creating a new task
-      setTimeout(() => window.location.href = `/courses/${courseId}`, 800);
+      // Redirect to the new task's page after creating it
+      setTimeout(() => window.location.href = `/courses/${courseId}/tasks/${id}`, 800);
     }
   });
 

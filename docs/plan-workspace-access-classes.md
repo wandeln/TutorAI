@@ -1,6 +1,6 @@
 # Workspace-Zugriffsklassen (Refactor Pfad-Zonen → explizite Klassen)
 
-Stand: 2026-09-21 · Status: Phasen A–D + Init-Image-Skip + Skript-Renamen/Stubs/🧪-Testlauf fertig + deployed
+Stand: 2026-09-23 · Status: Phasen A–D + Init-Image-Skip + Skript-Renamen/Stubs/🧪-Testlauf + Grading-Test-Ergebnisse fertig + deployed
 
 ## Status (pro Phase)
 
@@ -14,6 +14,8 @@ Stand: 2026-09-21 · Status: Phasen A–D + Init-Image-Skip + Skript-Renamen/Stu
 - [x] **Bugfix** — Sync-Purge vs. Init-Build-Race (stille Datenverluste) (deployed; Task 38 repariert, vom User zu testen; s. Sektion unten)
 - [x] **Bugfix** — `__pycache__`-False-Positives im Init-Image-Skip-Filter (deployed; s. Sektion unten)
 - [x] **Artefakt-Sammlung entfernt** — `workspace_artifacts` restlos raus (deployed; s. Sektion unten)
+- [x] **Runde 2026-09-23** — Grading mit Test-Ergebnissen (public + private) + ro-Paket-Standardverhalten + optionale System-Skripte (deployed; vom User zu testen; s. Sektion unten)
+- [x] **Runde 2026-09-24** — Rename `.run_solution.sh` → `.test_solution.sh` + robuster Testlauf-Stub (dev-deployed; vom User zu testen; s. Sektion unten)
 
 ## Ziel
 
@@ -307,7 +309,7 @@ mit ".", 🔒-Skripte nie):
   (🧪 öffentliche Tests)
 - 👤 versteckt (Student sieht nie, nicht im Download-Paket):
   `.init_hidden.sh` (Init-Phase 2), `.test_private.sh` (Judge —
-  **fix in der Wurzel**), `.run_solution.sh` (🧪 Musterlösung-Testlauf)
+  **fix in der Wurzel**), `.test_solution.sh` (🧪 Musterlösung-Testlauf)
 
 **Umgesetzt (2026-09-21, deployed; Namen s. nächste Sektion):**
 - `system_file_access(path)` in `services/workspace_service.py`
@@ -446,6 +448,155 @@ Struktur bleibt unverändert — nur die Sicht/Anordnung ändert sich.
   (keine Backend-Präsenz → Grund-Position).
 - Beiliegend: Student-Banner ohne Datei-Anzahl („· X Datei(en) im
   Dataset-Bereich“ — falsche Zählung, entfernt).
+
+## Grading mit Test-Ergebnissen + optionale System-Skripte (2026-09-23)
+
+- **Grading mit public + private Tests:** `_grade_workspace` führt je
+  vorhandenem Skript einen eigenen Step aus: `bash test.sh` (falls 🔒
+  hinterlegt) + `bash .test_private.sh` (Judge, falls 👤 hinterlegt) —
+  jeder mit `── <Name> ──`-Header; beide Outputs fließen als
+  TEST-ERGEBNISSE ans Korrektor-LLM (Prompt-Bullet angepasst).
+  WorkspaceRun-Zeile: `command` = Steps gekettet, stdout/stderr kombiniert
+  (je Step Sequenz), Timeout = OR über Steps. Beide Skripte fehlend →
+  saubere Fallback-Meldung, Grading läuft ohne Test-Ausgaben.
+- **Download-Paket: ro-Standardverhalten** — jede 🔒-Datei (run.sh,
+  test.sh, init.sh UND beliebige weitere wie tensorboard.sh) wird
+  standardmäßig ins Paket gelegt, nicht nur die 3 System-Namen.
+  Live-Paket („eigene Lösung“): Snapshot liest tar DURCH die ro-Mounts,
+  wird danach um die Task-🔒-Dateien ergänzt — die ✏️-Dateien bleiben die
+  STUDENTEN-Version (Bugfix: wurden zuvor durch die Task-Version
+  überschrieben).
+- **Alle 6 System-Skripte optional** (crash-frei, verifiziert):
+  - `run.sh` fehlt → kein Start-Button (Play-Button ist generisch)
+  - `test.sh`/`.test_private.sh` fehlen → Grading ohne Test-Ausgaben
+  - `init.sh`/`.init_hidden.sh` fehlen → kein Task-Image, Basis-Image
+    direkt (Agent: unauflösbares task_image + init.sh fehlt → Spec-Image;
+    init.sh vorhanden + fehlendes Image → harter 409)
+  - `.test_solution.sh` fehlt → saubere 400 („Kein .test_solution.sh
+    hinterlegt“)
+  - Stubs (`ensure_system_stubs`) bleiben: nur beim LEEREN Datei-Baum
+    (Selbstheilung); LLM-generierte Aufgaben liefern die Skripte selbst.
+  - `workspace_task_prompt.py`: LLM erklärt, dass alle Skripte optional
+    sind (Folge je fehlendem Skript) + Regel-Sektion konditional.
+
+## Rename `.run_solution.sh` → `.test_solution.sh` + robuster Stub (2026-09-24)
+
+**Ziel (User-Runde 2026-09-24):** Naming-Konsistenz mit `test.sh` /
+`.test_private.sh` + klarer Bezug zum „🧪 Musterlösung testen“-Button.
+Zusätzlich (Option A): der Stub wird ROBUST gemacht, damit der Testlauf
+funktioniert, wenn `run.sh`/`test.sh`/`.test_private.sh` (oder mehrere)
+fehlen — und die Sequenz vom LLM/Tutor frei anpassbar bleibt
+(z. B. mehrere Run-Skripte). Fehlender `.solution/`-Ordner → Ausgabe
+„Keine Lösung spezifiziert“ (Exit 0, kein Crash).
+
+**Umgesetzt (dev-deployed; vom User zu testen):**
+- Rename an allen Stellen: `TEST_SOLUTION_SCRIPT` (Konstante),
+  `SYSTEM_FILE_ACCESS` + `SYSTEM_STUBS`, `workspace_test_run` (400-Check
+  + Command), JS-Spiegel (`SYSTEM_FILE_ACCESS` + moveGate-
+  `systemScripts`), Template (Legende + Button-Title),
+  `workspace_task_prompt.py` (Modell-Liste + Konvention +
+  Optional-Liste), `create_workspace_example.py`, models.py-Docstring.
+- **Neuer robuster Stub** (replaces `set -e`-Version, die bei fehlender
+  `run.sh` crashete und als letzte Zeile `[ -f x ] && …` bei fehlender
+  Datei Exit 1 lieferte): jede Sequenz `── <Name> ──`-Header, fehlende
+  Skripte werden übersprungen, Exit-Code des ERSTEN Fehlers zählt
+  (spätere Steps dann skipped); fehlender `.solution/` → „Keine Lösung
+  spezifiziert“ + Exit 0. Reihenfolge/Selektion frei anpassbar.
+- **Migration** `scripts/migrate_rename_test_solution.py` (--dry-run),
+  2 Teile, beide idempotent:
+  1. Disk-Datei + DB-Zeile je Task umbenannt.
+  2. Stub-Content: bekannte Standard-Varianten (set -e-Versionen,
+     vorheriger robuster Stub) → aktueller robuster Stub; INDIVIDUELLE
+     Skripte (ohne Standard-Marker) bleiben unangetastet + gemeldet.
+  (Erste Fassung der Migration nur Teil 1 — der User hat danach die
+  Content-Normalisierung gewünscht, da er beim Testen auf die fragilen
+  alten Inhalte gestoßen ist.)
+  - AUFFALLUNG: Task 43 `.test_solution.sh` enthält versehentlich eine
+    HTML-Seite (Login-Page) statt ein Skript — bewusst NICHT
+    überschrieben (kein Standard-Marker), manuell reparieren.
+- Nebenwirkung: die Access-Map ist Teil des init-Hashes → Tasks mit
+  `init.sh` bekommen nach dem Rename ein neues Task-Image gebaut
+  (einmalig; init.sh sieht die 👤-Datei nicht, Ergebnis identisch).
+
+## Testlauf/Grading: frisches Volume garantieren (2026-09-24)
+
+**Bug:** „Musterlösung testen“ (und Grading/Rerun) liefen stumm mit einem
+ALTEM Volume, wenn das Cleanup des vorherigen Laufs auf dem Agenten
+fehlgeschlagen war: `remove_workspace` schluckt alle Docker-Fehler
+(`check=False` auf `rm -f` + `volume rm`) und `workspace_create` schreibt
+Starter-Dateien nur bei `fresh=True`. Symptom: `.solution/`-Dateien fehlten
+im Testlauf-Container bei ✏️/👤 („Keine Lösung spezifiziert“), bei 🔒
+funktionierte es trotzdem (Dateien kommen per ro-Bind-Mount, nicht aus
+ dem Volume).
+
+**Fix (Backend):** `ensure_fresh_workspace()` in `workspace_service.py` —
+Einweg-Workspaces (Testlauf, Grading, Rerun) anlegen und das `fresh`-Flag
+prüfen; bei `fresh=False` mit erwarteten Starter-Dateien: einmal löschen +
+neu anlegen, dann klares 502 statt stummer Alt-Daten. Verwendet in
+`workspace_test_run`, `_grade_workspace`, `_run_rerun_background`.
+
+**Offen (Agent-Neubuild nötig):**
+- `remove_workspace` robust machen (Volume-Rm mit Retry), damit Stale-
+  Zustände seltener werden.
+- Hähnchen-Ei-Problem: Agent-`task_has_init` prüft das Asset-Dir
+  (`init.sh` ODER `.private/.init_hidden.sh`); Tasks mit NUR
+  `.init_hidden.sh` (kein `init.sh`) bekommen den ERSTEN Init-Build nie
+  getriggert (`.private/.init_hidden.sh` entsteht erst nach einem
+  erfolgreichen Build). Aktuell harmlos (Task 44 = No-Op-Stub +
+  Basis-Image-Fallback in `_desired_image`), potenziert aber bei realen
+  `.init_hidden.sh`-Downloads. Idee: `start_init_build` behandelt
+  `init_private_b64` im Request als has-init-Signal.
+
+## Bugfix: Leere Ordner in Volumes materialisieren (2026-09-24)
+
+**Bug:** `.solution/` gelöscht + neu angelegt (leerer Ordner) →
+„Musterlösung testen“ lieferte bei ✏️/👤 „Keine Lösung spezifiziert“, bei
+🔒 funktionierte es. Ursache: `write_starter_files` schreibt nur
+DATEIEN (Temp-Tree + `docker cp`) — ein Ordner ohne Dateien erzeugt kein
+Verzeichnis im Volume, `[ -d .solution ]` in `.test_solution.sh` schlägt
+ fehl. 🔒-Ordner zeigen das nicht: ro-Bind-Mount, dessen Mount-Point das
+Docker-Runtime beim Container-Start anlegt.
+
+**Fix (wiederverwendet die bestehende `folders`-Konvention aus
+assets_sync/init_build):**
+- Agent `write_starter_files(key, files, folders=None)`: Ordner vor der
+  `docker cp` in den Temp-Tree legen — docker cp ist tar-basiert und
+  behält leere Verzeichnisse bei (empirisch verifiziert).
+- Agent `workspace_create`: akzeptiert `folders` (wird bei frischem
+  Volume wie die Starter-Dateien geschrieben).
+- Client `create_workspace(..., folders=...)`.
+- Backend: neu `materialize_folders(session, task, include_hidden=False)`
+  — explizite Ordner mit effektiver Klasse ✏️ (+ 👤 für Einweg-Workspaces);
+  🔒 entfällt (ro-Mount). Mkdir ist idempotent — Ordner mit Dateien werden
+  dadurch nur redundant angelegt.
+- Call-Sites: `ensure_workspace` (Student-Volume, nur ✏️ — 👤 ist für
+  Studenten unsichtbar), Testlauf/Grading/Rerun (✏️+👤, über
+  `ensure_fresh_workspace(..., folders)`; der Freshness-Guard greift jetzt
+  auch, wenn nur Ordner erwartet werden).
+
+**Einschränkung:** Bestehende Student-Volumes holen neue leere Ordner erst
+beim nächsten Reset (Semantik frischer Volumes — wie bei ✏️-Dateien).
+
+**Ordner-Persistenz (Tutor):** Damit „gelöscht + neu angelegt“ überhaupt
+reproduzierbar ist (und leere `.solution/` nach Reload sichtbar bleibt),
+wurde Ordner-Anlage/-Löschung im Tutor auf die gleiche on-disk-Semantik
+gestellt wie beim Student:
+- Semantik-Wechsel: Eine `TaskWorkspaceFolder`-Zeile = „expliziter
+  Ordner“ — `access=NULL` bedeutet jetzt explizit „edit“ (Zeile bleibt
+  bestehen; früher: NULL = Zeile löschen). Die Spalte wurde nullable
+  migriert (`scripts/migrate_folder_nullable_access.py`, einmalig,
+  inkl. defensivem Dedup doppelter (task_id, path)-Zeilen).
+- Service: neu `create_task_folder` (Disk + Zeile NULL) und
+  `delete_task_folder` (Subtree: Disk `rmtree` + alle Datei- und
+  Ordner-Zeilen, Python-Präfix-Filter statt SQL LIKE); `set_folder_access`
+  mit NULL behält/legt die Zeile an (inkl. Self-Healing-Dedup vor dem
+  Write).
+- Tutor-Routes: `POST /tasks/{id}/workspace/folders` +
+  `DELETE /tasks/{id}/workspace/folders/{path:path}` (Subtree-Semantik,
+  Init-Artefakt-Subtrees → 403); Student-Routes existierten bereits.
+- JS: `deleteDir` nutzt bei `folderApi=true` immer den einen DELETE-Call
+  (vorher nur bei impliziten on-disk-Ordner-Einträgen); Tutor-Template
+  bekommt `folderApi: true` (war nur im Student-Template).
 
 ## Betriebs-Notizen
 

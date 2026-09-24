@@ -24,7 +24,6 @@ from database.models import (
     User, Task, Submission, Feedback, HintExchange, ScriptSection,
     TaskType, SubmissionStatus, FeedbackSource,
     Course, UserCourse, CourseRole,
-    WorkspaceRun, WorkspaceRunStatus,
 )
 from services.auth_service import decode_access_token, get_current_user
 from services.compute_client import (
@@ -1320,7 +1319,6 @@ async def workspace_status(
     Nebeneffekt: Container wird idempotent gesichert (gestartet/erstellt).
     """
     task = await _load_ws_task(task_id, session, user)
-    file_paths = {f.path for f in workspace_service.task_files(session, task)}
     out = {
         "enabled": workspace_service.is_enabled(session, task.course_id),
         "degraded": False,
@@ -1328,9 +1326,6 @@ async def workspace_status(
         "container": None,
         "error": None,
         "main_file": task.workspace_main_file,
-        # Buttons pro Skript-Konvention (Datei existiert in der Aufgabe):
-        "has_run": "run.sh" in file_paths,
-        "has_test": "test.sh" in file_paths,
         "timeout": task.workspace_timeout,
         "memory": task.workspace_memory,
         "assets": [],
@@ -1841,167 +1836,6 @@ async def workspace_start(
     except ComputeAgentError as e:
         raise _agent_http(e)
     return {"ok": True}
-
-
-@router.post("/tasks/{task_id}/workspace/run")
-async def workspace_run(
-    task_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Task-Skript im eigenen Container ausführen (immer asynchron,
-    Job-Progress im UI). Studenten senden NIE freie Commands.
-
-    Body: {kind: "run"|"test"} — run.sh bzw. test.sh.
-    """
-    task = await _load_ws_task(task_id, session, user)
-    client = _ws_client_or_error(session, task)
-    key = _ws_key(task, user)
-
-    raw = await request.body()
-    try:
-        body = json.loads(raw) if raw else {}
-    except json.JSONDecodeError:
-        raise HTTPException(422, "Body muss JSON sein.")
-    if not isinstance(body, dict):
-        raise HTTPException(422, "Body muss ein JSON-Objekt sein.")
-
-    kind = str(body.get("kind") or "").strip()
-    files = {f.path for f in workspace_service.task_files(session, task)}
-    if kind == "run":
-        if "run.sh" not in files:
-            raise HTTPException(400, "Die Aufgabe hat kein run.sh hinterlegt.")
-        command = "bash run.sh"
-    elif kind == "test":
-        if "test.sh" not in files:
-            raise HTTPException(400, "Die Aufgabe hat keine test.sh hinterlegt.")
-        command = "bash test.sh"
-    else:
-        raise HTTPException(422, "kind muss 'run' oder 'test' sein.")
-
-    try:
-        result = await asyncio.to_thread(
-            client.start_run, key, command, task.workspace_timeout)
-    except ComputeAgentError as e:
-        raise _agent_http(e)
-    workspace_service.record_run(session, task, user.id, command, result)
-    return {
-        "run_id": result.get("run_id"),
-        "async": True,
-        "status": result.get("status", "queued"),
-    }
-
-
-async def _workspace_run_from_db(
-    session: Session, user: User, run_id: str, stale: bool = False,
-) -> dict:
-    """Persistierten Lauf aus der DB zurückgeben.
-
-    stale=True: Agent kennt den Lauf nicht (z. B. nach Neustart) →
-    noch „running“ stehende Rows werden auf „killed“ gesetzt.
-    """
-    run = session.exec(select(WorkspaceRun).where(
-        WorkspaceRun.run_id == run_id,
-        WorkspaceRun.student_id == user.id,
-    )).first()
-    if run is None:
-        raise HTTPException(404, "Lauf nicht gefunden.")
-    if stale and run.status == WorkspaceRunStatus.RUNNING:
-        run.status = WorkspaceRunStatus.KILLED
-        run.finished_at = datetime.now()
-        run.stderr = ((run.stderr or "") +
-                      "\n[agent] Lauf nach Agent-Neustart nicht mehr verfügbar").strip()
-        session.add(run)
-        session.commit()
-        session.refresh(run)
-    return {
-        "run_id": run.run_id,
-        "status": run.status.value,
-        "exit_code": run.exit_code,
-        "stdout": run.stdout or "",
-        "stderr": run.stderr or "",
-    }
-
-
-@router.get("/tasks/{task_id}/workspace/runs/{run_id}")
-async def workspace_run_status(
-    task_id: int,
-    run_id: str,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Status eines Laufs; fertige Läufe werden in der DB persistiert."""
-    task = await _load_ws_task(task_id, session, user)
-    client = _ws_client_or_error(session, task)
-    key = _ws_key(task, user)
-    try:
-        status = await asyncio.to_thread(client.run_status, key, run_id)
-    except ComputeAgentError as e:
-        if e.status == 404:
-            return await _workspace_run_from_db(session, user, run_id, stale=True)
-        raise _agent_http(e)
-    # Normalisierung: Agent liefert stdout/stderr als Zeilenliste
-    for field in ("stdout", "stderr"):
-        if isinstance(status.get(field), list):
-            status[field] = "\n".join(status[field])
-    run = session.exec(select(WorkspaceRun).where(
-        WorkspaceRun.run_id == run_id,
-        WorkspaceRun.student_id == user.id,
-    )).first()
-    if run is not None:
-        workspace_service.update_run_from_status(session, task, status)
-    return status
-
-
-@router.post("/tasks/{task_id}/workspace/runs/{run_id}/stop")
-async def workspace_run_stop(
-    task_id: int,
-    run_id: str,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Laufenden Job stoppen."""
-    task = await _load_ws_task(task_id, session, user)
-    client = _ws_client_or_error(session, task)
-    key = _ws_key(task, user)
-    try:
-        await asyncio.to_thread(client.stop_run, key, run_id)
-    except ComputeAgentError as e:
-        if e.status == 409:
-            raise HTTPException(404, "Lauf nicht (mehr) aktiv.")
-        raise _agent_http(e)
-    return {"ok": True}
-
-
-@router.get("/tasks/{task_id}/workspace/history")
-async def workspace_run_history(
-    task_id: int,
-    session: Session = Depends(get_session),
-    user: User = Depends(get_current_user),
-):
-    """Eigene Lauf-Historie (DB, neueste 50; Logs gekürzt)."""
-    task = await _load_ws_task(task_id, session, user)
-    runs = session.exec(
-        select(WorkspaceRun)
-        .where(WorkspaceRun.task_id == task.id)
-        .where(WorkspaceRun.student_id == user.id)
-        .order_by(WorkspaceRun.started_at.desc())
-    ).all()
-    out = []
-    for r in runs[:50]:
-        out.append({
-            "id": r.id,
-            "run_id": r.run_id,
-            "command": r.command,
-            "status": r.status.value,
-            "exit_code": r.exit_code,
-            "started_at": r.started_at.isoformat() if r.started_at else None,
-            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
-            "stdout": (r.stdout or "")[-2000:],
-            "stderr": (r.stderr or "")[-2000:],
-        })
-    return {"runs": out}
 
 
 @router.get("/tasks/{task_id}/package")

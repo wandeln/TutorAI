@@ -14,7 +14,7 @@ Dateien (Zugriffsklassen):
   .tests/test_solution.py (👤)  → privat (pytest-Tests für die Bewertung)
   .solution/solution.py (👤)    → privat (Musterlösung, spiegelt die editierbaren Pfade)
   .test_private.sh (👤)         → Judge (wird bei der Bewertung ausgeführt)
-  .run_solution.sh (👤)         → Tutor-Testlauf (Musterlösung + beide Tests)
+  .test_solution.sh (👤)        → Tutor-Testlauf (Musterlösung + beide Tests)
   .init_hidden.sh (👤)          → private Init-Phase (hier: no-op)
 
 Aufruf (vom Projekt-Root):
@@ -275,15 +275,35 @@ cd /workspace
 python3 -m pytest .tests/ -v
 """
 
-RUN_SOLUTION_SH = """#!/bin/bash
+TEST_SOLUTION_SH = """#!/bin/bash
 # 🧪 Tutor-Testlauf: Musterlösung aus .solution/ über die editierbaren
 # Dateien legen und gegen die öffentlichen + privaten Tests prüfen.
-set -e
+# Fehlende Skripte werden übersprungen; der Exit-Code des ersten
+# Fehlers zählt.
 cd /workspace
-cp -rf .solution/. ./
-bash run.sh
-[ -f test.sh ] && bash test.sh
-[ -f .test_private.sh ] && bash .test_private.sh
+rc=0
+
+if [ -d .solution ]; then
+  echo "── Musterlösung einbetten (.solution/) ──"
+  cp -rf .solution/. ./
+else
+  echo "Keine Lösung spezifiziert"
+  exit 0
+fi
+
+if [ -f run.sh ]; then
+  echo "── run.sh ──"
+  bash run.sh || rc=$?
+fi
+if [ -f test.sh ] && [ "$rc" -eq 0 ]; then
+  echo "── test.sh ──"
+  bash test.sh || rc=$?
+fi
+if [ -f .test_private.sh ] && [ "$rc" -eq 0 ]; then
+  echo "── .test_private.sh ──"
+  bash .test_private.sh || rc=$?
+fi
+exit $rc
 """
 
 INIT_HIDDEN_SH = """#!/bin/bash
@@ -440,7 +460,7 @@ def main() -> int:
         ".tests/test_solution.py": TESTS_PY,
         ".solution/solution.py": SOLUTION_PY,
         ".test_private.sh": PRIVATE_TESTS_SH,
-        ".run_solution.sh": RUN_SOLUTION_SH,
+        ".test_solution.sh": TEST_SOLUTION_SH,
         ".init_hidden.sh": INIT_HIDDEN_SH,
     }
     # Zugriffsklassen: Ordner (Erbung auf alle Dateien darunter) +

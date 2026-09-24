@@ -683,6 +683,7 @@ def ensure_container(key: str, spec: dict) -> dict:
             _container_image(key) not in (None, desired)
             or _container_label(key, "tutorai.mounts") != _mounts_hash(spec, course, task)):
         # Image-/Mount-Mismatch → Container weg (Volume bleibt), neu anlegen
+        clean_phantom_mounts(key)  # Mount-Point-Reste VOR dem Rm räumen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
         invalidate_relay_cache(key)
         state = None
@@ -711,9 +712,10 @@ def remove_workspace(key: str) -> None:
 def stop_container_only(key: str) -> None:
     """Nur Container entfernen (Idle-Kill des Reapers), Volume bleibt."""
     if container_state(key) is not None:
+        clean_phantom_mounts(key)  # Mount-Point-Reste VOR dem Rm räumen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
-    invalidate_relay_cache(key)
-    remove_ws_network(key)
+        invalidate_relay_cache(key)
+        remove_ws_network(key)
 
 
 def stop_container_soft(key: str) -> None:
@@ -1138,14 +1140,26 @@ def delete_path(key: str, path: str, spec: dict | None = None) -> None:
         raise DockerError("Löschen fehlgeschlagen", 500)
 
 
-def write_starter_files(key: str, files: list[dict]) -> int:
-    """Starter-Dateien (path + content_b64) in ein FRISCHES Volume schreiben.
+def write_starter_files(key: str, files: list[dict],
+                        folders: list[str] | None = None) -> int:
+    """Starter-Dateien (path + content_b64) + leere Ordner in ein FRISCHES
+    Volume schreiben.
 
     Nutzt docker cp über einen Temp-Ordner (funktioniert auch bei
     gestopptem/neuem Container, da /workspace der Volume-Mount ist).
+
+    ``folders``: explizite Task-Ordner, die auch ohne Dateien existieren
+    müssen (z. B. ein leerer .solution/ — würde sonst im Volume fehlen,
+    weil Dateien den Ordner sonst erst erzeugen). docker cp ist
+    tar-basiert und behält leere Verzeichnisse bei. Gleiche Konvention
+    wie assets_sync (Host-Asset-Dir) und init_build (Build-Quellen).
     """
     n = 0
     with tempfile.TemporaryDirectory(prefix="tutorai-starter-") as tmp:
+        for d in folders or []:
+            rel = safe_workspace_path(str(d))  # wirft bei unsauberem Pfad
+            os.makedirs(os.path.join(tmp, os.path.relpath(rel, "/workspace")),
+                        exist_ok=True)
         for f in files:
             rel = safe_workspace_path(f["path"])  # werft bei unsauberem Pfad
             target = os.path.join(tmp, os.path.relpath(rel, "/workspace"))
@@ -1155,11 +1169,50 @@ def write_starter_files(key: str, files: list[dict]) -> int:
             if os.path.basename(target).endswith(".sh"):
                 os.chmod(target, 0o755)  # Skripte ausführbar (Seed-Volumes)
             n += 1
-        if n == 0:
+        if n == 0 and not (folders or []):
             return 0
         # Alles in einem Rutsch: docker cp (Quelle-Endung / → Inhalt kopieren)
         _docker("cp", tmp + "/.", f"{container_name(key)}:/workspace", timeout=300)
     return n
+
+
+def clean_phantom_mounts(key: str) -> None:
+    """0-Byte-Platzhalter aus dem /workspace-Volume entfernen, die das
+    Docker-Runtime beim Container-Start für jede 🔒-Datei-Mount-Ziel anlegt
+    (Mount-Point, falls dort nichts existiert). Solange der ro-Mount
+    existiert, verstecken sie sich darunter; verschwindet der Mount
+    (Zugriffs-Klasse 🔒→✏️/👤, Datei gelöscht), würden sie als leere
+    Schatten-Dateien im Studenten-Volume sichtbar.
+
+    VOR dem Container-Rm aufrufen (liest dessen Mounts + Image). Best-
+    effort: ein fehlgeschlagener Lauf ist harmlos (der nächste Rm räumt
+    erneut auf)."""
+    proc = _docker("inspect", "-f", "{{json .Mounts}}",
+                   container_name(key), check=False)
+    if proc.returncode != 0:
+        return  # kein Container → nichts zu räumen
+    image = _container_image(key)
+    if not image or not volume_exists(key):
+        return
+    try:
+        mounts = json.loads(proc.stdout.decode() or "[]")
+    except ValueError:
+        return
+    phantoms = sorted(
+        m["Destination"][len("/workspace/"):]
+        for m in mounts
+        if m.get("Type") == "bind"
+        and str(m.get("Destination", "")).startswith("/workspace/"))
+    if not phantoms:
+        return
+    # Datei → rm -f; Ordner → rmdir (nur wenn leer — unter einem 🔒-Mount
+    # kann der Student nichts hineinlegen, ist also immer sicher).
+    script = "; ".join(
+        f"if [ -d {q} ]; then rmdir {q} 2>/dev/null; else rm -f {q}; fi"
+        for q in (shlex.quote(f"/ws/{p}") for p in phantoms))
+    _docker("run", "--rm", "--entrypoint", "/bin/sh",
+            "-v", f"{volume_name(key)}:/ws", image, "-c", script,
+            check=False, timeout=120)
 
 
 def snapshot(key: str, cap: int | None = None) -> bytes:

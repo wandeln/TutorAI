@@ -26,11 +26,16 @@ Zugriffsklasse pro Datei/Ordner (✏️ edit / 🔒 read-only / 👤 hidden):
   test.sh (🔒)            → „🧪 Test“-Button (public Self-Check)
   .test_private.sh (👤)   → private Grading-Judge (IMMER in der Wurzel; fehlt →
                             Grading ohne private Tests)
-  .run_solution.sh (👤)   → Tutor-Testlauf: Musterlösung aus .solution/ über
+  .test_solution.sh (👤)  → Tutor-Testlauf: Musterlösung aus .solution/ über
                             die editierbaren Dateien + run.sh + test.sh +
-                            .test_private.sh ausführen
+                            .test_private.sh ausführen (fehlende Skripte
+                            werden übersprungen)
   Musterlösung (👤)       → IMMER in .solution/, spiegelt die editierbaren Pfade
   private Tests (👤)      → z. B. in .tests/; nur bei Korrektur/Testing injiziert
+
+  Alle sechs Skripte sind OPTIONAL — fehlt eines, entfällt die dazugehörige
+  Funktion (kein Fehler); beim leeren Datei-Baum legt das System Stubs an
+  (services.workspace_service.ensure_system_stubs).
 
 Der Prompt enthält einen kuratierten Dataset-Katalog (als Referenz für
 init.sh-Downloads) + die registrierten Compute-Engines (inkl. dort
@@ -182,16 +187,29 @@ Testverhalten von test.sh/.test_private.sh).
       erzeugt hat. Strengere/vollständigere Prüfung als public.
       ERFORDERLICH, wenn die Aufgabe per Tests bewertet wird — sonst wird
       ohne private Tests korrigiert. GLEICHE TEST-REGELN wie public (s. unten).
-    - ".run_solution.sh" (IMMER in der Wurzel, wenn eine Musterlösung
+    - ".test_solution.sh" (IMMER in der Wurzel, wenn eine Musterlösung
       existiert): Tutor-Testlauf (Button „🧪 Musterlösung testen").
-      Standard-Inhalt: `set -e`, `[ -d .solution ] && cp -rf .solution/. ./`,
-      `bash run.sh`, `bash test.sh`, `bash .test_private.sh`.
+      Standard-Inhalt: `cp -rf .solution/. ./` (Musterlösung einbetten),
+      dann `run.sh` → `test.sh` → `.test_private.sh` nacheinander —
+      FEHLENDE Skripte werden übersprungen, der Exit-Code des ersten
+      Fehlers zählt; FEHLT der Ordner `.solution/`, gibt das Skript
+      „Keine Lösung spezifiziert“ aus (Exit 0, kein Fehler). Passe die
+      Sequenz an die tatsächlich gelieferten Skripte an (z. B. mehrere
+      Run-Skripte, andere Reihenfolge).
     - ".init_hidden.sh" (IMMER in der Wurzel): EINMALIGER PRIVATE
       Initialisierungs-Schritt — Phase 2, läuft NACH init.sh aus dessen
       Ergebnis (mit Internet). Dafür da: private Testdaten laden/erzeugen
       (in 👤-Dateien schreiben). NUR anliefern, wenn private Daten nicht
       statisch als Dateien geliefert werden können. Nie im Student-Paket,
       nie in der Student-View.
+    Alle sechs System-Skripte sind OPTIONAL — fehlt eines, entfällt
+    schlicht die dazugehörige Funktion (kein Fehler, kein Crash):
+    run.sh → kein „▶ Ausführen“-Button • test.sh → kein „🧪 Test“-Button •
+    .test_private.sh → Korrektur ohne private Test-Ausgaben •
+    init.sh/.init_hidden.sh → das Basis-Image wird direkt verwendet
+    (kein Task-Image-Build) • .test_solution.sh → „🧪 Musterlösung testen“
+    nicht verfügbar. Liefere ein Skript nur, wenn seine Funktion für die
+    Aufgabe sinnvoll ist.
 - "folders": Objekt { <Ordnerpfad>: "readonly" | "hidden" } — die
   Zugriffs-Klassen von ORDNERN (erbten auf alle Dateien darunter; die
   restriktivste Klasse gewinnt). NUR Ordner listen, die NICHT editierbar
@@ -277,9 +295,10 @@ Regeln:
 - workspace_image und workspace_engines sind PFLICHT (kein null): wähle
   Image + Engine-Paar passend zur Aufgabe.
 {% endif %}
-- Die Dateien müssen ein konsistentes Ganzes bilden: run.sh führt den Starter
-  aus (lauffähig mit sinnvoller Ausgabe), test.sh und .test_private.sh
-  bestehen an der Musterlösung (.solution/) und schlagen am Starter fehl.
+- Die Dateien müssen ein konsistentes Ganzes bilden: Wenn du run.sh
+  lieferst, führt es den Starter aus (lauffähig mit sinnvoller Ausgabe).
+  Gelieferte Test-Skripte (test.sh, .test_private.sh) bestehen an der
+  Musterlösung (.solution/) und schlagen am Starter fehl.
   .solution/ spiegelt die editierbaren Pfade 1:1 (main.py → .solution/main.py)
   und implementiert den Ansatz aus der Lösungsskizze (model_solution).
 - Alle Felder müssen zueinander passen: Lösungsskizze + Bewertungskriterien

@@ -23,9 +23,9 @@
    - Init-Artefakte (init.sh/.init_hidden.sh-Ergebnisse, mit `init: true`
      vom Backend): am realen Pfad im Baum, read-only (📦-Marker),
      entstehen/ändern sich nur per neuem Init-Build.
-   - "Neuer Ordner" ist client-seitig (leere Ordner werden nicht
-     persistiert, außer sie bekommen eine Zugriffs-Klasse) und existiert,
-     bis die erste Datei darin angelegt wird.
+   - Ordner werden on-disk + in der DB verwaltet (folderApi): anlegen /
+     verschieben / löschen via /folders-Endpoints — auch LEERE Ordner
+     bleiben persistiert (Disk-Verzeichnis + explizite Zeile) und sichtbar.
    - Move/Rename = Backend-Endpoint /files/move (Dateien) bzw.
      /folders/move (Tutor: Ordner inkl. Zugriffsklassen in einem Call).
    - Reihenfolge: Dateien, Ordner und [init]-Artefakte sind je Ordner per
@@ -67,7 +67,7 @@
     "test.sh": "readonly",
     ".init_hidden.sh": "hidden",
     ".test_private.sh": "hidden",
-    ".run_solution.sh": "hidden",
+    ".test_solution.sh": "hidden",
   };
   function systemAccessOf(path) {
     const p = String(path).replace(/\\/g, "/").replace(/^\/+/, "");
@@ -1874,8 +1874,9 @@
       if (!inDir.length && !rows.length && !onDisk && !state.extraDirs.has(dir)) return;
       if (!confirm("Ordner „" + dir + "“ löschen?\n" +
         inDir.length + " Datei(en) werden endgültig entfernt.")) return;
-      if (onDisk && folderApi) {
-        // Ein Call entfernt den ganzen Subtree im Volume (rm -rf).
+      if (folderApi) {
+        // Ein Call entfernt den ganzen Subtree (Disk + DB-Rows: Dateien +
+        // Ordner-Klassen) — auch wenn der Ordner nur eine Zeile ist.
         try {
           const res = await fetch(apiBase + "/folders/" + encPath(dir), {
             method: "DELETE", credentials: "same-origin",
@@ -1890,15 +1891,15 @@
         for (const f of inDir) {
           if (!await deleteFileQuiet(f.path, false)) return;
         }
+        // Persistierte Zugriffs-Klassen des (nun leeren) Ordners entfernen:
+        for (const r of rows) {
+          if (!await setAccess(r.path, true, null)) return;
+        }
       }
       // Client-seitige (leere) Ordner des Subtrees bereinigen:
       Array.from(state.extraDirs).forEach(d => {
         if (d === dir || d.startsWith(dir + "/")) state.extraDirs.delete(d);
       });
-      // Persistierte Zugriffs-Klassen des (nun leeren) Ordners entfernen:
-      for (const r of rows) {
-        if (!await setAccess(r.path, true, null)) return;
-      }
       await refresh();
     }
 

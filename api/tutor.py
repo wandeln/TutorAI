@@ -51,9 +51,10 @@ from services.workspace_presets import validate_workspace_generation
 from services.workspace_service import (
     MAX_FILE_BYTES,
     MAX_WORKSPACE_TOTAL_BYTES,
-    RUN_SOLUTION_SCRIPT,
+    TEST_SOLUTION_SCRIPT,
     effective_file_access,
     effective_folder_access,
+    ensure_fresh_workspace,
     file_disk_path,
     task_has_init,
     task_init_hash,
@@ -561,11 +562,15 @@ async def delete_task(
             workspace_service.on_task_deleted(session, task)
         except Exception as e:  # noqa: BLE001
             logger.warning("Workspace-Aufräumen (task %s) fehlgeschlagen: %s", task_id, e)
+        # Workspace-DB-Rows löschen (NOT NULL-FKs ohne Relationship-Cascade)
+        workspace_service.delete_task_db_rows(session, task)
 
     for sub in task.submissions:
         for fb in sub.feedback_list:
             session.delete(fb)
         session.delete(sub)
+    for hint in task.hint_exchanges:
+        session.delete(hint)
 
     session.delete(task)
     session.commit()
@@ -2156,6 +2161,54 @@ async def move_workspace_folder(
     return {"ok": True}
 
 
+@router.post("/tasks/{task_id}/workspace/folders")
+async def create_workspace_folder(
+    task_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """(Möglichlicherweise leeren) Ordner anlegen ({path}) — persistiert
+    als Disk-Verzeichnis + explizite Zeile (access=NULL=edit), bleibt also
+    auch leer sichtbar (Baum, Student-Ansicht, frische Volumes)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    body = await request.json()
+    p = _safe_task_path(str(body.get("path") or ""))
+    _reject_init_artifact(session, task, p)
+    try:
+        workspace_service.create_task_folder(session, task, p)
+    except ValueError as e:
+        raise HTTPException(409 if "bereits" in str(e) else 400, str(e))
+    _schedule_workspace_sync(task.id)
+    return {"ok": True}
+
+
+@router.delete("/tasks/{task_id}/workspace/folders/{path:path}")
+async def delete_workspace_folder(
+    task_id: int,
+    path: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+):
+    """Ordner-Subtree entfernen: Disk (Verzeichnis inkl. Inhalt) + alle
+    DB-Rows (Dateien + Ordner-Klassen, auch verschachtelt)."""
+    task = await _load_workspace_task(task_id, session, user)
+    _require_workspace_task(task)
+    p = _safe_task_path(path)
+    arts = _init_artifact_lookup(session, task)
+    if any(a == p or a.startswith(p + "/") for a in arts):
+        raise HTTPException(
+            403, "Enthält Init-Artefakte — diese sind read-only "
+                 "(per neuem Init-Build neu erzeugen).")
+    try:
+        workspace_service.delete_task_folder(session, task, p)
+    except ValueError as e:
+        raise HTTPException(404 if "nicht gefunden" in str(e) else 400, str(e))
+    _schedule_workspace_sync(task.id)
+    return {"ok": True}
+
+
 @router.post("/tasks/{task_id}/workspace/sync")
 async def sync_workspace(
     task_id: int,
@@ -2312,7 +2365,7 @@ async def workspace_test_run(
     user: User = Depends(get_current_user),
 ):
     """Musterlösung-Testlauf (🧪): ephemerer Container mit frischem
-    Volume, alle Task-Dateien inkl. 👤 injiziert, führt .run_solution.sh
+    Volume, alle Task-Dateien inkl. 👤 injiziert, führt .test_solution.sh
     aus (Overlay .solution/ + run.sh + test.sh + .test_private.sh).
     Das Lauf-Workspace wird nach dem finalen Status deterministisch
     gelöscht."""
@@ -2326,22 +2379,20 @@ async def workspace_test_run(
         raise HTTPException(503, workspace_service.pick_agent_error(
             session, task.course_id, workspace_service.task_engine_names(task)))
     files = {f.path for f in workspace_service.task_files(session, task)}
-    if RUN_SOLUTION_SCRIPT not in files:
+    if TEST_SOLUTION_SCRIPT not in files:
         raise HTTPException(
-            400, f"Kein {RUN_SOLUTION_SCRIPT} hinterlegt — die Musterlösung "
+            400, f"Kein {TEST_SOLUTION_SCRIPT} hinterlegt — die Musterlösung "
                  "kann nicht getestet werden.")
     client = workspace_service.client_for(agent)
     key = test_run_key(task)
-    command = f"bash {RUN_SOLUTION_SCRIPT}"
+    command = f"bash {TEST_SOLUTION_SCRIPT}"
     try:
-        try:
-            await asyncio.to_thread(client.delete_workspace, key)
-        except ComputeAgentError:
-            pass
         starter = workspace_service.test_run_starter_files(session, task)
+        folders = workspace_service.materialize_folders(
+            session, task, include_hidden=True)
         spec = workspace_service.workspace_spec_for_agent(session, task, agent)
         await asyncio.to_thread(
-            client.create_workspace, key, spec, starter_files=starter or None)
+            ensure_fresh_workspace, client, key, spec, starter, folders)
         result = await asyncio.to_thread(
             client.start_run, key, command, task.workspace_timeout)
     except ComputeAgentError as e:
@@ -2504,7 +2555,7 @@ async def _run_rerun_background(task_id: int, submission_id: int, run_db_id: int
     Hintergrund (eigener Session; spiegelt den Grading-Lauf aus
     grading_service._grade_workspace)."""
     from services.compute_client import ComputeAgentError
-    from services.workspace_service import MAX_LOG_CHARS
+    from services.workspace_service import MAX_LOG_CHARS, ensure_fresh_workspace
 
     with Session(engine) as bg_session:
         run = bg_session.get(WorkspaceRun, run_db_id)
@@ -2537,17 +2588,15 @@ async def _run_rerun_background(task_id: int, submission_id: int, run_db_id: int
             bg_session.add(run)
             bg_session.commit()
 
-            try:
-                await asyncio.to_thread(client.delete_workspace, key)
-            except ComputeAgentError:
-                pass
             starter = workspace_service.grading_starter_files(
                 bg_session, task, submission)
+            folders = workspace_service.materialize_folders(
+                bg_session, task, include_hidden=True)
             spec_for_agent = workspace_service.workspace_spec_for_agent(
                 bg_session, task, agent)
             await asyncio.to_thread(
-                client.create_workspace, key, spec_for_agent,
-                starter_files=starter or None)
+                ensure_fresh_workspace, client, key, spec_for_agent,
+                starter, folders)
             result = await asyncio.to_thread(
                 client.exec_sync, key, command, task.workspace_timeout)
             run.status = (WorkspaceRunStatus.TIMEOUT if result.get("timed_out")

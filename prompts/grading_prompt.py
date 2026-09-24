@@ -160,7 +160,7 @@ Verwende Markdown-Formatierung für bessere Lesbarkeit:
 - ```mermaid ... ``` für Mermaid
 
 Beruecksichtige bei der Bewertung:
-- Test-Ergebnisse (wurde der vorgegebene Testlauf erfolgreich ausgefuehrt?)
+- Test-Ergebnisse (öffentliche + private Tests: wurden sie erfolgreich ausgefuehrt?)
 - Code-Qualitaet (Lesbarkeit, Struktur, saubere Trennung von Concerns)
 - Ergebnisse (Metriken/Performance-Daten aus dem Test-Output: sind die Werte plausibel/akzeptabel?)
 - Effizienz (Laufzeit, sinnvolle Nutzung der Ressourcen)

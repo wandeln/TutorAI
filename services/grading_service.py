@@ -227,17 +227,26 @@ class GradingService:
     ) -> dict:
         """
         Workspace-Aufgabe: 1) Einweg-Container mit Student-Snapshot +
-        hidden-Dateien aufsetzen und das (hidden) Judge-Skript
-        test_private.sh ausfuehren,
+        hidden-Dateien aufsetzen und die Test-Skripte ausfuehren
+        (oeffentliche test.sh + hiddenes Judge .test_private.sh,
+        je falls hinterlegt),
         2) LLM korrigiert (Dateien + Test-Output).
-        Ohne hiddenes test_private.sh: Grading OHNE private Tests
-        (kein Fallback auf andere Tests).
+        Ohne Test-Skripte: Grading OHNE Test-Ausgaben.
         """
-        from services.workspace_service import workspace_service
+        from services.workspace_service import (
+            workspace_service, TEST_SCRIPT, ensure_fresh_workspace)
         from services.compute_client import ComputeAgentError, ComputeAgentUnavailable
 
         judge = workspace_service.judge_script_path(session, task)
-        verify = f"bash {judge}" if judge else None
+        # Testlauf-Schritte: öffentliche test.sh (Konvention, falls
+        # hinterlegt) + privater Judge — beide Outputs gehen ans LLM.
+        task_file_paths = {
+            f.path for f in workspace_service.task_files(session, task)}
+        steps: list[tuple[str, str]] = []
+        if TEST_SCRIPT in task_file_paths:
+            steps.append((TEST_SCRIPT, f"bash {TEST_SCRIPT}"))
+        if judge:
+            steps.append((judge, f"bash {judge}"))
         default_timeout = int(task.workspace_timeout or 900)
 
         agent = workspace_service.pick_task_agent(session, task)
@@ -254,7 +263,7 @@ class GradingService:
             task_id=task.id,
             student_id=submission.student_id,
             submission_id=submission.id,
-            command=verify or "",
+            command="; ".join(cmd for _, cmd in steps),
             started_at=datetime.now(),
             status=WorkspaceRunStatus.RUNNING,
         )
@@ -281,33 +290,46 @@ class GradingService:
 
         test_output = ""
         try:
-            # Einweg-Workspace: Student-Snapshot + hidden-Dateien
-            # (frisch von der Disk). Alte Überreste (Retry) vorher entfernen.
-            try:
-                await asyncio.to_thread(client.delete_workspace, key)
-            except ComputeAgentError:
-                pass
+            # Einweg-Workspace: Student-Snapshot + hidden-Dateien (frisch
+            # von der Disk), garantiert frisches Volume (Alt-Überreste
+            # würden den Snapshot stumm überschreiben lassen).
             starter = workspace_service.grading_starter_files(
                 session, task, submission)
+            folders = workspace_service.materialize_folders(
+                session, task, include_hidden=True)
             spec_for_agent = workspace_service.workspace_spec_for_agent(
                 session, task, agent)
             await asyncio.to_thread(
-                client.create_workspace, key, spec_for_agent,
-                starter_files=starter or None)
+                ensure_fresh_workspace, client, key, spec_for_agent,
+                starter, folders)
 
-            if verify:
+            sections = []
+            raw_out: list[str] = []
+            raw_err: list[str] = []
+            exit_code: int | None = None
+            timed_out = False
+            for label, cmd in steps:
                 result = await asyncio.to_thread(
-                    client.exec_sync, key, verify, default_timeout)
-                test_output = self._format_workspace_run(result)
+                    client.exec_sync, key, cmd, default_timeout)
+                sections.append(self._format_workspace_run(result, label))
+                raw_out.append(f"── {label} ──\n{result.get('stdout') or ''}")
+                err = result.get("stderr") or ""
+                if err:
+                    raw_err.append(f"── {label} (stderr) ──\n{err}")
+                exit_code = result.get("exit_code")
+                timed_out = timed_out or bool(result.get("timed_out"))
+            if steps:
+                test_output = "\n\n".join(sections)
                 _finalize_run(
-                    WorkspaceRunStatus.TIMEOUT if result.get("timed_out")
+                    WorkspaceRunStatus.TIMEOUT if timed_out
                     else WorkspaceRunStatus.DONE,
-                    result.get("exit_code"),
-                    str(result.get("stdout") or ""),
-                    str(result.get("stderr") or ""),
+                    exit_code,
+                    "\n\n".join(raw_out),
+                    "\n\n".join(raw_err),
                 )
             else:
-                test_output = "(Keine privaten Tests hinterlegt — Grading ohne private Tests)"
+                test_output = ("(Keine Test-Skripte hinterlegt — Grading "
+                               "ohne Test-Ausgaben)")
                 _finalize_run(WorkspaceRunStatus.DONE, 0)
         except Exception as e:  # noqa: BLE001 — Run-Row finalisieren, Fehler weiterwerfen
             if not run_finalized:
@@ -371,9 +393,11 @@ class GradingService:
         return "\n\n".join(parts)
 
     @staticmethod
-    def _format_workspace_run(result: dict) -> str:
-        """Verify-Lauf (Agent-Exec) als lesbaren Text für den LLM."""
+    def _format_workspace_run(result: dict, label: str = "") -> str:
+        """Testlauf (Agent-Exec) als lesbaren Text für den LLM."""
         lines = []
+        if label:
+            lines.append(f"── {label} ──")
         if result.get("timed_out"):
             lines.append("⏰ TIMEOUT: Zeitlimit des Testlaufs ueberschritten")
         else:

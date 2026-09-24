@@ -4,6 +4,7 @@ Admin-Endpoints: Kurs-Management + User-Verwaltung + Systemeinstellungen.
 Rollen: Administrator (global)
 """
 
+import logging
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -42,13 +43,14 @@ from database.models import (
     User,
     UserCourse,
 )
-from services import import_service
+from services import import_service, workspace_service
 from services.auth_service import hash_password, require_global_admin
 from services.llm_service import get_llm_debug_entry, get_llm_debug_log
 from services.llm_service import record_llm_debug_entry
 from services.settings_resolver import get_effective_llm_config
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -384,6 +386,14 @@ async def delete_course(
     tasks = session.exec(select(Task).where(Task.course_id == course_id)).all()
     for task in tasks:
         task_id = task.id
+        if task.task_type.value == "workspace":
+            # Agent-Ressourcen + lokale Dateien + Workspace-DB-Rows
+            # (NOT NULL-FKs ohne Relationship-Cascade)
+            try:
+                workspace_service.on_task_deleted(session, task)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Workspace-Aufräumen (task %s) fehlgeschlagen: %s", task_id, e)
+            workspace_service.delete_task_db_rows(session, task)
         submissions = session.exec(
             select(Submission).where(Submission.task_id == task_id)
         ).all()
@@ -581,6 +591,14 @@ async def delete_user(
         select(Task).where(Task.created_by == user_id)
     ).all()
     for task in user_tasks:
+        if task.task_type.value == "workspace":
+            # Agent-Ressourcen + lokale Dateien + Workspace-DB-Rows
+            # (NOT NULL-FKs ohne Relationship-Cascade)
+            try:
+                workspace_service.on_task_deleted(session, task)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Workspace-Aufräumen (task %s) fehlgeschlagen: %s", task.id, e)
+            workspace_service.delete_task_db_rows(session, task)
         # Vorherige Einreichungen und Feedbacks der Aufgabe löschen
         task_submissions = session.exec(
             select(Submission).where(Submission.task_id == task.id)
@@ -592,6 +610,11 @@ async def delete_user(
             for fb in sub_feedback:
                 session.delete(fb)
             session.delete(sub)
+        hints = session.exec(
+            select(HintExchange).where(HintExchange.task_id == task.id)
+        ).all()
+        for hint in hints:
+            session.delete(hint)
         session.delete(task)
 
     # 4. Alle Kurs-Mitgliedschaften dieses Users

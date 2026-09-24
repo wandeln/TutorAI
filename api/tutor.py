@@ -1808,6 +1808,17 @@ def _reject_init_artifact(session: Session, task: Task, path: str) -> None:
             403, "Init-Artefakt ist read-only (per neuem Init-Build neu erzeugen).")
 
 
+def _assert_path_free(session: Session, task: Task, p: str) -> None:
+    """Neuanlage blockieren, wenn Pfad bereits existiert (Datei ODER Ordner)."""
+    file_paths = {f.path for f in workspace_service.task_files(session, task)}
+    disk = file_disk_path(task.id, p)
+    if p in file_paths or disk.is_file():
+        raise HTTPException(409, "Datei existiert bereits.")
+    fm = workspace_service.folder_map(session, task)
+    if p in fm or disk.is_dir():
+        raise HTTPException(409, "Ordner existiert bereits.")
+
+
 _INIT_ACCESS_BY_SCOPE = {"shared": "readonly", "seed": "edit", "private": "hidden"}
 
 
@@ -1993,6 +2004,7 @@ async def create_workspace_file(
         raise HTTPException(422, "Feld 'path' fehlt.")
     p = _safe_task_path(str(body["path"]))
     _reject_init_artifact(session, task, p)
+    _assert_path_free(session, task, p)
     content = body.get("content") or ""
     if not isinstance(content, str):
         raise HTTPException(422, "Feld 'content' muss ein String sein.")
@@ -2075,6 +2087,7 @@ async def upload_workspace_file(
     _require_workspace_task(task)
     p = _safe_task_path(path)
     _reject_init_artifact(session, task, p)
+    _assert_path_free(session, task, p)
     data = await file.read()
     if len(data) > MAX_WORKSPACE_TOTAL_BYTES:
         raise HTTPException(413, "Upload zu groß (max. 512 MB).")

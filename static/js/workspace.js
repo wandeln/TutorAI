@@ -1528,6 +1528,14 @@
         toast("Dieser Bereich ist read-only — dort kann keine Datei angelegt werden.", "warning");
         return false;
       }
+      if (state.files.some(f => f.path === path)) {
+        toast("Datei existiert bereits.", "error");
+        return false;
+      }
+      if (state.folders.some(fd => fd.path === path)) {
+        toast("Ordner existiert bereits.", "error");
+        return false;
+      }
       try {
         const res = await fetch(apiBase + "/files", {
           method: "POST",
@@ -1623,6 +1631,15 @@
     }
 
     async function uploadFile(file, path) {
+      path = String(path || "").trim();
+      if (state.files.some(f => f.path === path)) {
+        toast("Datei existiert bereits.", "error");
+        return false;
+      }
+      if (state.folders.some(fd => fd.path === path)) {
+        toast("Ordner existiert bereits.", "error");
+        return false;
+      }
       try {
         const fd = new FormData();
         fd.append("file", file);
@@ -1770,9 +1787,16 @@
         toast("Dieser Bereich ist read-only — dort kann kein Ordner angelegt werden.", "warning");
         return;
       }
-      if (state.files.some(f => f.path === p || f.path.startsWith(p + "/")) ||
-          state.folders.some(fd => fd.path === p)) {
-        toast("Es existiert bereits eine Datei/dieser Ordner unter „" + p + "“.", "warning");
+      if (state.files.some(f => f.path === p)) {
+        toast("Datei existiert bereits.", "error");
+        return;
+      }
+      if (state.folders.some(fd => fd.path === p) || state.extraDirs.has(p)) {
+        toast("Ordner existiert bereits.", "error");
+        return;
+      }
+      if (state.files.some(f => f.path.startsWith(p + "/"))) {
+        toast("Ordner existiert bereits.", "error");
         return;
       }
       if (folderApi) {

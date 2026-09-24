@@ -1948,7 +1948,12 @@ async function renderMarkdown(text, targetElement, options = {}) {
   //                  #chapter-{id} und werden als „Kap. N“ angezeigt,
   //               3) Slide-Ref-Map → Link auf die Folie im Slide-Deck
   //                  (/slides/{deckId}/present#/{h}/{v}, Anzeige „… S{n}“),
-  //               4) unbekannt → ❓
+  //               4) aktuelle Folie (nur Slides): im Slide definiert, aber noch
+  //                  NICHT in der Refmap (z. B. ungespeichert im Editor) →
+  //                  lokale S-Fallback-Nummer, Link auf die aktuelle Folie
+  //                  (In-Page-Anker ginge nicht: Reveal liest sie als
+  //                  Folien-Übergang — daher auch 1. deaktiviert),
+  //               5) unbekannt → ❓
   //     @box:-Referenzen zeigen den Box-Typ-Titel an (z. B. „Satz N“ —
   //     CALLOUT_TYPES; Typ-Quelle: Skript-Ref-Map → Slide-Ref-Map → lokal).
   xrefs.forEach((x, idx) => {
@@ -2041,6 +2046,19 @@ async function renderMarkdown(text, targetElement, options = {}) {
       const cid = (slidesRefMap && slidesRefMap.courseId) || (refMap && refMap.courseId) || '';
       const subSuffix = kind === 'fig' && sl.sub ? ` ${sl.sub})` : '';
       refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref"${tipAttr}>${kindText} S${sl.num}${subSuffix}</a>`;
+    } else if (slideMode && (local || (kind === 'fig' && figInnerLocal[x.label]))) {
+      // Im aktuellen Slide definiert, aber noch nicht in der Refmap
+      // (z. B. im Editor gerade erst angelegt und ungespeichert): Nummer
+      // aus der lokalen Extraktion (S-Fallback, dieselbe Zählung wie
+      // Refmap), Link auf die aktuelle Folie — In-Page-Anker sind in
+      // Slides nicht nutzbar (Reveal liest sie als Folien-Übergang).
+      const inner = kind === 'fig' ? figInnerLocal[x.label] : null;
+      const num = inner && inner.num != null ? inner.num : local;
+      const subSuffix = inner && inner.letter ? ` ${inner.letter})` : '';
+      const href = slidePos ? `#/${slidePos.h}/${slidePos.v}` : null;
+      refHtml = href
+        ? `<a href="${href}" class="tutorai-xref"${tipAttr}>${kindText} ${num}${subSuffix}</a>`
+        : `<span class="tutorai-xref"${tipAttr}>${kindText} ${num}${subSuffix}</span>`;
     } else {
       refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }

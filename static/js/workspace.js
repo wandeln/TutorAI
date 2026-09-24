@@ -258,6 +258,7 @@
       extraDirs: new Set(), // client-seitige Ordner (nicht persistiert)
       mediaUrl: null,
       saveTimer: null,
+      suppressChange: false, // true während programatischem cm.setValue
       dragPath: null,
       dragType: null,       // "file" | "dir" (während des Drags gesetzt)
       dragRejected: null,   // letzter Ablehnungs-Grund (→ Fehlermeldung beim dragend)
@@ -1474,7 +1475,11 @@
         state.dirty = false;
         if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
         cm.setOption("readOnly", readOnlyCheck(path) ? "nocursor" : false);
+        // setValue feuert ein "change"-Event → würde die Datei fälschlich
+        // dirty markieren und den 3-sec-Autosave (PUT) starten.
+        state.suppressChange = true;
         cm.setValue(text);
+        state.suppressChange = false;
         // Immer Mode setzen (Fallback „text/plain"): sonst bliebe der Mode
         // der vorherigen Datei bei unbekannter Extension hängen.
         const mode = cmModeForPath(path);
@@ -1560,6 +1565,13 @@
 
     async function deleteFileQuiet(path, doRefresh = true) {
       try {
+        // Vor dem DELETE den Autosave abbrechen — sonst erreicht ein
+        // 3-sec-altes PUT den Server nach dem DELETE und legt die Datei
+        // direkt wieder an (daher „mehrfach löschen“).
+        if (state.currentFile === path) {
+          if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
+          state.dirty = false;
+        }
         const res = await fetch(apiBase + "/files/" + encPath(path), {
           method: "DELETE", credentials: "same-origin",
         });
@@ -1684,7 +1696,9 @@
       if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
       closeMediaView();
       cm.setOption("readOnly", false);
+      state.suppressChange = true;
       cm.setValue("");
+      state.suppressChange = false;
       setSaveState("");
       renderTree();
       if (onViewChanged) onViewChanged("editor");
@@ -1948,6 +1962,7 @@
     // Auto-Save: 3 s nach der letzten Änderung (auch beim Dateiwechsel wird
     // über openFile→saveFile sofort gespeichert).
     cm.on("change", () => {
+      if (state.suppressChange) return;
       if (!apiBase || cm.getOption("readOnly")) return;
       if (!state.dirty) {
         state.dirty = true;

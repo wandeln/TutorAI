@@ -154,6 +154,7 @@ body.ws-fs-lock { overflow: hidden; }
   align-items: center;
   justify-content: center;
   overflow: visible;
+  user-select: none; -webkit-user-select: none; /* kein Text-Caret/Selection */
 }
 /* Drei Punkte mittig — Größe/Abstand/Grauton wie die Drag-Handles
    im Dateibaum (⠿, #9ca3af); mobile gedreht auf waagerecht. */

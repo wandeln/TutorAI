@@ -340,6 +340,9 @@
     const splitWrap = splitHandle ? splitHandle.closest(".ws-tree-editor-wrap") : null;
     const SPLIT_MIN = 180;
     if (splitHandle && splitPanel && splitWrap) {
+      // Klick/Doppelklick auf den (leeren) Handle würde sonst einen
+      // Text-Caret im Browser platzieren → blinkender Cursor im Trenner.
+      splitHandle.addEventListener("mousedown", (e) => e.preventDefault());
       splitHandle.addEventListener("pointerdown", (e) => {
         e.preventDefault();
         const horizontal = window.innerWidth >= 640;

@@ -22,8 +22,8 @@
 // ── CM6-Core (via Importmap, pinned) ────────────────────────────────
 import { EditorState, Compartment, StateField, RangeSetBuilder } from "@codemirror/state";
 import { EditorView, Decoration, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { defaultKeymap, history, historyKeymap, indentMore, indentLess } from "@codemirror/commands";
+import { closeBrackets, closeBracketsKeymap, autocompletion, completeFromList } from "@codemirror/autocomplete";
 import { search, searchKeymap, gotoLine } from "@codemirror/search";
 import { StreamLanguage, bracketMatching, indentOnInput, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
@@ -301,6 +301,276 @@ function languageFor(mode) {
   }
 }
 
+// ── Autocompletion ──────────────────────────────────────────────────────
+// autocompletion() (s. _buildExtensions) fragt bei jeder Eingabe alle
+// Quellen ab; die Quellen kommen pro Mode über die override-Config:
+// - javascript: globalThis (Standardlib + DOM) + Snippets + lokale Namen
+//   (im Paket mitgeliefert, läuft über die Language-Data des Modes)
+// - sql: Dialekt-Keywords (im Paket mitgeliefert)
+// - python / c / c++: das Paket liefert keine Quelle → einfache
+//   Keyword-Listen (completeFromList, rein textbasiert)
+// - tutorai-markdown / gfm / markdown: TutorAI-Quelle (@-Befehle,
+//   Referenzen, Box-Typen; Labels: aktuelles Dokument + kursweite Refmaps)
+
+const PYTHON_KEYWORDS = [
+  "False", "None", "True", "and", "as", "assert", "async", "await",
+  "break", "class", "continue", "def", "del", "elif", "else", "except",
+  "finally", "for", "from", "global", "if", "import", "in", "is",
+  "lambda", "match", "nonlocal", "not", "or", "pass", "raise", "return",
+  "try", "while", "with", "yield",
+  // Builtins
+  "abs", "all", "any", "bin", "bool", "bytearray", "bytes", "callable",
+  "chr", "classmethod", "compile", "complex", "delattr", "dict", "dir",
+  "divmod", "enumerate", "eval", "exec", "filter", "float", "format",
+  "frozenset", "getattr", "globals", "hasattr", "hash", "help", "hex",
+  "id", "input", "int", "isinstance", "issubclass", "iter", "len",
+  "list", "locals", "map", "max", "memoryview", "min", "next", "object",
+  "oct", "open", "ord", "pow", "print", "property", "range", "repr",
+  "reversed", "round", "set", "setattr", "slice", "sorted", "staticmethod",
+  "str", "sum", "super", "tuple", "type", "vars", "zip",
+];
+
+const CPP_KEYWORDS = [
+  // C++17/20-Keywords
+  "alignas", "alignof", "asm", "auto", "bool", "break", "case", "catch",
+  "char", "char8_t", "char16_t", "char32_t", "class", "const",
+  "consteval", "constexpr", "constinit", "const_cast", "continue",
+  "co_await", "co_return", "co_yield", "decltype", "default", "delete",
+  "do", "double", "dynamic_cast", "else", "enum", "explicit", "export",
+  "extern", "false", "float", "for", "friend", "goto", "if", "inline",
+  "int", "long", "mutable", "namespace", "new", "noexcept", "nullptr",
+  "operator", "private", "protected", "public", "register",
+  "reinterpret_cast", "requires", "return", "short", "signed", "sizeof",
+  "static", "static_assert", "static_cast", "struct", "switch",
+  "template", "this", "thread_local", "throw", "true", "try", "typedef",
+  "typeid", "typename", "union", "unsigned", "using", "virtual", "void",
+  "volatile", "wchar_t", "while",
+  // Häufige Standardbibliothek
+  "cin", "cout", "cerr", "clog", "endl", "size_t", "string", "wstring",
+  "vector", "map", "set", "unordered_map", "unordered_set", "pair",
+  "array", "deque", "stack", "queue", "list", "shared_ptr", "unique_ptr",
+  "make_pair", "make_shared", "make_unique", "function", "bind", "begin",
+  "end", "sort", "reverse", "min", "max", "swap", "find", "lower_bound",
+  "push_back", "pop_back", "emplace_back", "front", "back", "empty",
+  "size", "clear", "std", "printf", "scanf", "fprintf", "puts", "malloc",
+  "calloc", "realloc", "free", "memcpy", "memset", "strlen", "strcmp",
+  "strcat", "snprintf",
+];
+
+// Box-Typen (spiegelt CALLOUT_TYPES in markdown-renderer.js)
+const TA_BOX_TYPES = [
+  "merksatz", "hinweis", "bemerkung", "warnung", "beispiel", "code",
+  "definition", "satz", "theorem", "lemma", "proposition", "korollar",
+  "beweis", "frage",
+];
+
+const TA_COMMANDS = [
+  { label: "startbox:", detail: "Box öffnen (Typ: …)" },
+  { label: "endbox", detail: "Box schließen" },
+  { label: "startcolumn:", detail: "Spalten: erste" },
+  { label: "nextcolumn:", detail: "Spalten: nächste" },
+  { label: "endcolumn", detail: "Spalten: beenden" },
+];
+
+const TA_REF_TYPES = [
+  { label: "fig", detail: "Abbildung" },
+  { label: "eq", detail: "Gleichung" },
+  { label: "tab", detail: "Tabelle" },
+  { label: "box", detail: "Box (Satz, Definition, …)" },
+  { label: "code", detail: "Code-Block" },
+  { label: "task", detail: "Aufgabe" },
+  { label: "cite", detail: "Zitation [N]" },
+  { label: "citet", detail: "Zitation „Autor (Jahr)“" },
+  { label: "citep", detail: "Zitation „(Autor, Jahr)“" },
+];
+
+// Kinds mit Refmap-Labels (→ Label-Completion mit Quellen-Preview)
+const REF_KINDS = new Set(["fig", "eq", "code", "box", "tab"]);
+
+// Cursor in einem Code-Block? Dort ist @ nur Text → kein TutorAI-Completion.
+function insideFence(state, pos) {
+  let open = false;
+  const lineTo = state.doc.lineAt(pos).number;
+  for (let i = 1; i <= lineTo; i++) {
+    if (FENCE_OPEN.test(state.doc.line(i).text)) open = !open;
+  }
+  return open;
+}
+
+// Alle im Dokument definierten Labels eines Typs ({#fig:label} o. ä.).
+function docLabelsFor(state, type) {
+  const re = new RegExp("\\{#" + type + ":([\\p{L}0-9_-]+)\\}", "gu");
+  const seen = new Set();
+  const out = [];
+  for (const m of state.doc.toString().matchAll(re)) {
+    if (!seen.has(m[1])) { seen.add(m[1]); out.push(m[1]); }
+  }
+  return out;
+}
+
+// ── Kursweite Refmaps für Label-Completion ────────────────────────────
+// Die Refmap-Endpoints liefern ALLE beschrifteten Objekte des Kurses
+// (Skript + Slides) inkl. Kurz-Previews. Die Completion-Quelle kann nur
+// synchron laufen → beide Refmaps einmal pro Seite holen und cachen;
+// bis die Antwort da ist (oder auf Nicht-Kurs-Seiten) werden nur die
+// dokument-lokalen Labels vorgeschlagen.
+let _courseRefData = null;    // { byKind, tasks, references }
+let _courseRefPromise = null;
+
+function _courseIdForCompletion() {
+  try {
+    const cid = (typeof courseId !== "undefined") ? courseId : null;
+    return (cid === null || cid === undefined) ? null : cid;
+  } catch (e) {
+    return null; // TDZ: deklariert, aber noch nicht initialisiert
+  }
+}
+
+function ensureCourseRefData() {
+  if (_courseRefData || _courseRefPromise) return _courseRefPromise;
+  const cid = _courseIdForCompletion();
+  if (cid === null) return null; // Nicht-Kurs-Seite → keine Kurs-Referenzen
+  const opts = { credentials: "same-origin", cache: "no-store" };
+  const get = (url) => fetch(url, opts).then(r => (r.ok ? r.json() : null)).catch(() => null);
+  _courseRefPromise = Promise.all([
+    get(`/api/courses/${cid}/script-refmap`),
+    get(`/api/courses/${cid}/slides-refmap`),
+  ]).then(([script, slides]) => {
+    if (!script && !slides) { _courseRefPromise = null; return null; } // später erneut versuchen
+    const byKind = {};
+    const addKind = (source, kind, labels) => {
+      for (const [key, info] of Object.entries(labels || {})) {
+        if (key.slice(0, kind.length + 1) !== kind + ":") continue;
+        const preview = info.preview
+          ? " · " + String(info.preview).replace(/\s+/g, " ").trim().slice(0, 60)
+          : "";
+        (byKind[kind] = byKind[kind] || []).push(
+          { label: key.slice(kind.length + 1), detail: source + preview });
+      }
+    };
+    for (const kind of ["fig", "eq", "code", "box", "tab"]) {
+      addKind("Skript", kind, script && script.labels);
+      addKind("Slides", kind, slides && slides.labels);
+    }
+    _courseRefData = {
+      byKind,
+      tasks: (script && script.tasks) || {},
+      references: (script && script.references) || {},
+    };
+    return _courseRefData;
+  });
+  return _courseRefPromise;
+}
+
+// TutorAI-Markdown: Zwei-Stufen-Completion.
+//   "@<Wort>"            → @-Befehle + Referenz-Typen
+//   "@<typ>:<label-Präfix>" → Labels dieses Typs (bzw. Box-Typen
+//                             nach "@startbox:")
+// validFor steuert, welche Zeichen die Liste lokal filtern (statt
+// neu zu fragen) — der Wechselpunkt ":" löst damit die 2. Stufe aus.
+const tutoraiCompletion = (context) => {
+  const state = context.state;
+  if (insideFence(state, context.pos)) return null;
+  // 100 Zeichen vor dem Cursor reichen (Befehle/Labels sind kurz).
+  const before = state.sliceDoc(Math.max(0, context.pos - 100), context.pos);
+
+  // Stufe 2: "@typ:label-Präfix" (WICHTIG: u-Flag — ohne es degeneriert
+  // \p{L} zu einer Literal-Charclass [p{L}] und nichts würde matchen)
+  const ref = /@([\p{L}-]+):([\p{L}0-9_.-]*)$/u.exec(before);
+  if (ref) {
+    const type = ref[1], prefix = ref[2];
+    let options;
+    if (type === "startbox") {
+      options = TA_BOX_TYPES
+        .filter(t => t.startsWith(prefix))
+        .map(t => ({ label: t, type: "keyword", detail: "Box-Typ" }));
+    } else if (type === "startcolumn" || type === "nextcolumn") {
+      options = []; // numerische Spalten-Indizes — kein Completion
+    } else if (type === "task") {
+      // @task:{id} → Kurs-Aufgaben (Titel aus dem script-refmap)
+      const tasks = _courseRefData ? _courseRefData.tasks : {};
+      options = Object.values(tasks)
+        .filter(t => String(t.id).startsWith(prefix))
+        .map(t => ({ label: String(t.id), type: "reference", detail: t.title || "" }));
+    } else if (type === "cite" || type === "citet" || type === "citep") {
+      // @cite{,t,p}:{key} → BibTeX-Keys der Kurs-Quellen
+      const refs = _courseRefData ? _courseRefData.references : {};
+      options = Object.values(refs)
+        .filter(r => String(r.key).startsWith(prefix))
+        .map(r => ({
+          label: String(r.key), type: "reference",
+          detail: [r.authors, r.year != null ? `(${r.year})` : null,
+            r.num != null ? `[${r.num}]` : null].filter(Boolean).join(" "),
+        }));
+    } else if (REF_KINDS.has(type)) {
+      // fig/eq/code/box/tab: zuerst die Labels des aktuellen Dokuments,
+      // dann die kursweiten aus beiden Refmaps (Auflösungs-Reihenfolge).
+      const seen = new Set();
+      options = [];
+      const take = (label, detail) => {
+        if (seen.has(label) || !label.startsWith(prefix)) return;
+        seen.add(label);
+        options.push({ label, type: "reference", detail });
+      };
+      for (const l of docLabelsFor(state, type)) take(l, "dieses Dokument");
+      for (const o of (_courseRefData && _courseRefData.byKind[type]) || []) take(o.label, o.detail);
+    } else {
+      options = []; // unbekannter Typ (z. B. sec) → kein Completion
+    }
+    if (!options.length) return null;
+    return {
+      from: context.pos - prefix.length,
+      options,
+      validFor: /^[\p{L}0-9_.-]*$/u,
+    };
+  }
+
+  // Stufe 1: "@Wort-Präfix". Vor dem @ darf keine Alphanumerik stehen,
+  // sonst ist es wahrscheinlich eine E-Mail-Adresse, keine TutorAI-Syntax.
+  const word = /(^|[^A-Za-z0-9])@([\p{L}-]*)$/u.exec(before);
+  if (word) {
+    const prefix = word[2];
+    const options = []
+      .concat(TA_COMMANDS.map(c => ({ label: c.label, type: "keyword", detail: c.detail })))
+      .concat(TA_REF_TYPES.map(r => ({ label: r.label + ":", type: "reference", detail: r.detail })))
+      .filter(o => o.label.startsWith(prefix));
+    if (!options.length) return null;
+    return {
+      from: context.pos - prefix.length,
+      options,
+      validFor: /^[\p{L}-]*$/u,
+    };
+  }
+  return null;
+};
+
+// autocompletion()-Config je Mode (Default: die vom Sprache-Paket
+// mitgelieferten Quellen — z. B. globalThis für JS, Keywords für SQL).
+function autocompletionFor(mode) {
+  switch (modeName(mode)) {
+    case "tutorai-markdown":
+    case "gfm":
+    case "markdown":
+      ensureCourseRefData(); // Fire-and-forget, einmal pro Seite gecacht
+      return autocompletion({
+        override: [tutoraiCompletion],
+        // Nach Auswahl von "fig:" / "startbox:" etc. direkt mit der
+        // nächsten Stufe (Labels/Box-Typen) weitervervollständigen.
+        activateOnCompletion: (c) => c.label.endsWith(":"),
+      });
+    case "python":
+      return autocompletion({ override: [completeFromList(PYTHON_KEYWORDS)] });
+    case "clike":
+    case "text/x-csrc":
+    case "text/x-c":
+    case "text/x-c++src":
+    case "text/x-cpp":
+      return autocompletion({ override: [completeFromList(CPP_KEYWORDS)] });
+    default:
+      return autocompletion();
+  }
+}
+
 // Helles Highlighting für die Editor-Modi ohne One Dark — Farben aus dem
 // CM5-Default-Theme (gfm & friends), damit Markdown wieder wie gewohnt
 // aussieht (fett-lila Headings, blaue Links, roter Inline-Code, …).
@@ -401,6 +671,14 @@ class CM6Editor {
       bracketMatching(),
       closeBrackets(),    // CM5 autoCloseBrackets
       search(),
+      autocompletionFor(mode),   // Completion (Ctrl-Space / beim Tippen)
+      // Tab/Shift-Tab indenten. Zwingend NACH autocompletionFor(), damit
+      // Tab im geöffneten Completion-Menü die Auswahl akzeptiert (das
+      // completionKeymap hat dort höchste Priorität) und sonst eingeht.
+      keymap.of([
+        { key: "Tab", run: indentMore },
+        { key: "Shift-Tab", run: indentLess },
+      ]),
       this._updateListener,
     ];
     if (cfg.tabSize) exts.push(EditorState.tabSize.of(cfg.tabSize));

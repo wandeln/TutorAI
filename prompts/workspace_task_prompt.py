@@ -18,10 +18,11 @@ Dataset-Spec, KEINE Pfad-Zonen. Ausführung/Tests/Initialisierung laufen über
 Skript-Dateien; die Sichtbarkeit für Studierende bestimmt eine explizite
 Zugriffsklasse pro Datei/Ordner (✏️ edit / 🔒 read-only / 👤 hidden):
   run.sh (🔒)             → „▶ Ausführen“-Button (bash run.sh)
-  init.sh (🔒)            → einmaliger public Build-Schritt (Task-Image, immer
+  .init.sh (👤)           → einmaliger public Build-Schritt (Task-Image, immer
                             Internet; Paket-Installation, Dataset-Downloads nach
-                            data/) — darf NIE in 👤 schreiben
-  .init_hidden.sh (👤)    → optional, private Phase 2 NACH init.sh (private
+                            data/) — FÜR STUDENTEN VERSTECKT (👤), sie sehen
+                            nur das Ergebnis — darf NIE in 👤 schreiben
+  .init_hidden.sh (👤)    → optional, private Phase 2 NACH .init.sh (private
                             Testdaten laden/erzeugen)
   test.sh (🔒)            → „🧪 Test“-Button (public Self-Check)
   .test_private.sh (👤)   → private Grading-Judge (IMMER in der Wurzel; fehlt →
@@ -38,7 +39,7 @@ Zugriffsklasse pro Datei/Ordner (✏️ edit / 🔒 read-only / 👤 hidden):
   (services.workspace_service.ensure_system_stubs).
 
 Der Prompt enthält einen kuratierten Dataset-Katalog (als Referenz für
-init.sh-Downloads) + die registrierten Compute-Engines (inkl. dort
+.init.sh-Downloads) + die registrierten Compute-Engines (inkl. dort
 installierter Image-Specs) und die Image-Specs des Kurses (inkl.
 Dockerfiles). Backend-Validierung des LLM-Outputs erfolgt serverseitig
 (services.workspace_presets.validate_workspace_generation
@@ -47,9 +48,9 @@ Dockerfiles). Backend-Validierung des LLM-Outputs erfolgt serverseitig
 
 # Kuratierte kleine Datasets (bekannte, stabile Quellen). Das LLM soll diese
 # bevorzugen; freie Quellen sind erlaubt, aber weniger zuverlässig. Referenz
-# für DOWNLOADS IM INIT.SH (läuft beim Task-Image-Build mit Internet).
+# für DOWNLOADS IM .INIT.SH (läuft beim Task-Image-Build mit Internet).
 DATASET_CATALOG = """\
-- MNIST (Handy-Ziffern, 70000 Bilder 28×28) — KEINE einzelne Datei-URL! In init.sh laden:
+- MNIST (Handy-Ziffern, 70000 Bilder 28×28) — KEINE einzelne Datei-URL! In .init.sh laden:
   python3 -c "import torchvision; torchvision.datasets.MNIST(root='data', download=True)"
   (torchvision muss im Image installiert sein; lädt ~12 MB IDX-Dateien nach data/)
 - Fashion-MNIST (70000 Kleiderbilder 28×28) — wie MNIST: torchvision.datasets.FashionMNIST(root='data', download=True)
@@ -102,7 +103,7 @@ Umgebungswahl:
   (Sprache/Pakete) — lies die Dockerfiles der Image-Specs und die
   Installations-Liste der Engines. Das gewählte Image muss auf mindestens
   einer der gewählten Engines installiert sein.
-- Fehlen einzelne Pakete im gewählten Image, darf init.sh sie mit
+- Fehlen einzelne Pakete im gewählten Image, darf .init.sh sie mit
   `pip install` nachziehen (wird einmalig in das Task-Image gebaut).
   Größere Umgebungslücken gehören in eine passende/neue Image-Spec
   (proposed_image_spec).
@@ -134,7 +135,7 @@ Testverhalten von test.sh/.test_private.sh).
     Lösung große Dateien schreiben muss (Modelle, Checkpoints, Logs).
   * "workspace_internet": bool — Internet-Zugriff für den Student-Container
     ZUR LAUFZEIT. Nur true, wenn die Lösung selbst Pakete/Daten nachladen
-    muss (der init.sh-Build hat ohnehin immer Internet).
+    muss (der .init.sh-Build hat ohnehin immer Internet).
   * "workspace_main_file": relativer Pfad der Datei, in der Studierende
     hauptsächlich arbeiten (z. B. "main.py").
 - "files": Liste von Objekten im Format
@@ -150,17 +151,6 @@ Testverhalten von test.sh/.test_private.sh).
       `bash run.sh` im Student-Container). Führe die Lösung der Studierenden
       aus (z. B. `#!/bin/sh` + `set -e` + `python3 main.py`). Bei den meisten
       Aufgaben ERFORDERLICH.
-    - "init.sh": EINMALIGER public Initialisierungs-Schritt — läuft genau ein
-      Mal beim Build des Task-Images (mit Internet), danach nutzen alle
-      Studenten das fertige (gecachte) Image. Dafür da: fehlende Pakete
-      installieren (`pip install …`) und Datasets in `data/` herunterladen
-      (siehe Dataset-Katalog). Läuft in einer sauberen Build-Umgebung:
-      vorhandene 🔒-Ordner (z. B. `data/`) existieren, eigene/andere Ordner
-      müssen VOR dem Schreiben per `mkdir -p <ordner>/` angelegt werden.
-      Idempotent halten, nicht unnötig groß — 30-Minuten-Timeout.
-      Weglassen, wenn das Image alles bereitstellt.
-      DARF NIE in 👤-Dateien schreiben und NIE private Testdaten laden —
-      das ist die Aufgabe von .init_hidden.sh.
     - "test.sh": Shell-Skript für den Button „🧪 Test“ (läuft als
       `bash test.sh`). NUR anliefern, wenn auch öffentliche Testdateien
       geliefert werden. MUSS schnell sein — s. TEST-REGELN unten.
@@ -173,6 +163,19 @@ Testverhalten von test.sh/.test_private.sh).
       (s. unten).
   * "hidden" → 👤 VERSTECKT — Studierende sehen es nie; nur Tutor +
     Korrektur. Konventionen:
+    - ".init.sh" (IMMER in der Wurzel): EINMALIGER public
+      Initialisierungs-Schritt — läuft genau einmal beim Build des Task-Images
+      (mit Internet), danach nutzen alle Studenten das fertige (gecachte)
+      Image. Dafür da: fehlende Pakete installieren (`pip install …`) und
+      Datasets in `data/` herunterladen (siehe Dataset-Katalog). Läuft in
+      einer sauberen Build-Umgebung: vorhandene 🔒-Ordner (z. B. `data/`)
+      existieren, eigene/andere Ordner müssen VOR dem Schreiben per
+      `mkdir -p <ordner>/` angelegt werden. Idempotent halten, nicht
+      unnötig groß — 30-Minuten-Timeout. Weglassen, wenn das Image alles
+      bereitstellt. FÜR STUDENTEN VERSTECKT (👤) — sie sehen nur das
+      Ergebnis (das Skript steckt trotzdem immer im Download-Paket für den
+      lokalen Setup). DARF NIE in 👤-Dateien schreiben und NIE private
+      Testdaten laden — das ist die Aufgabe von .init_hidden.sh.
     - Musterlösung IMMER im Ordner ".solution/": spiegelt die Pfade der
       EDITIERBAREN Dateien 1:1 (z. B. editierbare "main.py" →
       ".solution/main.py") und implementiert den in der Lösungsskizze
@@ -197,7 +200,7 @@ Testverhalten von test.sh/.test_private.sh).
       Sequenz an die tatsächlich gelieferten Skripte an (z. B. mehrere
       Run-Skripte, andere Reihenfolge).
     - ".init_hidden.sh" (IMMER in der Wurzel): EINMALIGER PRIVATE
-      Initialisierungs-Schritt — Phase 2, läuft NACH init.sh aus dessen
+      Initialisierungs-Schritt — Phase 2, läuft NACH .init.sh aus dessen
       Ergebnis (mit Internet). Dafür da: private Testdaten laden/erzeugen
       (in 👤-Dateien schreiben). NUR anliefern, wenn private Daten nicht
       statisch als Dateien geliefert werden können. Nie im Student-Paket,
@@ -206,7 +209,7 @@ Testverhalten von test.sh/.test_private.sh).
     schlicht die dazugehörige Funktion (kein Fehler, kein Crash):
     run.sh → kein „▶ Ausführen“-Button • test.sh → kein „🧪 Test“-Button •
     .test_private.sh → Korrektur ohne private Test-Ausgaben •
-    init.sh/.init_hidden.sh → das Basis-Image wird direkt verwendet
+    .init.sh/.init_hidden.sh → das Basis-Image wird direkt verwendet
     (kein Task-Image-Build) • .test_solution.sh → „🧪 Musterlösung testen“
     nicht verfügbar. Liefere ein Skript nur, wenn seine Funktion für die
     Aufgabe sinnvoll ist.
@@ -214,9 +217,9 @@ Testverhalten von test.sh/.test_private.sh).
   Zugriffs-Klassen von ORDNERN (erbten auf alle Dateien darunter; die
   restriktivste Klasse gewinnt). NUR Ordner listen, die NICHT editierbar
   sein sollen; sonst leeres Objekt {}. Typisch: "data": "readonly" (Datasets,
-  init.sh lädt dorthin) sowie ".solution": "hidden" und ".tests": "hidden"
+  .init.sh lädt dorthin) sowie ".solution": "hidden" und ".tests": "hidden"
   (Musterlösung/private Tests). Regel: Datasets gehören NICHT in die
-  generierten Dateien — data/ (und ähnliche) werden nur von init.sh befüllt
+  generierten Dateien — data/ (und ähnliche) werden nur von .init.sh befüllt
   (s. Dataset-Katalog). Dateien, die
   du lieferst, sind nur Quell-/Skript-/Testdateien.
   Nur Textdateien, relative Pfade, max. ~15 Dateien. Shell-Skripte POSIX-kompatibel

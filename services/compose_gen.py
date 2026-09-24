@@ -23,14 +23,15 @@ Zugriffsklassen (statt Pfad-Zonen, s. plan-workspace-access-classes.md):
     liegen sie AM REALEN PFAD top-level (Namen frei, z. B. .solution/ oder
     beliebig); ``init-private`` (rw) und ``verify`` (ro) mounten sie.
   - /assets ist verschwunden: Datasets liegen in workspace/data/ (typisch
-    🔒) und werden von init.sh nachgeladen.
+    🔒) und werden von .init.sh nachgeladen.
 
 Alle Commands kommen aus den Skripten der Aufgabe (skriptbasiertes Modell):
   - workspace/run.sh               → Aufgabe ausführen
-  - workspace/init.sh              → einmalige Initialisierung (public;
-                                     🔒 rw, Datasets nach workspace/data/)
+  - workspace/.init.sh             → einmalige Initialisierung (public;
+    (👤 in TutorAI, aber IMMER im Paket) 🔒 rw, Datasets nach
+    workspace/data/)
   - .init_hidden.sh (👤, Wurzel)  → einmalige private Initialisierung
-                                     (NUR Tutor-Paket, NACH init.sh; 👤 rw)
+                                     (NUR Tutor-Paket, NACH .init.sh; 👤 rw)
   - workspace/test.sh            → öffentliche Self-Check-Tests
   - .test_private.sh (👤, Wurzel) → private Tests/Judge (NUR Tutor-Paket, ro)
 
@@ -38,7 +39,7 @@ Paket-Varianten:
   student + Task        → workspace/ (public) + compose + images/ + README
   tutor   + Task        → workspace/ (public) + 👤-Dateien (top-level)
                           + compose (workspace + init + init-private
-                          + public-tests + verify) + images/
+                          + verify) + images/
   student + Submission  → Student-Workspace (Snapshot) + compose + images/
   tutor   + Submission  → Student-Workspace (Snapshot) + 👤-Dateien
                           + compose (wie Tutor) + images/
@@ -46,7 +47,7 @@ Paket-Varianten:
                           (eigene Lösung) + compose + images/ + README
 
 🔒-Dateien werden ab MAX_DATA_IN_PACKAGE aus dem Paket gestrichen; hat die
-Aufgabe ein init.sh, lädt die Initialisierung die Daten lokal nach
+Aufgabe ein .init.sh, lädt die Initialisierung die Daten lokal nach
 (README verweist darauf).
 """
 
@@ -246,15 +247,16 @@ def _extract_tar_bytes(tar_bytes: bytes, dest: Path) -> None:
 
 
 def _compose_content(task: Task, slug: str, has_init: bool,
-                     has_init_private: bool, has_tests: bool,
+                     has_init_private: bool,
                      has_verify: bool, ro_mounts: list[str],
                      hid_mounts: list[str], judge_path: str) -> str:
     """docker-compose.yml — rein skriptbasiert:
 
-    workspace     → laufende Arbeitsumgebung (hält mit sleep infinity)
-    init          → einmalige Initialisierung (init.sh; 🔒 rw, Internet IMMER)
+    workspace     → laufende Arbeitsumgebung (hält mit sleep infinity);
+                    Skripte (run.sh, test.sh, …) laufen im Terminal des
+                    Containers (Anleitung in der README)
+    init          → einmalige Initialisierung (.init.sh; 🔒 rw, Internet IMMER)
     init-private  → private Initialisierung (👤 rw; nur Tutor-Paket)
-    public-tests  → test.sh
     verify        → .test_private.sh (nur Tutor-Paket)
     """
     internet = bool(task.workspace_internet)
@@ -296,9 +298,9 @@ def _compose_content(task: Task, slug: str, has_init: bool,
             "    volumes:",
             _mount("./workspace", "/workspace", ro=False),
         ]
-        # 🔒 rw: init.sh darf Datasets/Dateien in read-only-Bereiche legen
+        # 🔒 rw: .init.sh darf Datasets/Dateien in read-only-Bereiche legen
         L += [_mount(f"./workspace/{p}", f"/workspace/{p}", ro=False) for p in ro_mounts]
-        L.append("    command: bash /workspace/init.sh")
+        L.append("    command: bash /workspace/.init.sh")
 
     if has_init_private:
         L += [
@@ -319,24 +321,6 @@ def _compose_content(task: Task, slug: str, has_init: bool,
         # Das Skript selbst liegt top-level im Paket (👤-Dateien)
         L.append(_mount("./.init_hidden.sh", "/.init_hidden.sh", ro=True))
         L.append("    command: bash /.init_hidden.sh")
-
-    if has_tests:
-        L += [
-            "",
-            "  # Öffentliche Tests ausführen (Self-Check, wie im TutorAI-Container):",
-            "  #   docker compose run --rm public-tests",
-            "  public-tests:",
-            "    build:",
-            "      context: ./images",
-            "    image: tutorai-ws-local:1",
-            "    working_dir: /workspace",
-            "    volumes:",
-            _mount("./workspace", "/workspace", ro=False),
-        ]
-        L += [_mount(f"./workspace/{p}", f"/workspace/{p}", ro=True) for p in ro_mounts]
-        if not internet:
-            L.append("    network_mode: none")
-        L.append("    command: bash /workspace/test.sh")
 
     if has_verify:
         L += [
@@ -359,7 +343,7 @@ def _compose_content(task: Task, slug: str, has_init: bool,
     return "\n".join(L) + "\n"
 
 
-def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
+def _readme_content(task: Task, kind: str, has_run: bool,
                     has_init: bool, has_init_private: bool,
                     data_omitted: bool, has_verify: bool,
                     submission: Optional[Submission],
@@ -392,7 +376,8 @@ def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
     if has_run:
         L.append("| `workspace/run.sh` | Ausführen-Skript der Aufgabe (nicht editieren) |")
     if has_init:
-        L.append("| `workspace/init.sh` | einmalige Initialisierung (nicht editieren) |")
+        L.append("| `workspace/.init.sh` | einmalige Initialisierung (nicht editieren, "
+                 "im System für Studenten versteckt) |")
     if kind == "tutor":
         if has_init_private:
             L.append("| `.init_hidden.sh` | einmalige private Initialisierung (privat!) |")
@@ -419,29 +404,18 @@ def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
     if has_init_private:
         L.append("docker compose run --rm init-private  # einmalig (NACH init): private Umgebung")
     L += [
-        "docker compose up -d workspace",
-        "docker compose exec -it workspace bash",
+        "docker compose up -d workspace         # Arbeitsumgebung im Hintergrund starten",
+        "docker compose exec -it workspace bash  # Terminal in den Container öffnen",
         "```",
         "",
+        "Im Terminal stehst du bereits in `/workspace`; dort laufen die",
+        "Skripte der Aufgabe direkt, z. B. `bash run.sh` (Aufgabe ausführen)",
+        "oder `bash test.sh` (Self-Check). `exit` schließt das Terminal,",
+        "der Container läuft weiter — du kannst dich jederzeit erneut mit",
+        "`docker compose exec -it workspace bash` verbinden. Den Container",
+        "stoppst du mit `docker compose stop`.",
+        "",
     ]
-    if has_run:
-        L += [
-            "Die Aufgabe ausführen:",
-            "",
-            "```bash",
-            "docker compose exec workspace bash run.sh",
-            "```",
-            "",
-        ]
-    if has_tests:
-        L += [
-            "Öffentliche Tests (Self-Check) ausführen:",
-            "",
-            "```bash",
-            "docker compose run --rm public-tests",
-            "```",
-            "",
-        ]
     if data_omitted:
         size_mb = MAX_DATA_IN_PACKAGE // (1024 * 1024)
         if has_init:
@@ -473,7 +447,7 @@ def _readme_content(task: Task, kind: str, has_run: bool, has_tests: bool,
         L += [
             "**Wichtig:** Dieses Paket enthält bewusst KEINE Musterlösung und keine",
             "privaten Tests. Die Bewertung erfolgt serverseitig nach der Abgabe.",
-            "Die Skripte der Aufgabe (`run.sh`, `init.sh`, `test.sh`) gehören zur",
+            "Die Skripte der Aufgabe (`run.sh`, `.init.sh`, `test.sh`) gehören zur",
             "Aufgabe — bitte nicht editieren oder ersetzen.",
             "",
         ]
@@ -536,7 +510,7 @@ def build_package(task: Task, kind: str,
 
         def _ro_capped_write() -> dict:
             """🔒-Volumen-Cap: read-only-Bereiche > Limit → weglassen
-            (init.sh lädt sie lokal nach; README vermerkt das)."""
+            (.init.sh lädt sie lokal nach; README vermerkt das)."""
             nonlocal data_omitted
             ro_total = sum(v["disk"].stat().st_size for p, v in public.items()
                            if p in ro_files)
@@ -580,6 +554,14 @@ def build_package(task: Task, kind: str,
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 dst.write_bytes(v["disk"].read_bytes())
 
+        # .init.sh (👤) steckt in KEINEM Snapshot (hidden → nicht im
+        # Container), aber der lokale init-Service braucht es IMMER →
+        # aus der Task-Disk explizit nachlegen (alle Paket-Varianten).
+        init_v = hidden.get(".init.sh")
+        if init_v is not None:
+            (top / "workspace" / ".init.sh").write_bytes(
+                init_v["disk"].read_bytes())
+
         # 2) 👤-Dateien (NUR Tutor) am realen Pfad top-level
         if kind == "tutor":
             for rel, v in hidden.items():
@@ -596,8 +578,7 @@ def build_package(task: Task, kind: str,
 
         # 4) Flags + Mount-Pfade (aus dem tatsächlichen Paket-Inhalt)
         has_run = (top / "workspace" / "run.sh").is_file()
-        has_init = (top / "workspace" / "init.sh").is_file()
-        has_tests = (top / "workspace" / "test.sh").is_file()
+        has_init = (top / "workspace" / ".init.sh").is_file()
         has_init_private = (kind == "tutor"
                             and (top / ".init_hidden.sh").is_file())
         has_verify = (kind == "tutor" and judge_path is not None
@@ -611,14 +592,14 @@ def build_package(task: Task, kind: str,
         (top / "compose.yml").write_text(
             _compose_content(task, slug, has_init=has_init,
                              has_init_private=has_init_private,
-                             has_tests=has_tests, has_verify=has_verify,
+                             has_verify=has_verify,
                              ro_mounts=ro_mounts, hid_mounts=hid_mounts,
                              judge_path=judge_path or ""),
             encoding="utf-8")
 
         # 6) README.md
         (top / "README.md").write_text(
-            _readme_content(task, kind, has_run=has_run, has_tests=has_tests,
+            _readme_content(task, kind, has_run=has_run,
                             has_init=has_init, has_init_private=has_init_private,
                             data_omitted=data_omitted, has_verify=has_verify,
                             submission=submission, live=live),

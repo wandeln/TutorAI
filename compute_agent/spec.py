@@ -4,11 +4,12 @@ Workspace-Spec (JSON-dict) — Parsing & Validierung.
 Seit der Umstellung auf das Skript-Modell ist die Spec bewusst klein
 („Slim-Spec“): Run-/Test-/Verify-Befehle, Pakete, Environment-Vars und
 zusätzliche Mounts gibt es nicht mehr — das übernehmen die Task-Skripte
-(`run.sh`, `test.sh`, `init.sh`), die als Dateien in der
-Aufgabe liegen und read-only gemountet werden.
+(`run.sh`, `test.sh`, `.init.sh`), die als Dateien in der
+Aufgabe liegen (🔒-Skripte read-only gemountet, 👤-Skripte nie im
+Student-Container).
 
 TutorAI injiziert das konkrete Container-IMAGE (aus der Image-Spec der
-Aufgabe) in `image` sowie — wenn die Aufgabe ein `init.sh` hat — die
+Aufgabe) in `image` sowie — wenn die Aufgabe Init-Skripte hat — die
 Task-Image-Referenz in `task_image` (vom Agent gebaut via init-build).
 Die GPU-Fähigkeit folgt aus der Compute-Engine: TutorAI injiziert die
 Engine-Regel in `gpus` ("all" | "none" | [int, …]).

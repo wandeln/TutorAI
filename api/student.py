@@ -1868,7 +1868,7 @@ async def workspace_download_solution_package(
     user: User = Depends(get_current_user),
 ):
     """Student-Download-Paket der EIGENEN Lösung: gleiche Struktur wie die
-    Aufgaben-Vorlage (Dockerfile + init.sh + compose, gleiches Setup), aber
+    Aufgaben-Vorlage (Dockerfile + .init.sh + compose, gleiches Setup), aber
     workspace/ enthält die eigenen + vom Code generierten Dateien des
     aktuellen Workspaces statt der Starter-Dateien."""
     from fastapi.responses import Response

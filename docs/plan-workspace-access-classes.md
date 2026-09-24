@@ -598,10 +598,84 @@ gestellt wie beim Student:
   (vorher nur bei impliziten on-disk-Ordner-Einträgen); Tutor-Template
   bekommt `folderApi: true` (war nur im Student-Template).
 
+## Rename `init.sh` → `.init.sh` + Hidden-Klasse + b64-Over-the-Request (2026-09-24)
+
+**Ziel:** `init.sh` war 🔒 read-only im Student-Workspace sichtbar —
+Studenten konnten es versehentlich selbst ausführen (obwohl es bereits
+per Init-Build gelaufen war) und wurden verwirrt. Es wird jetzt 👤
+versteckt und in `.init.sh` umbenannt (weiche Punkt-Konvention für
+👤-Skripte, wie `.init_hidden.sh`/`.test_private.sh`/`.test_solution.sh`).
+
+**Funktionell ändert sich nichts am Init-Build:**
+- Phase 1 läuft wie bisher (darf in ✏️+🔒 schreiben, NIE in 👤).
+- `.init.sh` fehlt jetzt aber im Asset-Sync (hidden-Filter) → der Agent
+  holt das Skript per **Init-Request-Body** (`init_b64`, analog
+  `init_private_b64`) und persistiert es in der privaten Region
+  `.private/.init.sh`. Phase 1 kopiert es von dort nach `tmp/.init.sh`
+  und läuft es als `bash /workspace/.init.sh`.
+- **Paket-Ausnahme:** `.init.sh` steckt IMMER im Download-Paket
+  (`workspace/.init.sh`, alle Varianten: Student/Lösung/Tutor) — der
+  lokale `init`-Service braucht es. Es ist das einzige 👤-Skript, das
+  im Studenten-Paket landet (Musterlösung/private Tests tun das nicht).
+
+**Umgesetzte Stellen:**
+- Backend `workspace_service.py`: `INIT_SCRIPT = ".init.sh"`,
+  `SYSTEM_FILE_ACCESS[".init.sh"] = "hidden"`, `SYSTEM_STUBS`-Eintrag
+  (+ Hinweis „Für Studenten versteckt (👤) — sie sehen nur das
+  Ergebnis“); `init_build` liest `init_b64` von der Task-Disk und reicht
+  es an den Client; `task_has_init`/`task_init_hash` via Konstante
+  (Hash wechselt für alle Tasks: Access-Map-Pfad + Klasse).
+- `compute_client.py`: `init_build(..., init_b64=None, ...)`.
+- Agent `docker_ops.py`: neuer `_persist_init_scripts(course, task,
+  init_b64, init_private_b64)` (schreibt/entfernt `.private/.init.sh` +
+  `.private/.init_hidden.sh`; räumt Legacy `init.sh`/`init_private.sh`
+  auf) — läuft in `start_init_build` als ERSTER Schritt VOR dem
+  `task_has_init`-Check (fixt den latenten Race: Task mit nur
+  `.init_hidden.sh` baute nie, weil die Quelle erst im Build-Thread
+  persistiert wurde). `task_has_init` prüft jetzt NUR noch `.private/`.
+  Persistierung aus `_do_init_build_core` entfernt (Before-Snapshots
+  laufen danach → Rollback räumt die Skript-Quellen nicht auf).
+  Seed-Filter + Manifest-Private-Liste schliegen beide Skript-Quellen
+  aus (keine [init]-Geister-Einträge).
+- Agent `main.py`: `init_build`-Route parst `init_b64`.
+- `compose_gen.py`: `build_package` kopiert `.init.sh` aus dem
+  hidden-Dict explizit nach `workspace/.init.sh` (steckt in KEINEM
+  Snapshot — hidden fehlt im Container); `has_init`-Check + Compose
+  `command: bash /workspace/.init.sh` + README-Tabellenzeile/Texte.
+  Tutor-Paket: generischer hidden-Loop legt zusätzlich `./.init.sh`
+  top-level ab (hid_mounts-Quell-Existenz für init-private/verify).
+- Prompt `workspace_task_prompt.py`: `.init.sh (👤)` in der Modell-Liste
+  + Feld-Beschreibung in die "hidden"-Sektion verlegt (war in
+  "readonly") + alle Referenzen (Dataset-Katalog, Image-Umgebung,
+  Optional-Liste, folders-Hinweis).
+- JS `workspace.js`: `SYSTEM_FILE_ACCESS[".init.sh"] = "hidden"` (Tutor:
+  Kontextmenü zeigt „🔐 Zugriff: 👤 versteckt (System-Skript —
+  festgelegt)“) + .init.sh-Ergebnis-Labels (📦-Marker).
+- Tutor-Template: Skript-Konventionen-Legende, 📦-Legende, moveGate-
+  systemScripts-Liste (`.init.sh` in Wurzel fixiert).
+
+**Migration** (`scripts/migrate_init_sh_hidden.py`, einmalig,
+`--dry-run`, idempotent, Konflikt-Check): DB-Zeile `init.sh` →
+`.init.sh` (Disk-Rename + raw DB-Update `path`/`access="hidden"` —
+NICHT via move_task_file/set_file_access, die System-Skript-Guards
+blockieren) + Orphan-Fall (Disk ohne Zeile) via save_task_file. Danach
+pro betroffener Task `on_task_saved` (Asset-Sync purgt das alte
+`init.sh` vom Agenten + Init-Build mit neuem Hash). 6 Tasks migriert
+(37, 38, 41, 43, 45, 46); alle Builds → `ready` (alias auf
+Basis-Image, da keine Image-Änderungen).
+
+**Deploy-Reihenfolge (Pitfall):** Code → compute-agent REBUILD →
+Migration. Umgekehrt/unterbrochen: alter Agent sieht `base/init.sh`
+nicht mehr als Keep-Pfad → Purge → `task_has_init` false; und
+Backend `task_has_init` (`.init.sh`) ist vor der Migration false →
+Student-Container fällt still auf das Basis-Image zurück.
+
 ## Betriebs-Notizen
 
 - init_hash-Format ist an Backend UND Agent-Ref gekoppelt — bei Änderung
   an ALLEN Stellen synchron ändern.
+- `.init.sh`/`.init_hidden.sh`-Quellen leben NUR in `.private/` (per
+  Init-Request b64 persistiert) — niemals im Asset-Sync (hidden-Filter).
 - Status-Strings der UI bleiben: `none|ready|building|failed|idle`
   (+`skipped`-Chip).
 - Bind-Mount-Quellen = Host-Pfade (`_daemon_path`).

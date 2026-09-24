@@ -230,7 +230,7 @@ class ComputeClient:
                              task_id=task, student_id=student, timeout=600)
         return resp.content
 
-    # ── Assets & Task-Images (init.sh-Build) ─────────────────────
+    # ── Assets & Task-Images (.init.sh-Build) ────────────────────
 
     def sync_assets(self, course: int, task: int, files: list[dict],
                     delete_missing: bool = False,
@@ -252,17 +252,19 @@ class ComputeClient:
                    init_hash: str, deadline: str | None = None,
                    readonly_paths: list[str] | None = None,
                    hidden_paths: list[str] | None = None,
+                   init_b64: str | None = None,
                    init_private_b64: str | None = None,
                    folders: list[str] | None = None) -> dict:
-        """Task-Image-Build (2-Phasen: init.sh + .init_hidden.sh) starten;
+        """Task-Image-Build (2-Phasen: .init.sh + .init_hidden.sh) starten;
         startet nur den Background-Build → kurzer Timeout.
 
         readonly_paths/hidden_paths: Top-Level-🔒/👤-Pfade (rw-Mounts im
         Build, aus der privaten Agenten-Region bzw. dem Asset-Dir);
-        init_private_b64: 👤-Skript (b64, persistiert in .private/);
-        folders: Ordner-Pfade der Aufgabe (explizite + implizite) — der
-        Agent legt sie in den Build-Quellen an, damit init.sh auch in
-        bestehende Ordner schreiben kann (Build-Umgebung ist sonst leer).
+        init_b64/init_private_b64: 👤-Skripte (b64, persistiert in
+        .private/); folders: Ordner-Pfade der Aufgabe (explizite +
+        implizite) — der Agent legt sie in den Build-Quellen an, damit
+        .init.sh auch in bestehende Ordner schreiben kann (Build-Umgebung
+        ist sonst leer).
         """
         body: dict = {"image": image, "init_hash": init_hash}
         if deadline:
@@ -271,6 +273,8 @@ class ComputeClient:
             body["readonly_paths"] = readonly_paths
         if hidden_paths:
             body["hidden_paths"] = hidden_paths
+        if init_b64 is not None:
+            body["init_b64"] = init_b64
         if init_private_b64 is not None:
             body["init_private_b64"] = init_private_b64
         if folders:

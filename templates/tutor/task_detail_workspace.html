@@ -57,7 +57,7 @@
         <div class="flex items-center justify-between flex-wrap gap-2">
           <span class="text-xs font-semibold text-gray-600">
             📦 Umgebung-Status je Engine
-            <span class="font-normal text-gray-400">(Assets → Agent · Task-Image via init.sh · Basis-Image)</span>
+            <span class="font-normal text-gray-400">(Assets → Agent · Task-Image via .init.sh · Basis-Image)</span>
           </span>
           <div class="flex gap-2">
             <button type="button" id="ws-init-stop-btn"
@@ -98,7 +98,7 @@
         </div>
         <div class="flex items-end pb-1.5">
           <label class="flex items-center gap-1.5 text-sm text-gray-700 cursor-pointer"
-                 title="Internet-Zugriff für den Student-Container zur Laufzeit (der init.sh-Build hat immer Internet)">
+                 title="Internet-Zugriff für den Student-Container zur Laufzeit (der .init.sh-Build hat immer Internet)">
             <input type="checkbox" id="ws-env-internet" class="rounded text-blue-600"> 🌐 Internet (Student-Container)
           </label>
         </div>
@@ -135,8 +135,8 @@
       (Studenten starten sie per Play-Button im Dateibaum),
       <code class="font-mono">.test_solution.sh</code> = Button „🧪 Musterlösung testen“ (Musterlösung in <code class="font-mono">.solution/</code>),
       <code class="font-mono">.test_private.sh</code> = private Grading-Tests für LLM,
-      <code class="font-mono">init.sh</code> + <code class="font-mono">.init_hidden.sh</code> = Initialisierung beim Task-Image-Build
-      (z.&nbsp;B. Pakete, Downloads nach <code class="font-mono">data/</code>, init_hidden.sh darf auch in hidden Verzeichnisse schreiben für private Tests).
+      <code class="font-mono">.init.sh</code> + <code class="font-mono">.init_hidden.sh</code> = Initialisierung beim Task-Image-Build
+      (z.&nbsp;B. Pakete, Downloads nach <code class="font-mono">data/</code>, .init_hidden.sh darf auch in hidden Verzeichnisse schreiben für private Tests; .init.sh ist im Student-Workspace versteckt).
     </p>
     <p class="text-xs text-gray-400 mb-3">
       Zugriffsklassen (im Baum markiert, per Rechtsklick auf Datei/Ordner änderbar —
@@ -144,7 +144,7 @@
       <span title="Tutor + Student dürfen schreiben">✏️</span> editierbar (Standard),
       <span title="Student darf nur lesen; eine geteilte Kopie für alle Studenten">🔒</span> read-only,
       <span title="Student sieht es nie; nur Tutor + Korrektur">👤</span> versteckt,
-      <span title="Ergebnisse von init.sh im Task-Image — read-only">📦</span> init.sh-Ergebnis (read-only, nur per neuem Init-Build änderbar).
+      <span title="Ergebnisse von .init.sh im Task-Image — read-only">📦</span> .init.sh-Ergebnis (read-only, nur per neuem Init-Build änderbar).
     </p>
 
     <!-- Gemeinsamer Container: Datei-Baum (Zugriffsklassen markiert) + Editor,
@@ -718,7 +718,7 @@
     allowMain: true,
     // Der Tutor/Prof bearbeitet alle Bereiche (Zugriffsklassen bestimmen
     // nur die Sichtbarkeit für Studenten). Einzige Ausnahme: die
-    // init.sh/.init_hidden.sh-Ergebnisse (📦, am realen Pfad markiert)
+    // .init.sh/.init_hidden.sh-Ergebnisse (📦, am realen Pfad markiert)
     // sind read-only — sie entstehen nur per neuem Init-Build.
     readOnlyCheck: (p) => wsUI.isInitPath(p),
     canCreate: true,
@@ -736,8 +736,8 @@
     noTaskMsg: "Erst die Aufgabe erstellen (speichern) — danach können Dateien hier gepflegt werden.",
     moveGate: (src, dst) => {
       if (wsUI.isInitPath(src) || wsUI.isInitPath(dst))
-        return { ok: false, reason: "init.sh-Ergebnisse sind read-only (per neuem Init-Build änderbar)." };
-      const systemScripts = ["run.sh", "init.sh", "test.sh",
+        return { ok: false, reason: ".init.sh-Ergebnisse sind read-only (per neuem Init-Build änderbar)." };
+      const systemScripts = ["run.sh", ".init.sh", "test.sh",
                              ".init_hidden.sh", ".test_private.sh", ".test_solution.sh"];
       if (systemScripts.includes(src))
         return { ok: false, reason: src + " ist ein System-Skript und muss in der Wurzel bleiben." };

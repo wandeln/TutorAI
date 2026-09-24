@@ -61,7 +61,7 @@ IDLE_TIMEOUT: int = int(os.getenv("IDLE_TIMEOUT", "1200"))  # 20 min
 REAPER_INTERVAL: float = float(os.getenv("REAPER_INTERVAL", "10"))
 # Max. parallele GPU-Jobs auf diesem Node (FIFO-Queue via Semaphore).
 GPU_MAX_JOBS: int = int(os.getenv("GPU_MAX_JOBS", "8"))
-# Timeout für den Init-Build (init.sh im Build-Container) — Downloads
+# Timeout für den Init-Build (.init.sh im Build-Container) — Downloads
 # großer Datasets können dauern; bei Überschreitung wird der Build
 # abgebrochen und init-generierte Daten aufgeräumt.
 INIT_TIMEOUT: int = int(os.getenv("AGENT_INIT_TIMEOUT", "1800"))  # 30 min

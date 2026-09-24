@@ -20,7 +20,7 @@
      Ordner-Vorfahren). Das Backend liefert je Datei die effektive Klasse
      (`access`) + die explizite (`file_access`); Ordner-Klassen kommen als
      `folders`-Liste {path, access (effektiv), own (explizit)}.
-   - Init-Artefakte (init.sh/.init_hidden.sh-Ergebnisse, mit `init: true`
+   - Init-Artefakte (.init.sh/.init_hidden.sh-Ergebnisse, mit `init: true`
      vom Backend): am realen Pfad im Baum, read-only (📦-Marker),
      entstehen/ändern sich nur per neuem Init-Build.
    - Ordner werden on-disk + in der DB verwaltet (folderApi): anlegen /
@@ -63,7 +63,7 @@
   // beginnt mit ".").
   const SYSTEM_FILE_ACCESS = {
     "run.sh": "readonly",
-    "init.sh": "readonly",
+    ".init.sh": "hidden",
     "test.sh": "readonly",
     ".init_hidden.sh": "hidden",
     ".test_private.sh": "hidden",
@@ -592,7 +592,7 @@
       state.selected = new Set();
       state.selAnchor = null;
     }
-    // Auswahl ohne init.sh-Ergebnisse (read-only, per Init-Build erzeugt).
+    // Auswahl ohne .init.sh-Ergebnisse (read-only, per Init-Build erzeugt).
     function bulkTargets() {
       return [...state.selected].filter(p => {
         const f = state.files.find(x => x.path === p);
@@ -794,14 +794,14 @@
       div.style.paddingLeft = "2px";
       div.dataset.path = path;
       div.title = isInit
-        ? "init.sh-Ergebnis — read-only (wird per neuem Init-Build neu erzeugt)"
+        ? ".init.sh-Ergebnis — read-only (wird per neuem Init-Build neu erzeugt)"
         : (acc !== "edit" ? accDef.label : "");
       div.innerHTML =
         '<span class="ws-drag' + (draggable ? "" : " ws-drag-off") + '"' +
         (draggable ? ' title="Ziehen: verschieben / sortieren"' : "") + ">⠿</span>" +
         '<span class="shrink-0"' + (depth ? ' style="margin-left:' + (depth * 14) + 'px"' : "") + ">" + fileIcon(path) + "</span>" +
         (isInit
-          ? '<span title="init.sh-Ergebnis — read-only">📦</span>'
+          ? '<span title=".init.sh-Ergebnis — read-only">📦</span>'
           : '<span title="' + esc(accDef.label) + '">' + accDef.icon + "</span>") +
         (isSh
           ? '<button type="button" class="ws-runbtn shrink-0 select-none inline-flex items-center justify-center h-5 w-5 rounded text-white ' +
@@ -1244,7 +1244,7 @@
       const items = [];
       items.push({ label: "📂 Öffnen", fn: () => openFile(path) });
       if (isInit) {
-        // init.sh-Ergebnis: read-only, nichts weiter zu verwalten.
+        // .init.sh-Ergebnis: read-only, nichts weiter zu verwalten.
         showCtxMenu(e.clientX, e.clientY, items);
         return;
       }

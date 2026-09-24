@@ -196,7 +196,7 @@ class TaskBase(SQLModel):
     hints_enabled: bool = Field(default=True)          # Socratic-Hints fuer Studenten
     # Workspace-Aufgaben (task_type=workspace), s. docs/plan-workspace-tasks.md:
     # Skript-basiertes Modell: Run/Tests/Init laufen über Task-Dateien
-    # (run.sh, test.sh, .test_private.sh, init.sh, .init_hidden.sh, .test_solution.sh);
+    # (run.sh, test.sh, .test_private.sh, .init.sh, .init_hidden.sh, .test_solution.sh);
     # die Umgebung wird hier per einfachen Feldern konfiguriert.
     workspace_timeout: int = Field(default=900)                 # Run-Timeout (s, 1–7200)
     workspace_cpu: float = Field(default=2.0)                   # CPU-Limit des Student-Containers

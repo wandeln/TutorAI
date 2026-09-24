@@ -10,7 +10,7 @@ Verantwortlichkeiten:
     🔒 readonly  → public, read-only (shared auf dem Agenten, ro-Mount)
     👤 hidden    → privat (nur bei Grading injiziert, Student sieht nie)
 - ensure_workspace (Client + Starter-Dateien von der Disk)
-- Asset-Sync & Task-Image-Build via init.sh/.init_hidden.sh (Task-Save-Seiteneffekte)
+- Asset-Sync & Task-Image-Build via .init.sh/.init_hidden.sh (Task-Save-Seiteneffekte)
 - Snapshots (Abgabe) + Lauf-Historie (WorkspaceRun)
 """
 
@@ -115,7 +115,7 @@ _ACCESS_BY_RANK = ("edit", "readonly", "hidden")
 # Skript-Konventionen (feste Wurzelpfade, weiche Punkt-Konvention:
 # 👤-Skripte beginnen mit "."):
 RUN_SCRIPT = "run.sh"
-INIT_SCRIPT = "init.sh"
+INIT_SCRIPT = ".init.sh"                    # 👤 (versteckt); Source: .private/, per Init-Request
 INIT_PRIVATE_SCRIPT = ".init_hidden.sh"
 TEST_SCRIPT = "test.sh"
 JUDGE_SCRIPT = ".test_private.sh"           # 👤-Datei; Judge des Grading-Laufs
@@ -205,7 +205,7 @@ def hidden_mount_paths(files: list[TaskWorkspaceFile],
 # beginnen mit ".") — private Skripte dürfen nie studentensichtbar werden.
 SYSTEM_FILE_ACCESS = {
     "run.sh": "readonly",
-    "init.sh": "readonly",
+    ".init.sh": "hidden",
     "test.sh": "readonly",
     ".init_hidden.sh": "hidden",
     ".test_private.sh": "hidden",
@@ -221,14 +221,15 @@ SYSTEM_STUBS: dict[str, str] = {
 # Read-only für Studenten (🔒) — passe ihn hier an.
 echo "Noch nicht konfiguriert: rufe hier den Startbefehl der Aufgabe auf (z. B. python main.py)."
 """,
-    "init.sh": """#!/bin/bash
+    ".init.sh": """#!/bin/bash
 # Initialisierung (Phase 1): läuft bei jedem Task-Image-Build und lädt/
 # erzeugt die editierbaren (✏️) und read-only (🔒) Dateien der Studenten.
+# Für Studenten versteckt (👤) — sie sehen nur das Ergebnis.
 # Darf NICHT in versteckte (👤) Pfade schreiben — dafür .init_hidden.sh.
 exit 0
 """,
     ".init_hidden.sh": """#!/bin/bash
-# Private Initialisierung (Phase 2, nach init.sh): darf in versteckte (👤)
+# Private Initialisierung (Phase 2, nach .init.sh): darf in versteckte (👤)
 # Pfade schreiben (z. B. .solution/, private Testdaten).
 # Für Studenten nie sichtbar.
 exit 0
@@ -290,16 +291,17 @@ def snapshot_abs_path(snapshot_rel: str) -> Path:
     return WORKSPACE_DIR.parent / snapshot_rel
 
 
-# ── Task-Image (init.sh-Build, 1× je (Task, init-Hash)) ──────────
+# ── Task-Image (.init.sh-Build, 1× je (Task, init-Hash)) ─────────
 
 def task_has_init(task: Task) -> bool:
+    """Task hat Task-Image-Build nötig (.init.sh und/oder .init_hidden.sh)."""
     return (file_disk_path(task.id, INIT_SCRIPT).is_file()
             or file_disk_path(task.id, INIT_PRIVATE_SCRIPT).is_file())
 
 
 def task_init_hash(session: Session, task: Task, base_image: str) -> str:
     """Identität des Task-Images:
-    sha256(base_image + init.sh + .init_hidden.sh + sortierte Access-Map)[:12].
+    sha256(base_image + .init.sh + .init_hidden.sh + sortierte Access-Map)[:12].
 
     Skript-Änderung ODER Access-Layout-Änderung (Dateien/Ordner-Klassen)
     → neuer Hash → neuer Init-Build. Der Agent validiert nur das Format;
@@ -535,7 +537,7 @@ class WorkspaceService:
                                  agent: dict) -> dict:
         """Slim-Spec (dict) für den Agenten: konkrete Image-Referenz aus der
         Image-Spec + Umgebung (Timeout/Limits/Internet/Artefakte) aus den
-        Task-Feldern + GPU-Regel der Engine injizieren. Bei init.sh wird
+        Task-Feldern + GPU-Regel der Engine injizieren. Bei .init.sh wird
         zusätzlich die Task-Image-Referenz gesetzt (Agent startet Container
         vom gebauten Task-Image statt vom Basis-Image).
 
@@ -1084,11 +1086,12 @@ class WorkspaceService:
 
     def init_build(self, session: Session, task: Task,
                    agent: Optional[dict] = None) -> dict:
-        """Task-Image (init.sh) auf dem Agenten bauen (idempotent über den
-        init-Hash: gleicher Hash + vorhandenes Image → sofort ready).
+        """Task-Image (.init.sh-Build) auf dem Agenten bauen (idempotent
+        über den init-Hash: gleicher Hash + vorhandenes Image → sofort
+        ready).
 
-        Ohne init.sh: verwaiste Task-Images entfernen (kein Task-Image
-        mehr nötig) → Status „none“.
+        Ohne .init.sh/.init_hidden.sh: verwaiste Task-Images entfernen
+        (kein Task-Image mehr nötig) → Status „none“.
         """
         agent = agent or self.pick_task_agent(session, task)
         if agent is None:
@@ -1106,9 +1109,14 @@ class WorkspaceService:
         priv_p = file_disk_path(task.id, INIT_PRIVATE_SCRIPT)
         init_private_b64 = (base64.b64encode(priv_p.read_bytes()).decode()
                             if priv_p.is_file() else None)
+        # .init.sh ist 👤 → nicht im Asset-Sync; der Agent holt es per
+        # Request-Body und persistiert es in der privaten Region.
+        init_p = file_disk_path(task.id, INIT_SCRIPT)
+        init_b64 = (base64.b64encode(init_p.read_bytes()).decode()
+                    if init_p.is_file() else None)
         # Ordner-Struktur für die Build-Umgebung: explizite Ordner (aus
         # der Access-Map) + implizite Eltern-Ordner aller Dateien — im
-        # Init-Build existiert sonst nur, was init.sh selbst anlegt.
+        # Init-Build existiert sonst nur, was .init.sh selbst anlegt.
         folder_paths = set(fm)
         for f in files:
             if "/" in f.path:
@@ -1119,6 +1127,7 @@ class WorkspaceService:
             deadline=task.deadline,
             readonly_paths=readonly_mount_paths(files, fm),
             hidden_paths=hidden_mount_paths(files, fm),
+            init_b64=init_b64,
             init_private_b64=init_private_b64,
             folders=sorted(folder_paths),
         )

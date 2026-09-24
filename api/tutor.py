@@ -1799,7 +1799,7 @@ def _init_artifact_lookup(session: Session, task: Task) -> dict[str, dict]:
 def _reject_init_artifact(session: Session, task: Task, path: str) -> None:
     """Mutationen auf [init]-Artefakte ablehnen (read-only).
 
-    Init-Artefakte (Ergebnisse von init.sh/.init_hidden.sh) liegen auf dem
+    Init-Artefakte (Ergebnisse von .init.sh/.init_hidden.sh) liegen auf dem
     Agenten und entstehen nur per neuem Init-Build — sie sind im
     Tutor-Dateibaum virtuell und read-only.
     """
@@ -1890,7 +1890,7 @@ async def list_workspace_files(
 
     ``files``: effektive Klasse ``access`` + explizite ``file_access``.
     ``folders``: explizite Ordner-Klassen (effektiv + eigene Setzung).
-    Dazu die Init-Artefakte (init.sh/.init_hidden.sh-Ergebnisse) als
+    Dazu die Init-Artefakte (.init.sh/.init_hidden.sh-Ergebnisse) als
     virtuelle read-only [init]-Einträge am realen Pfad (ohne Agenten: leer)."""
     task = await _load_workspace_task(task_id, session, user)
     _require_workspace_task(task)
@@ -2245,10 +2245,10 @@ async def workspace_init_build(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Task-Image (init.sh) (neu) bauen — Force-Rebuild-Button.
+    """Task-Image (.init.sh) (neu) bauen — Force-Rebuild-Button.
 
     Der Init-Build ist über den init-Hash idempotent; ein echter Rebuild
-    passiert, wenn init.sh oder das Image sich geändert haben. Läuft
+    passiert, wenn .init.sh oder das Image sich geändert haben. Läuft
     wie der Sync im Hintergrund (on_task_saved → init_build je Agent).
     """
     task = await _load_workspace_task(task_id, session, user)

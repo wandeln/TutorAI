@@ -193,7 +193,7 @@ def resolve_image(image: str) -> str:
         if image.startswith("tutorai/task/"):
             raise DockerError(
                 f"Task-Image {image} fehlt auf diesem Node — die "
-                "Initialisierung (init.sh-Build) läuft noch oder ist "
+                "Initialisierung (.init.sh-Build) läuft noch oder ist "
                 "fehlgeschlagen (Status in der Aufgabe ansehen)", 409)
         raise DockerError(f"Image {image} fehlt auf diesem Node", 409)
     return image
@@ -628,9 +628,10 @@ def _desired_image(key: str, spec: dict) -> str:
     (falls der Init-Build das Image nicht verändert hat — Marker im
     Asset-Dir, ersetzt das frühere Alias-Tag) > Spec-Image.
 
-    Fallback: task_image gesetzt, aber nichts auflösbar UND init.sh ist
-    nicht mehr da → Spec-Image, damit der Container trotzdem startet. Bei
-    vorhandenem init.sh bleibt ein fehlendes Image ein harter Fehler (409).
+    Fallback: task_image gesetzt, aber nichts auflösbar UND die Init-
+    Skripte sind nicht mehr da → Spec-Image, damit der Container
+    trotzdem startet. Bei vorhandenen Init-Skripten bleibt ein fehlendes
+    Image ein harter Fehler (409).
     """
     task_image = spec.get("task_image")
     if task_image:
@@ -671,8 +672,8 @@ def ensure_container(key: str, spec: dict) -> dict:
 
     Idempotent. Starter-Dateien werden NUR geschrieben, wenn das Volume
     noch frisch ist (erster Start des Studenten). Läuft der Container mit
-    einem anderem Image als gewünscht (z. B. Task-Image-Wechsel nach
-    init.sh-Änderung) ODER mit einem anderen ro-Mount-Layout (Label
+    anderem Image als gewünscht (z. B. Task-Image-Wechsel nach
+    .init.sh-Änderung) ODER mit einem anderen ro-Mount-Layout (Label
     tutorai.mounts), wird der Container neu angelegt — das Volume
     (Studenten-Dateien) bleibt erhalten.
     """
@@ -1581,7 +1582,8 @@ def purge_missing_assets(course: int, task: int, keep_paths: list[str],
 
 # ── Task-Images (2-Phasen-Init-Build, 1× je (Task, init-Hash)) ─────
 #
-# Phase 1 (init.sh, public): Build-Container aus dem Basis-Image mit
+# Phase 1 (.init.sh, 👤-Skript, public-Bereiche; Quelle: .private/, kommt
+# per Init-Request): Build-Container aus dem Basis-Image mit
 # /workspace = Host-Temp-Dir (rw, ✏️-Bereich) + je 🔒-Pfad rw-Bind (shared).
 # 👤-Pfade sind NICHT gemountet. Danach Commit → Zwischen-Image (oder
 # direkt Final-Image, wenn keine Phase 2).
@@ -1677,9 +1679,10 @@ def _init_tmp_dir(course: int, task: int, init_hash: str) -> Path:
 
 
 def task_has_init(course: int, task: int) -> bool:
-    base = asset_dir(course, task)
-    return ((base / "init.sh").is_file()
-            or (base / ".private" / ".init_hidden.sh").is_file())
+    """Task hat Init-Build nötig (👤-Skript-Quellen in .private/)."""
+    priv_dir = asset_dir(course, task) / ".private"
+    return ((priv_dir / ".init.sh").is_file()
+            or (priv_dir / ".init_hidden.sh").is_file())
 
 
 def _read_init_manifest(base: Path) -> dict:
@@ -1839,12 +1842,10 @@ def _image_changes(container: str) -> list[str] | None:
 def _do_init_build(id_key: str, course: int, task: int, init_hash: str,
                    image: str, deadline: str | None,
                    readonly_paths: list[str], hidden_paths: list[str],
-                   init_private_b64: str | None,
                    folders: list[str]) -> None:
     """2-Phasen-Init-Build + Aufräumen der alten Task-Image-Varianten."""
     _do_init_build_core(id_key, course, task, init_hash, image, deadline,
-                        readonly_paths, hidden_paths, init_private_b64,
-                        folders)
+                        readonly_paths, hidden_paths, folders)
     # Aufräumen NACH dem Build (der Build-Container ist dann in finally
     # entfernt): jeder Hash-Wechsel (Skript-Edit, Access-Layout-Änderung)
     # erzeugt sonst ein neues Task-Image bzw. einen Alias-Marker, der
@@ -1860,12 +1861,14 @@ def _do_init_build(id_key: str, course: int, task: int, init_hash: str,
 def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
                         image: str, deadline: str | None,
                         readonly_paths: list[str], hidden_paths: list[str],
-                        init_private_b64: str | None,
                         folders: list[str]) -> None:
     """2-Phasen-Init-Build (s. Sektions-Header) + Artefakt-Sammlung.
 
     Gemeinsames Zeitbudget (config.INIT_TIMEOUT) für beide Phasen;
-    gemeinsames Live-Log (Trennlinie vor Phase 2).
+    gemeinsames Live-Log (Trennlinie vor Phase 2). Die 👤-Skript-Quellen
+    (.init.sh, .init_hidden.sh) sind in start_init_build VOR dem Start
+    in .private/ persistiert (Before-Snapshots enthalten sie → Rollback
+    löscht sie nicht).
     """
     ref = task_image_ref(course, task, init_hash)
     p1_ref = ref + "-p1"
@@ -1873,23 +1876,6 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
     base = asset_dir(course, task)
     priv_dir = base / ".private"
     tmp = _init_tmp_dir(course, task, init_hash)
-
-    # .init_hidden.sh persistieren (None → alte entfernen; die Datei ist
-    # die 👤-Quelle und kommt NUR per Init-Request vom Backend).
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-        if init_private_b64:
-            priv_dir.mkdir(parents=True, exist_ok=True)
-            (priv_dir / ".init_hidden.sh").write_bytes(
-                base64.b64decode(init_private_b64))
-        else:
-            (priv_dir / ".init_hidden.sh").unlink(missing_ok=True)
-        # Legacy-Name (vor dem Rename) nicht als Orphan/Geister-Artefakt
-        # in der privaten Region belassen:
-        (priv_dir / "init_private.sh").unlink(missing_ok=True)
-    except Exception as e:  # noqa: BLE001
-        _set_init_status(id_key, "failed", error=f".init_hidden.sh: {e}")
-        return
 
     before_shared = _asset_file_snapshot(base)
     before_private = _dir_file_snapshot(priv_dir)
@@ -1909,7 +1895,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
     # Ordner-Struktur der Aufgabe in den Host-Quellen vorlegen: die
     # ✏️-Build-Umgebung ist sonst leer (frische Temp-Dir), und 🔒/👤-
     # Subordner existieren nur, falls ein Sync sie schon geschrieben hat.
-    # init.sh kann so auch in bestehende Ordner schreiben. Routing je
+    # .init.sh kann so auch in bestehende Ordner schreiben. Routing je
     # Region; Vorfahren eines 👤-Tops bleiben NICHT in tmp (Phase 1 darf
     # 👤-Nachbarschaft nicht sehen — Docker legt den Ordner in Phase 2
     # selbst als Mount-Eltern an).
@@ -1926,7 +1912,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
 
     # Mount-Quellen für alle 🔒-Top-Level-Pfade sicherstellen: fehlt die
     # Host-Quelle, würde der rw-Mount stillschweigend weggelassen und
-    # init.sh in die Temp-Dir schreiben — die Artefakte gingen dann beim
+    # .init.sh in die Temp-Dir schreiben — die Artefakte gingen dann beim
     # Build-Cleanup verloren (kein Mount, kein Manifest-Eintrag). Eine
     # Datei kann an einer fehlenden Stelle nicht liegen (noch nicht
     # gesynct) → Ordner anlegen ist die einzig sinnvolle Default.
@@ -1968,9 +1954,9 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         args += ["--network", "bridge", "--pids-limit", "256",
                  "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,mode=1777"]
         # ✏️-Bereich = Host-Temp-Dir (rw); 🔒-Bereiche = shared Asset-Dir
-        # (rw, damit init.sh schreiben darf). 👤-Pfade NUR in Phase 2
+        # (rw, damit .init.sh schreiben darf). 👤-Pfade NUR in Phase 2
         # (rw aus der privaten Region) — Mount-Enforcement.
-        # /tmp als tmpfs (wie Student-Container): init.sh-Scratch landet
+        # /tmp als tmpfs (wie Student-Container): .init.sh-Scratch landet
         # nicht im Image-Commit (Diff-Skip-Logik, s. Sektions-Header).
         args += ["-v", f"{_daemon_path(tmp.resolve())}:/workspace:rw"]
         for rp in readonly_paths:
@@ -2026,7 +2012,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         return log
 
     try:
-        init_p = base / "init.sh"
+        init_p = priv_dir / ".init.sh"
         priv_p = priv_dir / ".init_hidden.sh"
         has_p1 = init_p.is_file()
         has_p2 = priv_p.is_file()
@@ -2035,16 +2021,16 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
             # sauber abbrechen; kein "failed", da kein Fehler aufgetreten ist.
             _set_init_status(
                 id_key, "none",
-                log_tail="init.sh/.init_hidden.sh nicht mehr vorhanden — "
+                log_tail=".init.sh/.init_hidden.sh nicht mehr vorhanden — "
                          "Build abgebrochen.")
             return
 
-        # ── Phase 1: init.sh (public: darf in ✏️+🔒, NICHT in 👤) ──
+        # ── Phase 1: .init.sh (public: darf in ✏️+🔒, NICHT in 👤) ──
         p1_ref_image: str | None = None   # Phase-1-Commit (nur wenn nötig)
         if has_p1:
             _make_container(image, private_phase=False)
-            shutil.copy2(init_p, tmp / "init.sh")
-            phase_logs.append(_compact_cr_log(_run_script("init.sh")))
+            shutil.copy2(init_p, tmp / ".init.sh")
+            phase_logs.append(_compact_cr_log(_run_script(".init.sh")))
             # Commit NUR bei echten Image-Änderungen (Pakete installieren
             # etc.) — reine Datei-Downloads in /workspace (Bind-Mounts)
             # lassen das Image unverändert (s. _image_changes).
@@ -2110,7 +2096,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
             if not p.is_file():
                 continue
             rel = str(p.relative_to(tmp))
-            if rel in ("init.sh", ".init_hidden.sh"):
+            if rel in (".init.sh", ".init_hidden.sh"):
                 continue
             if any(rel == m or rel.startswith(m + "/") for m in mount_paths):
                 continue
@@ -2128,8 +2114,10 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         for rel in sorted(_dir_file_snapshot(seeds_dir) - seed):
             (seeds_dir / rel).unlink(missing_ok=True)
         # private = Voll-Snapshot: die private Region nimmt ausschließlich
-        # Init-Artefakte auf (zuzüglich .init_hidden.sh als Quelle).
-        private = sorted(p for p in after_private if p != ".init_hidden.sh")
+        # Init-Artefakte auf (die Skript-Quellen .init.sh/.init_hidden.sh
+        # sind KEINE Artefakte — sie kommen per Init-Request vom Backend).
+        private = sorted(p for p in after_private
+                         if p not in (".init.sh", ".init_hidden.sh"))
         # shared = alte Einträge (noch auf Disk) + neue Schreib-Ergebnisse
         # (das Asset-Dir hält daneben die sync-ten User-Dateien → kein
         # Voll-Snapshot möglich).
@@ -2161,13 +2149,43 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         tlock.release()
 
 
+def _persist_init_scripts(course: int, task: int,
+                          init_b64: str | None,
+                          init_private_b64: str | None) -> None:
+    """👤-Skript-Quellen (.init.sh, .init_hidden.sh) in der privaten Region
+    persistieren — sie sind hidden (nicht Teil des Asset-Syncs) und kommen
+    NUR per Init-Request vom Backend (b64).
+
+    LÄUFT VOR dem task_has_init-Check in start_init_build (die Quellen
+    müssen existieren, bevor der Check sie sieht). None → alte Datei
+    entfernen (Task hat das Skript nicht mehr). Legacy-Namen werden
+    mitgeräumt, damit alte Orphans task_has_init nicht täuschen.
+    """
+    base = asset_dir(course, task)
+    priv_dir = base / ".private"
+    try:
+        priv_dir.mkdir(parents=True, exist_ok=True)
+        for name, b64 in ((".init.sh", init_b64),
+                          (".init_hidden.sh", init_private_b64)):
+            if b64 is not None:
+                (priv_dir / name).write_bytes(base64.b64decode(str(b64)))
+            else:
+                (priv_dir / name).unlink(missing_ok=True)
+        (base / "init.sh").unlink(missing_ok=True)
+        (priv_dir / "init_private.sh").unlink(missing_ok=True)
+    except Exception as e:  # noqa: BLE001
+        raise DockerError(f"Init-Skripte konnten nicht persistiert werden: {e}")
+
+
 def start_init_build(course: int, task: int, init_hash: str, image: str,
                      deadline: str | None = None,
                      readonly_paths: list[str] | None = None,
                      hidden_paths: list[str] | None = None,
+                     init_b64: str | None = None,
                      init_private_b64: str | None = None,
                      folders: list[str] | None = None) -> dict:
     """Task-Image-Build starten (idempotent: vorhanden → ready)."""
+    _persist_init_scripts(course, task, init_b64, init_private_b64)
     if not task_has_init(course, task):
         return {"status": "none"}
     ref = task_image_ref(course, task, init_hash)
@@ -2185,7 +2203,7 @@ def start_init_build(course: int, task: int, init_hash: str, image: str,
         target=_do_init_build,
         args=(id_key, course, task, init_hash, image, deadline,
               list(readonly_paths or []), list(hidden_paths or []),
-              init_private_b64, list(folders or [])),
+              list(folders or [])),
         daemon=True).start()
     return {"status": "building", "ref": ref}
 

@@ -612,7 +612,7 @@ def assets_sync(course: int, task: int, body: dict,
                 payload: dict = Depends(auth.verify_token)) -> dict:
     """Assets bringen: Uploads (content_b64), optional Verwaisten aufräumen.
 
-    files: [{path, content_b64}] — Daten-DOWNLOADS laufen in init.sh,
+    files: [{path, content_b64}] — Daten-DOWNLOADS laufen in .init.sh,
     nicht hier. folders: [pfad, …] — explizite Ordner (auch leer) werden
     angelegt und beim Purge behalten. delete_missing=true: Remote-Dateien
     löschen, die lokal nicht mehr existieren (init-Manifest-Dateien und
@@ -754,7 +754,7 @@ async def images_remove(ref: str,
     return {"ok": True, "removed_containers": removed}
 
 
-# ── Task-Images (init.sh-Build, 1× je (Task, init-Hash)) ───────
+# ── Task-Images (.init.sh-Build, 1× je (Task, init-Hash)) ───────
 
 @app.post("/tasks/{course}/{task}/init-build")
 @_translate
@@ -763,10 +763,11 @@ def init_build(course: int, task: int, body: dict,
     """Task-Image-Build starten (idempotent: vorhanden → ready).
 
     Body: {image, init_hash, deadline?, readonly_paths?, hidden_paths?,
-    init_private_b64?, folders?} — image ist die aufgelöste
+    init_b64?, init_private_b64?, folders?} — image ist die aufgelöste
     Spec-Image-Referenz, init_hash = Backend-Hash (Format: 12 Hex-Zeichen),
     readonly/hidden = Top-Level-🔒/👤-Pfade (rw-Mounts im Build),
-    init_private_b64 = 👤-Skript, folders = Ordner-Pfade der Aufgabe
+    init_b64/init_private_b64 = 👤-Skripte .init.sh/.init_hidden.sh
+    (werden in .private/ persistiert), folders = Ordner-Pfade der Aufgabe
     (werden in den Build-Quellen angelegt).
     """
     _op(payload, f"task:{course}:{task}")
@@ -783,12 +784,15 @@ def init_build(course: int, task: int, body: dict,
     folders = []
     for d in body.get("folders") or []:
         folders.append(docker_ops.safe_asset_path(str(d)))
+    init_b64 = body.get("init_b64")
+    if init_b64 is not None:
+        init_b64 = str(init_b64)
     init_private_b64 = body.get("init_private_b64")
     if init_private_b64 is not None:
         init_private_b64 = str(init_private_b64)
     return docker_ops.start_init_build(
         course, task, init_hash, image, body.get("deadline"),
-        readonly_paths, hidden_paths, init_private_b64, folders)
+        readonly_paths, hidden_paths, init_b64, init_private_b64, folders)
 
 
 @app.get("/tasks/{course}/{task}/init-status")
@@ -841,7 +845,7 @@ def init_build_stop(course: int, task: int, body: dict,
 @_translate
 def task_images_delete(course: int, task: int,
                        payload: dict = Depends(auth.verify_token)) -> dict:
-    """Alle Task-Images der Aufgabe löschen (Task-Delete / kein init.sh mehr)."""
+    """Alle Task-Images der Aufgabe löschen (Task-Delete / keine Init-Skripte)."""
     _op(payload, f"task:{course}:{task}")
     removed = docker_ops.remove_task_images(course, task)
     return {"ok": True, "removed": removed}

@@ -322,7 +322,7 @@
       // Mode als Default nehmen (hier „python“) — irreführend vor der ersten
       // Datei. openFile() setzt pro Datei den korrekten Mode.
       mode: "text/plain",
-      theme: "dracula",
+      theme: "oneDark",
       lineNumbers: true,
       autoCloseBrackets: true,
       indentUnit: 4,

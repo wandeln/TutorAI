@@ -340,7 +340,12 @@
       if (!res.ok) throw new Error("Nicht geladen");
       const data = await res.json();
       titleInput.value = data.title || material.title;
-      contentSet(data.content || "");
+      // Erster Inhalt: Editor ist noch leer → setInitialContent() baut
+      // einen frischen State (History beginnt mit dem geladenen Inhalt,
+      // Strg-Z radert nicht den ganzen Inhalt aus). contentSet() bleibt
+      // für Updates (LLM) mit setValue()-Semantik.
+      if (cmContent) cmContent.setInitialContent(data.content || "");
+      else textarea.value = data.content || "";
       summaryInput.value = data.summary || "";
       loadedTitle = titleInput.value;
       loadedContent = contentGet();
@@ -450,74 +455,9 @@
   }
 
   // Zeile exakt an den oberen Rand des Editors scrollen (z. B. den
-  // ---/--) einer Folie).
-  //
-  // CM rendert Zeilen lazy und berechnet den sichtbaren Bereich
-  // (viewFrom..viewTo) über denselben Höhenbaum wie heightAtLine() →
-  // heightAtLine(line, "local") IST die (gespeicherte) Position der
-  // Zielzeile. Ein Scroll genau dorthin bringt die Zeile in den Viewport,
-  // CM rendert sie, und die pixelgenaue DOM-Korrektur braucht nur noch
-  // 1–2 Frames. WICHTIG: kein Viewport-weise Crawling dazwischen —
-  // ungerenderte umgebrochene Zeilen sind im Höhenbaum zu klein, die
-  // wahre Position wandert beim Crawling schneller nach unten, als man
-  // vordringt, und die Zielzeile wird für immer überlaufen (beobachtet:
-  // Scroll bis ans Dokumentende).
-  //
-  // CM5-Fallstricke (in der 5.65.16-Quelle verifiziert):
-  // - „Gerendert" heißt: Zeile im getViewport()-Bereich UND .node
-  //   vorhanden UND isConnected. getLineHandle(line).node verweist
-  //   für ungerenderte Zeilen auf einen gelöschten <pre> (Rect = 0 →
-  //   Jitter) und kann bei inkonsistentem View sogar UNDEFINED sein
-  //   (→ TypeError). Beide Fälle ⇒ als ungerendert behandeln.
-  // - Liegt die Zeile im Viewport, hat aber keinen Node, ist der View
-  //   inkonsistent → einmalig cm.refresh() (View-Neuaufbau; erhält die
-  //   Scroll-Position), sonst aufhören.
-  // - Caller: setCursor(line, ch, {scroll:false}) — options als 3.
-  //   Argument, sonst macht CM5 seinen eigenen „nächster Rand"-
-  //   Cursor-Scroll (→ Trennlinie am unteren Rand statt oben).
-  let scrollToken = 0;
-  function scrollLineToTop(cm, line) {
-    const myToken = ++scrollToken; // neuer Jump bricht ältere Schleifen ab
-    const scroller = cm.getScrollerElement();
-    let tries = 0;
-    let refreshed = false; // cm.refresh() max. einmal je Jump
-    const step = () => {
-      if (myToken !== scrollToken || ++tries > 120) return;
-      // Inhalt könnte sich zwischen den Frames geändert haben (LLM-Update)
-      if (line > cm.lastLine()) return;
-      const si = cm.getScrollInfo();
-      // Echte Scrollgrenze des DOM-Elements (getScrollInfo().height trägt
-      // einen Scrollbar-Breiten-Offset)
-      const maxTop = scroller.scrollHeight - scroller.clientHeight;
-      const vp = cm.getViewport();
-      const handle = line >= vp.from && line < vp.to ? cm.getLineHandle(line) : null;
-      const node = handle && handle.node && handle.node.isConnected ? handle.node : null;
-      if (node) {
-        // Gerendert → pixelgenaue Korrektur an den oberen Rand.
-        const delta = node.getBoundingClientRect().top -
-                      scroller.getBoundingClientRect().top;
-        const target = si.top + delta;
-        // Am Dokumentende (z. B. letzte Folie mit kurzem Rest) hilft
-        // maxTop — die Zeile kann physikalisch nicht ganz nach oben.
-        cm.scrollTo(si.left, target > maxTop ? maxTop : Math.max(0, target));
-        if (Math.abs(delta) < 1 || target > maxTop) return;
-      } else {
-        // (Noch) nicht gerendert → auf die gespeicherte Position springen
-        // (s. oben). Ohne "local" wäre es eine Page-, keine
-        // Scroll-Koordinate!
-        const next = Math.min(Math.max(cm.heightAtLine(line, "local"), 0), maxTop);
-        if (Math.abs(next - si.top) < 1) {
-          // Schätzung erreicht, Zeile aber nicht gerendert → View
-          // inkonsistent (s. oben) → einmalig neu aufbauen, dann aufhören.
-          if (!refreshed) { refreshed = true; cm.refresh(); } else { return; }
-        } else {
-          cm.scrollTo(si.left, next);
-        }
-      }
-      requestAnimationFrame(step);
-    };
-    step();
-  }
+  // ---/--) einer Folie. In CM6 passiert das per cm.scrollToLineTop():
+  // ein einzelner Dispatch (Selection an Zeilenanfang + scrollIntoView
+  // y:"start") — kein Frame-Loop wie in CM5 mehr nötig.
 
   // Render-Schutz: überlappende Renders (schnelles Tippen) dürfen sich
   // nicht mischen — nur der neueste Render darf weiterarbeiten.
@@ -658,11 +598,9 @@
       if (line == null) return;
       // Folien mit Fragment-Markern: „Weiter" blendet zuerst Fragments
       // ein (kein slidechanged-Event → kein Editor-Jump, korrekt so).
-      const pos = { line: Math.min(line, cmContent.lastLine()), ch: 0 };
-      // options als 3. Argument — s. scrollLineToTop-Kommentar.
-      cmContent.setCursor(pos.line, pos.ch, { scroll: false });
-      // Slide-Anfang (--- bzw. --) exakt an den oberen Rand des Editors
-      scrollLineToTop(cmContent, pos.line);
+      // Cursor an den Slide-Anfang (--- bzw. --) + exakt an den oberen
+      // Rand des Editors scrollen (CM6: einziger Dispatch).
+      cmContent.scrollToLineTop(Math.min(line, cmContent.lastLine()));
     });
     if (seq !== previewSeq) {
       // Nur zurückbauen, wenn sie noch die aktuelle Instanz ist
@@ -862,13 +800,13 @@
     ? (CodeMirror.modes.gfm ? "gfm" : (CodeMirror.modes.markdown ? "markdown" : null))
     : null;
   if (cmMode) {
-    // GFM/Markdown-Basismode + TutorAI-Annotationen-Overlay (Formeln,
-    // Boxen, Labels, Referenzen) — s. codemirror-mode-tutorai.js.
-    // Wichtig: NamensSTRING übergeben, nicht die Factory-Funktion —
-    // eine Funktion als Mode-Spec fällt in CM5 stumm auf "text/plain" zurück.
+    // GFM/Markdown-Basismode + TutorAI-Annotationen (Formeln, Boxen,
+    // Labels, Referenzen) — s. codemirror6-setup.js (StateField).
+    // Wichtig: NamensSTRING übergeben — das Setup-Modul mappt den Namen
+    // auf die CM6-Language-Extension.
     const mode = CodeMirror.modes["tutorai-markdown"] ? "tutorai-markdown" : cmMode;
-    // Feste Höhe = Originalhöhe des Textareas (CM5-Default wäre 300 px);
-    // bei größeren Inhalten scrollt der Editor intern wie das alte Textarea.
+    // Feste Höhe = Originalhöhe des Textareas (keine Größen-Sprünge bei
+    // der Initialisierung); bei größeren Inhalten scrollt der Editor intern.
     const h = textarea.offsetHeight || Math.round(window.innerHeight * 0.55);
     cmContent = CodeMirror.fromTextArea(textarea, {
       mode: mode,

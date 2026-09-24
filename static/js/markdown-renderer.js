@@ -3017,8 +3017,8 @@ function createMarkdownEditor(containerId, options = {}) {
   }
 
   // CodeMirror (falls geladen): Markdown-Editor mit Syntax-Highlighting.
-  // Helliges Design: CM-Default-Theme (weißer Hintergrund) — das Dracula-
-  // Theme greift nur für explizit damit initialisierte Code-Editoren.
+  // Helliges Design: CM-Default-Theme (weißer Hintergrund) — das
+  // One-Dark-Theme greift nur für explizit damit initialisierte Code-Editoren.
   // Hinweis: Solange der Editor aktiv ist, enthält das versteckte Textarea
   // nicht den Dokumentinhalt — Werte immer über getValue()/cm.getValue()
   // lesen (cm.save() schreibt sauberen Text zurück ins Textarea).
@@ -3088,8 +3088,10 @@ function createMarkdownEditor(containerId, options = {}) {
   toggleBtn.className = 'text-gray-500 hover:text-gray-700 text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50 transition inline-flex items-center gap-1.5';
   toggleBtn.innerHTML = '<span>👁️</span> <span>Preview</span>';
 
-  // Preview unterhalb des (CodeMirror-)Editors einhängen
-  textarea.parentNode.insertBefore(previewDiv, (cm ? cm.getWrapperElement() : textarea).nextSibling);
+  // Preview unterhalb des (CodeMirror-)Editors einhängen. CM6 (via Shim)
+  // zieht das Textarea in den .ta-cm-Wrapper, daher relativ zum
+  // Editor-Element selbst einhängen (textarea.parentNode wäre der Wrapper):
+  (cm ? cm.getWrapperElement() : textarea).insertAdjacentElement('afterend', previewDiv);
 
   const anchorId = options.buttonAnchor;
   if (anchorId) {
@@ -3098,11 +3100,11 @@ function createMarkdownEditor(containerId, options = {}) {
       anchorEl.appendChild(toggleBtn);
     } else {
       toggleBtn.style.marginTop = '0.5rem';
-      textarea.parentNode.insertBefore(toggleBtn, textarea.nextSibling);
+      previewDiv.insertAdjacentElement('beforebegin', toggleBtn);
     }
   } else {
     toggleBtn.style.marginTop = '0.5rem';
-    textarea.parentNode.insertBefore(toggleBtn, textarea.nextSibling);
+    previewDiv.insertAdjacentElement('beforebegin', toggleBtn);
   }
 
   let isPreview = false;

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# Spiegelt die CodeMirror-5-Dateien (Core, Themes, Addons, Modes) von
+# OBSOLET: Das Projekt nutzt seit der CM6-Migration CodeMirror 6 via CDN
+# (static/js/codemirror6-setup.js); die Vendor-Dateien unter
+# static/vendor/codemirror/ werden nirgends mehr referenziert und bleiben
+# nur für einen möglichen Rollback auf CM5 erhalten. Dieses Skript kann
+# ignoriert/entfernt werden.
+#
+# (Alt) Spiegelt die CodeMirror-5-Dateien (Core, Themes, Addons, Modes) von
 # cdn.jsdelivr.net nach static/vendor/codemirror/ — für jede Maschine
 # reproduzierbar (die Vendor-Dateien sind gitignored).
 #

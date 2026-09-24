@@ -114,8 +114,12 @@
 
 /* ─── Editor-Bereich (nahtlos an den Dateibaum) ──────────────────────── */
 /* CodeMirror füllt die Editor-Spalte komplett aus (kein eigener Rahmen,
-   der Rahmen kommt vom gemeinsamen Baum+Editor-Container). */
-.ws-editor .CodeMirror {
+   der Rahmen kommt vom gemeinsamen Baum+Editor-Container).
+   DOM: .ws-editor > .ta-cm > .cm-editor — beide Ebenen müssen füllen. */
+.ws-editor .ta-cm {
+  height: 100%;
+}
+.ws-editor .cm-editor {
   height: 100%;
   border: none;
   border-radius: 0;

@@ -56,37 +56,22 @@
     }
   </style>
 
-  <!-- CodeMirror (MIT) — nur laden wenn benötigt (lokal gespiegelt) -->
+  <!-- CodeMirror 6 (MIT) — nur laden wenn benötigt (jsDelivr-CDN, pinned).
+       Kein CSS-Link: @codemirror/view injiziert die Basistyle zur Laufzeit.
+       Das Shim (klassisch, synchron) stellt window.CodeMirror sofort für die
+       Inline-Skripts bereit; das ES-Modul lädt den CM6-Kern und upgradet
+       die Platzhalter-Editoren (Undo/Redo, One Dark, Annotationen, NASM). -->
   {% if code_editor %}
-  <link rel="stylesheet" href="{{ asset('vendor/codemirror/codemirror.min.css') }}">
-  <link rel="stylesheet" href="{{ asset('vendor/codemirror/theme/dracula.min.css') }}">
-  <link rel="stylesheet" href="{{ asset('vendor/codemirror/addon/dialog/dialog.min.css') }}">
-  <script src="{{ asset('vendor/codemirror/codemirror.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/python/python.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/xml/xml.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/css/css.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/javascript/javascript.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/htmlmixed/htmlmixed.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/mode/overlay.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/markdown/markdown.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/gfm/gfm.min.js') }}"></script>
-  <!-- Workspace-Presets: C/C++/C++, Shell, YAML, Nginx -->
-  <script src="{{ asset('vendor/codemirror/mode/clike/clike.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/shell/shell.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/yaml/yaml.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/mode/nginx/nginx.min.js') }}"></script>
-  <script src="{{ asset('js/codemirror-mode-tutorai.js') }}"></script>
-  <script src="{{ asset('js/codemirror-mode-nasm.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/edit/closebrackets.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/dialog/dialog.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/search/searchcursor.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/search/search.min.js') }}"></script>
-  <script src="{{ asset('vendor/codemirror/addon/search/jump-to-line.min.js') }}"></script>
-  <script>
-    // Search-Addons lesen cm.options.search (Dialog-Position) — ohne
-    // Default wirft das Addon beim Öffnen des Find-Dialogs einen TypeError.
-    if (window.CodeMirror) CodeMirror.defaults.search = {};
-  </script>
+  <!-- CM6 via CDN: Importmap pinnt alle @codemirror/*- und @lezer/*-
+       Abhängigkeiten auf exakt eine Version pro Paket (wichtig,
+       sonst landen zwei Instanzen von @codemirror/state im Graphen).
+       INLINE statt src=…: Externe Import Maps (src) unterstützt Chrome
+       erst ab v135; inline geht in allen Chrome ≥ 89. Das JSON ist über
+       Jinja-Include ein Teil dieser Seite (HTML ist no-store, daher immer
+       aktuell) — separate Datei: templates/codemirror6-importmap.json. -->
+  <script type="importmap">{% include "codemirror6-importmap.json" %}</script>
+  <script src="{{ asset('js/codemirror6-shim.js') }}"></script>
+  <script type="module" src="{{ asset('js/codemirror6-setup.js') }}"></script>
   {% endif %}
 
   <!-- KaTeX (MIT) — LaTeX-Rendering (lokal gespiegelt) -->

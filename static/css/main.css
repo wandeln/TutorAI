@@ -12,21 +12,58 @@
   opacity: 1;
 }
 
-/* CodeMirror overrides */
-.CodeMirror {
+/* CodeMirror 6 overrides */
+/* .ta-cm: Shim-Wrapper zwischen Container und .cm-editor — füllt die
+   Elternhöhe, damit height:100%-Regeln (Applet, Workspace) trotz der
+   zusätzlichen Ebene greifen. */
+.ta-cm {
+  height: 100%;
+}
+.cm-editor {
   height: 400px;
-  border: 2px solid #e5e7eb;
-  border-radius: 0.5rem;
   font-size: 14px;
+  /* Einheitliches Formularfeld-Styling (wie die anderen Input-Elemente):
+     1px heller Rahmen + 8px Ecken. overflow:hidden schneidet die
+     Gutter-/Scroller-Ecken am Radius ab. Workspace bleibt rahmenlos
+     (workspace.css-Override). */
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+/* Keine Fokus-Rahmen: Der CM6-Kern setzt als Fallback ein gepunktetes
+   Outline auf .cm-editor.cm-focused (Basis-Theme wird zur Laufzeit nach
+   main.css ins <head> injiziert — gleichspezifisch würde der Kern
+   gewinnen, daher über den .ta-cm-Wrapper die Spezifität erhöhen).
+   .cm-content ist im Kern bereits outline:none; der Rest (Scroller,
+   Gutter) defensive gegen den Browser-Standard-Fokus-Ring. */
+.ta-cm .cm-editor.cm-focused,
+.cm-editor:focus-within,
+.cm-content:focus,
+.cm-scroller:focus,
+.cm-gutterElement:focus {
+  outline: none;
+}
+/* Der CM6-Basis-Theme setzt fontFamily:monospace direkt auf .cm-scroller
+   (gleichspezifisch, aber nach main.css injiziert) → mit höherer
+   Spezifität unseren Mono-Stack übergehen. */
+.cm-editor .cm-scroller {
   font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
 }
-.CodeMirror-focused {
-  border-color: #3b82f6;
+
+/* Applet-Studio: Editor füllt die Kachel (fixe Höhe, kein Überlauf) */
+.applet-code-wrapper .cm-editor {
+  height: 100%;
 }
 
-/* Applet-Studio: CodeMirror füllt die Kachel (fixe Höhe, kein Überlauf) */
-.applet-code-wrapper .CodeMirror {
+/* Fallback, falls das CM6-Modul nicht lädt (Offline): der Platzhalter
+   zeigt das Original-Textarea im Wrapper. */
+.ta-cm > textarea.ta-cm-fallback {
+  width: 100%;
   height: 100%;
+  border: none;
+  resize: none;
+  padding: 4px 8px;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
 }
 
 /* Task Card */
@@ -643,48 +680,38 @@
    ═══════════════════════════════════════════════════════════════ */
 
 /* Shared scrollbar styles for dark code surfaces */
-.CodeMirror,
+/* .cm-scroller = CM6-Scroll-Container (Nachfolger der CM5-.CodeMirror) */
+.cm-scroller,
 .markdown-preview pre {
   scrollbar-color: #555c69 transparent;
   scrollbar-width: thin;
-  border-radius: 15px;
+  border-radius: 0.5rem;
   max-width: 100% !important;
   overflow-x: hidden !important;
   white-space: pre;
 }
 
-.CodeMirror::-webkit-scrollbar,
+.cm-scroller::-webkit-scrollbar,
 .markdown-preview pre::-webkit-scrollbar {
   width: 8px;
   height: 8px;
   background: transparent;
 }
 
-.CodeMirror::-webkit-scrollbar-thumb,
+.cm-scroller::-webkit-scrollbar-thumb,
 .markdown-preview pre::-webkit-scrollbar-thumb {
   background-color: #555c69;
   border-radius: 4px;
 }
 
-.CodeMirror::-webkit-scrollbar-thumb:hover,
+.cm-scroller::-webkit-scrollbar-thumb:hover,
 .markdown-preview pre::-webkit-scrollbar-thumb:hover {
   background-color: #6b7280;
 }
 
-.CodeMirror::-webkit-scrollbar-track,
+.cm-scroller::-webkit-scrollbar-track,
 .markdown-preview pre::-webkit-scrollbar-track {
   background: transparent;
-}
-
-/* CodeMirror-v5 specific scrollbar overlays */
-.CodeMirror-vscrollbar,
-.CodeMirror-hscrollbar {
-  opacity: 0.5;
-}
-
-.CodeMirror-vscrollbar:hover,
-.CodeMirror-hscrollbar:hover {
-  opacity: 1;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -772,36 +799,35 @@ a.tutorai-xref {
 }
 
 /* ─── CodeMirror: Markdown-Editoren (createMarkdownEditor / Folien) ───
-   Helliges Design: CM-Default-Theme (weißer Hintergrund), angepasst an die
-   sonstigen Formularfelder (Rahmen, Ecken, Zeilenhöhe, Fokus-Ring). */
-.md-codemirror .CodeMirror {
+   Helliges Design: CM-Default-Theme (weißer Hintergrund). Rahmen und
+   Ecken kommen aus der globalen .cm-editor-Regel (Formularfeld-Styling). */
+.md-codemirror .cm-editor {
+  height: 100%;
   overflow: hidden;
-  border: 1px solid #d1d5db;
-  border-radius: 0.5rem;
   background: #fff;
   color: #111827;
   font-size: 0.875rem;
+}
+
+.md-codemirror .cm-editor .cm-scroller {
   line-height: 1.625;
 }
 
-.md-codemirror .CodeMirror:focus-within {
-  border-color: #3b82f6;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
-}
-
-.md-codemirror .CodeMirror-gutters {
+.md-codemirror .cm-gutters {
   background: #f9fafb;
   border-right: 1px solid #e5e7eb;
 }
 
-/* Search-Addons: gelber Hintergrund für Suchtreffer (alle CM-Editoren) */
-.CodeMirror-searching {
+/* Search: gelber Hintergrund für Suchtreffer (alle CM-Editoren) */
+.cm-searchMatch {
   background: #fde68a;
 }
+.cm-searchMatch-selected {
+  background: #fcd34d;
+}
 
-/* TutorAI-Annotationen (Overlay-Mode „tutorai-annotations“): */
-.md-codemirror .cm-ta-math { color: #b91c1c; }   /* LaTeX: $…$, $$…$$ */
-.md-codemirror .cm-ta-box { color: #0f766e; font-weight: 600; }  /* @startbox/@endbox */
-.md-codemirror .cm-ta-label { color: #7c3aed; }   /* {#typ:label} u. ä. */
-.md-codemirror .cm-ta-ref { color: #2563eb; }     /* @typ:label */
+/* TutorAI-Annotationen (StateField „tutorai-annotations“): */
+.cm-ta-math { color: #b91c1c; }   /* LaTeX: $…$, $$…$$ */
+.cm-ta-box { color: #0f766e; font-weight: 600; }  /* @startbox/@endbox */
+.cm-ta-label { color: #7c3aed; }   /* {#typ:label} u. ä. */
+.cm-ta-ref { color: #2563eb; }     /* @typ:label */

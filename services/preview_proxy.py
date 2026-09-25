@@ -214,7 +214,7 @@ class _FrameReader:
     async def next(self) -> tuple[bool, int, bytes] | None:
         """(fin, opcode, payload); None = EOF."""
         try:
-            b0, b1 = self._take(2)
+            b0, b1 = await self._take(2)
         except _WsEof:
             return None
         fin = bool(b0 & 0x80)
@@ -496,8 +496,6 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
         resp_head_b, resp_leftover = await asyncio.wait_for(
             read_head(a_reader), timeout=_HEAD_TIMEOUT)
         status, resp_headers = parse_response_head(resp_head_b)
-        logger.warning("[WS-T] upstream head status=%s leftover=%s",
-                       status, resp_leftover.hex()[:40])  # TODO-debug
     except (OSError, HeadError, asyncio.TimeoutError, ValueError):
         await _aclose(a_writer)
         await websocket.close(code=1011)
@@ -515,10 +513,8 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
         await websocket.accept(
             subprotocol=sub.decode("latin-1") if sub else None)
     except Exception:
-        logger.warning("[WS-T] accept failed", exc_info=True)  # TODO-debug
         await _aclose(a_writer)
         return
-    logger.warning("[WS-T] accepted, starting pumps")  # TODO-debug
 
     frames = _FrameReader(a_reader, resp_leftover)
 
@@ -527,7 +523,6 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
             while True:
                 msg = await websocket.receive()
                 t = msg["type"]
-                logger.warning("[WS-T] b2a msg type=%s", t)  # TODO-debug
                 if t == "websocket.receive":
                     if "text" in msg:
                         opcode, payload = 0x1, msg["text"].encode("utf-8")
@@ -540,11 +535,7 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
                     try:
                         a_writer.write(_encode_frame(opcode, payload))
                         await a_writer.drain()
-                        logger.warning("[WS-T] b2a sent %d payload bytes",
-                                       len(payload))  # TODO-debug
                     except Exception:
-                        logger.warning("[WS-T] b2a write failed",
-                                       exc_info=True)  # TODO-debug
                         return
                 elif t == "websocket.disconnect":
                     code = msg.get("code") or 1000
@@ -567,10 +558,7 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
                 try:
                     fr = await frames.next()
                 except Exception:
-                    logger.warning("[WS-T] a2b frame error",
-                                   exc_info=True)  # TODO-debug
                     raise
-                logger.warning("[WS-T] a2b frame=%s", fr)  # TODO-debug
                 if fr is None:
                     break
                 fin, op, payload = fr
@@ -623,8 +611,6 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
     t2 = asyncio.create_task(_agent_to_browser())
     done, _pending = await asyncio.wait({t1, t2},
                                         return_when=asyncio.FIRST_COMPLETED)
-    logger.warning("[WS-T] first done: %s",
-                   ["b2a" if t is t1 else "a2b" for t in done])  # TODO-debug
     for t in (t1, t2):
         t.cancel()
     for t in (t1, t2):

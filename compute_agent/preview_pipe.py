@@ -23,9 +23,14 @@ class HeadError(Exception):
     """Head unvollständig, zu groß oder defekt."""
 
 
+# WICHTIG: bytes! Header-Namen sind überall bytes (s. parse_*_head) —
+# ein str-Frozenset würde nie matchen und Hop-by-Hop-Header (u. a.
+# connection) ungefiltert durchlassen (→ doppelte Connection-Header,
+# Upgrade-Erkennung tot, App hält Connection offen → Relay-Leaks).
 HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailer", "transfer-encoding", "upgrade",
+    b"connection", b"keep-alive", b"proxy-authenticate",
+    b"proxy-authorization", b"te", b"trailer", b"transfer-encoding",
+    b"upgrade",
 })
 
 
@@ -119,7 +124,7 @@ def build_response_head(status: int,
     (101: upgrade beibehalten; sonst connection: close)."""
     lines = [f"HTTP/1.1 {status}".encode("latin-1")]
     for name, value in headers:
-        if name in ("connection", "keep-alive"):
+        if name in (b"connection", b"keep-alive"):
             continue
         lines.append(name + b": " + value)
     if status == 101:
@@ -162,11 +167,15 @@ async def read_head(reader, cap: int = 65536) -> tuple[bytes, bytes]:
     return bytes(buf[:end]), bytes(buf[end:])
 
 
-async def _pump(read, write) -> None:
-    """read() → bytes (b'' = EOF) bis write(bytes); stoppt bei EOF/Fehler."""
+async def _pump(read, write, timeout: float | None = None) -> None:
+    """read() → bytes (b'' = EOF) bis write(bytes); stoppt bei
+    EOF/Fehler/Idle-Timeout (Gegenstelle totstill ohne FIN/RST)."""
     while True:
         try:
-            data = await read()
+            if timeout is not None:
+                data = await asyncio.wait_for(read(), timeout)
+            else:
+                data = await read()
         except Exception:
             return
         if not data:
@@ -177,14 +186,15 @@ async def _pump(read, write) -> None:
             return
 
 
-async def pump_pair(read_a, write_a, read_b, write_b) -> None:
+async def pump_pair(read_a, write_a, read_b, write_b,
+                    idle_timeout: float | None = None) -> None:
     """Zwei Richtungen parallel pumpen; endet, wenn eine Richtung
-    EOF/Fehler erreicht (dann wird die andere abgebrochen).
+    EOF/Fehler/Idle-Timeout erreicht (dann wird die andere abgebrochen).
 
     read_x: async, liefert bytes (b'' = EOF) · write_x: async(bytes).
     """
-    t1 = asyncio.create_task(_pump(read_a, write_a))
-    t2 = asyncio.create_task(_pump(read_b, write_b))
+    t1 = asyncio.create_task(_pump(read_a, write_a, idle_timeout))
+    t2 = asyncio.create_task(_pump(read_b, write_b, idle_timeout))
     await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
     for t in (t1, t2):
         t.cancel()
@@ -227,7 +237,7 @@ class _ChunkedFraming:
                 self.state = "BODY" if self.chunk else "TRAIL"
             elif self.state == "BODY":
                 n = min(self.chunk, len(self.buf))
-                del self.buf[:n]
+                self.buf = self.buf[n:]  # bytes: kein Slice-Del möglich
                 self.chunk -= n
                 if self.chunk == 0:
                     self.state = "BODYCRLF"

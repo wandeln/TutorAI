@@ -555,7 +555,16 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
         "--read-only",
         "--tmpfs", _TMPFS_SPEC,
         "-v", f"{volume_name(key)}:/workspace",
-        "--pids-limit", "256",
+        # 1024 (war 256→512): ML-Kernels sind thread-hungrig — ein
+        # torch-Training ohne OMP_NUM_THREADS size OpenBLAS/OMP/CPU-Pools
+        # auf die Host-Core-Zahl (einziger Kernel: 200–300 Threads), dazu
+        # TB (~53) + Jupyter + Preview-Relays. 512 war bei Kernel + 2
+        # Preview-Apps zu knapp → EAGAIN („can't start new thread", Relays
+        # starben, Dateibaum leerte sich). 1024 gibt Luft; Fork-Bomb-Schutz
+        # bleibt: CPU-Limit + Memory-Limit begrenzen den Schaden, die Bomb
+        # pinnt den Container auf 1024 (≈1024 threads ≈ CPU-Spin, kein
+        # Host-Kern-Druck).
+        "--pids-limit", "1024",
         # Isoliertes Netz pro Container (Outbound via NAT, KEINE
         # Container-Sichtbarkeit) — nicht die geteilte Default-Bridge.
         "--network", (ws_network_name(key) if spec["internet"] else "none"),
@@ -598,7 +607,12 @@ def _mounts_hash(spec: dict, course: int, task: int) -> str:
     Container ewig die alte Datei-Version. Ordner-Quellen sind live
     (Inode stabil), da genügt Vorhandensein."""
     a_dir = asset_dir(course, task)
-    parts = [f"tmpfs:{_TMPFS_SPEC}"]  # Spec-Wechsel zwingt einmalige Recreate
+    # `pvb:4` = PIDs-Limit 512→1024 (s. _build_create_args) — statischer
+    # Marker zwingt beim Agent-Update die einmalige Recreate aller
+    # bestehenden Container (die das alte Limit tragen). WICHTIG: Marker
+    # und Create-Args immer gemeinsam deployen, sonst stimmt der Hash nie
+    # und der Container wird bei jedem Access rekriert.
+    parts = [f"tmpfs:{_TMPFS_SPEC}", "pvb:4"]  # Spec-Wechsel zwingt einmalige Recreate
     for rp in sorted(spec.get("readonly_paths") or []):
         src = a_dir / rp
         if src.is_dir():
@@ -820,22 +834,38 @@ def ensure_relay(key: str) -> None:
     Volumes (hier: tmpfs /tmp) ab („container rootfs is marked
     read-only") — das Binary wird stattdessen per exec-stdin gestreamt
     (sh-Redirect schreibt in die schreibbare tmpfs).
+
+    Stale-Check via SHA-256 (Marker-Datei /tmp/.relay_sha): Nach einem
+    Agent-Image-Update (geändertes Relay-Binary) wird das Binary in
+    LAUFENDEN Containern automatisch ersetzt.
     """
     _ensure_running(key)
     with _RELAY_LOCK:
         if key in _RELAY_CACHE:
             return
-    if not Path(config.RELAY_PATH).exists():
+    rel = Path(config.RELAY_PATH)
+    if not rel.exists():
         raise DockerError(
             "Relay-Binary fehlt im Agent — compute-agent neu bauen "
             "bzw. scripts/build_relay.sh ausführen", 500)
-    code, _out, _err, _ = _run_capped(
-        ["docker", "exec", container_name(key), "sh", "-c", "test -x /tmp/relay"],
+    want = hashlib.sha256(rel.read_bytes()).hexdigest()
+    code, out, _err, _ = _run_capped(
+        ["docker", "exec", container_name(key), "sh", "-c",
+         "test -x /tmp/relay && cat /tmp/.relay_sha 2>/dev/null"],
         timeout=30, cap=1024)
-    if code != 0:
+    have = out.decode("latin-1").strip()
+    if code != 0 or have != want:
+        # Temp+Rename (atomares mv): /tmp/relay lässt sich NICHT
+        # überschreiben, solange ein Relay-Prozess mit dem alten Binary
+        # noch läuft (ETXTBSY „Text file busy") — bei aktivem
+        # Preview-Traffic wäre das Update sonst ein harter 500. Mit
+        # mv hält der alte Prozess sein altes Inode weiter (läuft
+        # sauber aus), neue Execs bekommen automatisch das neue Binary.
         _docker("exec", "-i", container_name(key), "sh", "-c",
-                "cat > /tmp/relay && chmod +x /tmp/relay",
-                input_bytes=Path(config.RELAY_PATH).read_bytes(),
+                f"cat > /tmp/relay.new && chmod +x /tmp/relay.new "
+                f"&& mv -f /tmp/relay.new /tmp/relay "
+                f"&& echo {want} > /tmp/.relay_sha",
+                input_bytes=rel.read_bytes(),
                 timeout=120)
     with _RELAY_LOCK:
         _RELAY_CACHE.add(key)
@@ -1029,6 +1059,13 @@ def list_files(key: str) -> list[dict]:
          "sh", "-c", "find /workspace -type f -printf '%s %p\\n' 2>/dev/null"],
         timeout=30, cap=10_000_000,
     )
+    if code != 0:
+        # exec scheitert u. a. am PIDs-Limit des Containers (EAGAIN). Vorher
+        # wurde still eine LEERE Liste geliefert → der Dateibaum im UI "leerte"
+        # sich ohne jeden Fehler (nur DB-gepflegte Ordner blieben sichtbar).
+        raise DockerError(
+            "Dateilistung fehlgeschlagen — Container nicht antwortfähig "
+            "(PIDs-/Ressourcen-Limit?)", 500)
     files = []
     for line in out_b.decode(errors="replace").splitlines():
         if " " not in line:
@@ -1049,6 +1086,11 @@ def list_dirs(key: str) -> list[str]:
          "sh", "-c", "find /workspace -mindepth 1 -type d -printf '%p\\n' 2>/dev/null"],
         timeout=30, cap=1_000_000,
     )
+    if code != 0:
+        # s. list_files: keine stille Leere-Liste bei Executor-Fehlern.
+        raise DockerError(
+            "Verzeichnisliste fehlgeschlagen — Container nicht "
+            "antwortfähig (PIDs-/Ressourcen-Limit?)", 500)
     dirs = []
     for line in out_b.decode(errors="replace").splitlines():
         rel = line[len("/workspace/"):]
@@ -1951,7 +1993,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         ]
         if deadline:
             args += ["--label", f"tutorai.task.deadline={deadline}"]
-        args += ["--network", "bridge", "--pids-limit", "256",
+        args += ["--network", "bridge", "--pids-limit", "1024",
                  "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,mode=1777"]
         # ✏️-Bereich = Host-Temp-Dir (rw); 🔒-Bereiche = shared Asset-Dir
         # (rw, damit .init.sh schreiben darf). 👤-Pfade NUR in Phase 2

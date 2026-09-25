@@ -700,7 +700,6 @@ def ensure_container(key: str, spec: dict) -> dict:
         # Image-/Mount-Mismatch → Container weg (Volume bleibt), neu anlegen
         clean_phantom_mounts(key)  # Mount-Point-Reste VOR dem Rm räumen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
-        invalidate_relay_cache(key)
         state = None
     if state == "running":
         return {"state": "running", "fresh": False}
@@ -719,7 +718,6 @@ def remove_workspace(key: str) -> None:
     c = container_name(key)
     if container_state(key) is not None:
         _docker("rm", "-f", c, timeout=60, check=False)
-    invalidate_relay_cache(key)
     _docker("volume", "rm", volume_name(key), check=False)
     remove_ws_network(key)
 
@@ -729,7 +727,6 @@ def stop_container_only(key: str) -> None:
     if container_state(key) is not None:
         clean_phantom_mounts(key)  # Mount-Point-Reste VOR dem Rm räumen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
-        invalidate_relay_cache(key)
         remove_ws_network(key)
 
 
@@ -815,40 +812,45 @@ def _ensure_running(key: str) -> None:
 
 # ── Preview-Relay ───────────────────────────────────────────────
 
-_RELAY_CACHE: set[str] = set()
-_RELAY_LOCK = threading.Lock()
+_RELAY_LOCAL_SHA: str | None = None  # SHA des lokalen Binaries (lazy, 1×)
 
 
-def invalidate_relay_cache(key: str) -> None:
-    """Nach Container-Recreate: /tmp (tmpfs) ist wieder leer."""
-    with _RELAY_LOCK:
-        _RELAY_CACHE.discard(key)
+def _relay_local_sha() -> str:
+    """SHA-256 des lokalen Relay-Binaries (lazys — 2 MB nur 1× lesen)."""
+    global _RELAY_LOCAL_SHA
+    if _RELAY_LOCAL_SHA is None:
+        rel = Path(config.RELAY_PATH)
+        if not rel.exists():
+            raise DockerError(
+                "Relay-Binary fehlt im Agent — compute-agent neu bauen "
+                "bzw. scripts/build_relay.sh ausführen", 500)
+        _RELAY_LOCAL_SHA = hashlib.sha256(rel.read_bytes()).hexdigest()
+    return _RELAY_LOCAL_SHA
 
 
 def ensure_relay(key: str) -> None:
     """Relay-Binary im Container sicherstellen (/tmp/relay, on-demand).
 
-    Gecacht je Key; Cache wird bei Container-Recreate invalidiert
-    (tmpfs /tmp ist frisch → Binary weg). KEIN docker cp: der Container
-    hat read-only Rootfs, und der Daemon lehnt cp-Ziele außerhalb der
-    Volumes (hier: tmpfs /tmp) ab („container rootfs is marked
-    read-only") — das Binary wird stattdessen per exec-stdin gestreamt
-    (sh-Redirect schreibt in die schreibbare tmpfs).
+    IMMER In-Container-Check (SHA-256-Marker /tmp/.relay_sha), bewusst
+    KEIN In-Memory-Cache: /tmp (tmpfs) kann jederzeit leergefegt werden
+    (Container-Recreate, manuelles Aufräumen im Terminal) — ein
+    veralteter Cache würde dann ALLE Previews mit 502 blockieren,
+    bis der Agent neu startet (empirisch beobachtet). Der Check ist
+    ein kleiner `docker exec` (test -x + cat) — vernachlässigbar
+    gegenüber dem Relay-Spawn selbst.
 
-    Stale-Check via SHA-256 (Marker-Datei /tmp/.relay_sha): Nach einem
-    Agent-Image-Update (geändertes Relay-Binary) wird das Binary in
-    LAUFENDEN Containern automatisch ersetzt.
+    KEIN docker cp: der Container hat read-only Rootfs, und der Daemon
+    lehnt cp-Ziele außerhalb der Volumes (hier: tmpfs /tmp) ab
+    („container rootfs is marked read-only") — das Binary wird
+    stattdessen per exec-stdin gestreamt (sh-Redirect schreibt in die
+    schreibbare tmpfs).
+
+    Nach einem Agent-Image-Update (geändertes Relay-Binary) weicht der
+    SHA ab → das Binary wird in LAUFENDEN Containern automatisch
+    ersetzt.
     """
     _ensure_running(key)
-    with _RELAY_LOCK:
-        if key in _RELAY_CACHE:
-            return
-    rel = Path(config.RELAY_PATH)
-    if not rel.exists():
-        raise DockerError(
-            "Relay-Binary fehlt im Agent — compute-agent neu bauen "
-            "bzw. scripts/build_relay.sh ausführen", 500)
-    want = hashlib.sha256(rel.read_bytes()).hexdigest()
+    want = _relay_local_sha()
     code, out, _err, _ = _run_capped(
         ["docker", "exec", container_name(key), "sh", "-c",
          "test -x /tmp/relay && cat /tmp/.relay_sha 2>/dev/null"],
@@ -861,14 +863,13 @@ def ensure_relay(key: str) -> None:
         # Preview-Traffic wäre das Update sonst ein harter 500. Mit
         # mv hält der alte Prozess sein altes Inode weiter (läuft
         # sauber aus), neue Execs bekommen automatisch das neue Binary.
+        rel = Path(config.RELAY_PATH)
         _docker("exec", "-i", container_name(key), "sh", "-c",
                 f"cat > /tmp/relay.new && chmod +x /tmp/relay.new "
                 f"&& mv -f /tmp/relay.new /tmp/relay "
                 f"&& echo {want} > /tmp/.relay_sha",
                 input_bytes=rel.read_bytes(),
                 timeout=120)
-    with _RELAY_LOCK:
-        _RELAY_CACHE.add(key)
 
 
 def _run_capped(cmd: list[str], timeout: int, cap: int,

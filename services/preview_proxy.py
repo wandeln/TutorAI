@@ -143,12 +143,22 @@ def _up_headers(headers, *, upgrade: bool) -> list[tuple[str, str]]:
 
 def _build_up_head(method: str, target: str,
                    headers: list[tuple[str, str]], token: str,
-                   port: int) -> bytes:
+                   port: int, host: str | None = None) -> bytes:
+    """Head für die Agent-Leiste.
+
+    `host`: Original-Host (z. B. die Preview-Subdomain) — MUSS
+    weitergereicht werden: Ziel-Apps (v. a. JupyterServer) vergleichen
+    Origin/Referer mit dem Host-Header (XSRF/XSSI-Schutz); würde
+    127.0.0.1:<port> ankommen, blöckt das alle Browser-Requests mit
+    Origin/Referer (Datei-Öffnen, Datei-Anlegen, WebSockets).
+    Fallback nur, wenn der Request ohne Host ankommt.
+    """
     hdrs = [(n.encode("latin-1"), v.encode("latin-1")) for n, v in headers]
+    host_hdr = host or f"127.0.0.1:{port}"
     return build_request_head(
         method, target, hdrs,
         extra=[(b"x-agent-token", token.encode("latin-1")),
-               (b"host", f"127.0.0.1:{port}".encode("latin-1"))])
+               (b"host", host_hdr.encode("latin-1"))])
 
 
 def _parse_preview_path(rest: str, query: str) -> tuple[int | None, str]:
@@ -586,7 +596,7 @@ async def preview_http(task_id: int, rest: str, request: Request):
     try:
         a_writer.write(_build_up_head(
             method, f"/ws-preview/{key}/preview/{port}{up_path}",
-            headers, token, port))
+            headers, token, port, host=request.headers.get("host")))
         await a_writer.drain()
         try:
             async for chunk in request.stream():
@@ -701,7 +711,7 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
     try:
         a_writer.write(_build_up_head(
             "GET", f"/ws-preview/{key}/preview/{port}{up_path}",
-            headers, token, port))
+            headers, token, port, host=websocket.headers.get("host")))
         await a_writer.drain()
         resp_head_b, resp_leftover = await asyncio.wait_for(
             read_head(a_reader), timeout=_HEAD_TIMEOUT)

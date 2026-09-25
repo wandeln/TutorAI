@@ -43,6 +43,13 @@ DEBUG = os.getenv("DEBUG", "true").lower() in ("true", "1", "yes")
 # Port des Agent-Preview-Servers (compute_agent, PREVIEW_AGENT_PORT dort;
 # nur Agent-Netz, kein Host-Publish) — Ziel des Backend-Preview-Proxy.
 PREVIEW_AGENT_PORT = int(os.getenv("PREVIEW_AGENT_PORT", "8701"))
+# Basis-Domain der Preview-Subdomains (Workspace-Web-UIs): jede App
+# bekommt https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/ —
+# die Apps laufen auf / (kein Base-Pfad), Routing/Auth übernimmt die
+# Middleware in services/preview_proxy.py. Voraussetzungen: Wildcard-
+# DNS + TLS (Wildcard-Zertifikat) + Nginx-Server-Block OHNE
+# X-Frame-Options. Leer = aus.
+PREVIEW_BASE_DOMAIN = os.getenv("PREVIEW_BASE_DOMAIN", "").strip().lower()
 
 # ─── Datenbank ──────────────────────────────────────────────────
 DATABASE_URL = os.getenv(

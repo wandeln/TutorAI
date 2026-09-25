@@ -208,6 +208,7 @@ class TaskBase(SQLModel):
     # Compute-Engines + Image-Specs, s. docs/plan-compute-engines-images.md:
     workspace_engines: Optional[str] = Field(default=None)      # JSON-Liste Engine-Namen (geordnet) — Pool für Routing/Prebuild
     workspace_image: Optional[str] = Field(default=None, max_length=50)  # Image-Spec-Name (Kurs-Scope > global)
+    workspace_preview_root_ports: Optional[str] = Field(default=None)  # VERWORFEN (Subdomain-Preview) — Spalte bleibt, ungenutzt
 
 
 class Task(TaskBase, table=True):

@@ -1,6 +1,48 @@
 # Plan: Workspace-Preview & Terminal (Relay-Variante 2)
 
-**Status: Umsetzung Phase 1** (Stand: 2026-09-22; seit 2026-09-23: Backend-Preview-Proxy vom Zweit-Port :8100 (raw asyncio) auf ASGI-Routes auf dem Haupt-Port migriert — Mixed-Content-Fix, s. Architektur)
+**Status: Subdomain-Preview** (Stand: 2026-09-25; davor: Backend-Preview-Proxy vom Zweit-Port :8100 (raw asyncio) auf ASGI-Routes auf dem Haupt-Port migriert — Mixed-Content-Fix, s. Architektur)
+
+## Subdomain-Preview (2026-09-25, ersetzt Base-Pfad-Design)
+
+Jede Workspace-Web-App (Jupyter, TensorBoard, …) bekommt eine **eigene
+Subdomain** — die Apps laufen auf `/` (kein Base-Pfad mehr, kein
+`TUTORAI_PREVIEW_BASE`, keine Root-Ports):
+
+```
+https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/<app-path>
+  └─ Label:  task/port/user + 24-Bit-Tag aus SECRET (ungütselbar)
+  └─ Auth:   access_token-Cookie (User MUSS zum Label-User passen)
+             + üblicher Task/Course-Check (dieselbe Logik wie Pfad-Modus)
+```
+
+- **Routing**: rohe ASGI-Middleware (`PreviewSubdomainMiddleware`,
+  `services/preview_proxy.py`) vor dem Router; HTTP+WS delegieren auf
+  `preview_http`/`preview_ws` (Agent-Leiste forwardet jetzt den App-Pfad
+  DIREKT an die App, s. `compute_agent/preview.py`).
+- **Cookie-Bootstrap**: Der TutorAI-Cookie ist hostgebunden → fehlt auf
+  der Subdomain. UI nutzt daher immer den **Handoff-Endpoint**
+  `GET /preview-handoff/{task}?port=<p>[&path=<sub>]` (302 →
+  `https://<label>…/__preview_auth?ticket=<JWT-60s-once>` → Middleware
+  validiert Ticket (Signatur, Bindung an task/port/user, One-Shot-jti),
+  setzt den access_token-Cookie auf der Subdomain, 302 → App). Der
+  Ticket-Link zeigt nie die App (kein Referer-Leak), iframe ODER neuer
+  Tab — danach sind alle Requests (inkl. WS) Cookie-basiert.
+- **Konfiguration**: `PREVIEW_BASE_DOMAIN` (`.env`, leer = aus). Vor-
+  aussetzungen: Wildcard-DNS `*.DOMAIN` → Server-IP, TLS-Wildcard-Zert
+  (Let's Encrypt nur via DNS-01: IT setzt 1× TXT auf
+  `_acme-challenge.DOMAIN`), Nginx-Server-Block mit WS-Upgrade,
+  `proxy_buffering off`, langem read/send-Timeout und **OHNE
+  X-Frame-Options** (Preview läuft im iframe der Hauptdomain; same-Site
+  → Samesite=Lax-Cookies werden auch im iframe mitgesendet).
+- **Verworfen**: `TUTORAI_PREVIEW_BASE`-Env + Full-Path-Forwarding
+  (`/preview/<task>/<port>`-Base-Pfad in den Apps) und
+  `preview_root_ports` (Ports ohne Base-Path). Die DB-Spalte
+  `tasks.workspace_preview_root_ports` bleibt existieren, ungenutzt.
+  `spec.parse_spec` ignoriert den alten Spec-Key still (Update-Transit
+  zwischen alten/neuen Instanzen).
+- Einmalige **Container-Recreate** beim Update (Mount-Hash-Marker
+  `pvb:2` — Container dürfen das alte Env nicht mehr tragen); laufende
+  App-Prozesse (Jupyter & Co.) müssen danach neu gestartet werden.
 
 ## Ziel
 
@@ -255,12 +297,13 @@ Zwei neue kleine Sektionen **unter dem Verzeichnis-Tree** (linke Spalte):
   raw TCP + `Connection: close`.
 - `X-Frame-Options`/CSP werden im Proxy entfernt (iframe-Erfordernis;
   lokale Installation).
-- **Bekannte Einschränkung (lokale Single-User-Setup)**: alle Previews
+- **Bekannte Einschränkung (Pfad-Modus, ohne Subdomain)**: alle Previews
   teilen den Haupt-Origin (z. B. `127.0.0.1:8000`) → Site-Cookies
   (z. B. Jupyter-Session) sind pro Port, nicht pro Aufgabe getrennt.
   Absolute Asset-Pfade in der previewten App (z. B. `/static/…`)
   laden gegen den TutorAI-Origin — nur relative Pfade zuverlässig.
-  Für Multi-User-Produktion später: Subdomain- oder Port-Map pro Preview.
+  Mit Subdomain-Modus (`PREVIEW_BASE_DOMAIN`): jedes Port bekommt
+  eigene Origin/Cookie-Domain — eingeschränkt gelöst.
 - Relay: nur Loopback-Dial im Container, kein eigener Listener, kein
   Root. `pids-limit 256` & Co. bleiben bestehen.
 

@@ -33,7 +33,7 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import TemplateNotFound
 from sqlmodel import Session, select
 
-from config import BASE_DIR, DEBUG, LLM_TIMEOUT
+from config import BASE_DIR, DEBUG, LLM_TIMEOUT, PREVIEW_BASE_DOMAIN
 from database.base import create_db_and_tables, engine, get_session, migrate_schema
 from database.models import (
     Course,
@@ -290,6 +290,12 @@ async def _cors_for_static_fonts(request: Request, call_next):
     ):
         response.headers["Access-Control-Allow-Origin"] = "*"
     return response
+
+
+# Preview-Subdomains (rohes ASGI-Middleware für HTTP + WebSocket) —
+# MUSS nach den @app.middleware("http")-Aufrufen hinzukommen, damit es
+# äußerste (zuerst laufende) Schicht ist (s. services/preview_proxy.py).
+app.add_middleware(preview_proxy.PreviewSubdomainMiddleware)
 
 
 # API-Routes
@@ -1762,6 +1768,8 @@ async def task_page(
             "total_attempts": len(my_submissions),
             "task_percentile": task_percentile,
             "task_group_avg": task_group_avg,
+            # Preview-Subdomain-Basis (leer/null = aus, s. config)
+            "preview_base_domain": PREVIEW_BASE_DOMAIN or None,
 
             "LLM_TIMEOUT": LLM_TIMEOUT,
             "prev_task": {"id": prev_task.id, "title": prev_task.title} if prev_task else None,

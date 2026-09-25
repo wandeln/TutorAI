@@ -160,6 +160,10 @@
   const WS_MAIN_FILE = {{ task.workspace_main_file | tojson }};
   // Preview-Proxy auf dem Haupt-Port (same-origin → kein Mixed Content)
   const PREVIEW_BASE = "";
+  // Subdomain-Modus (gesetzt = PREVIEW_BASE_DOMAIN): jede App-Port hat
+  // eine eigene Subdomain, die Apps laufen auf / — der Handoff-Endpoint
+  // (302-Kette) setzt beim Erstbesuch den Cookie auf der Subdomain.
+  const PREVIEW_DOMAIN = {{ preview_base_domain | tojson }};
 
   // ─── Section-Collapse (Terminals / Ports) ─────────────────
   // Chevron links in der Bar: Liste ein-/ausklappen (Design wie
@@ -771,10 +775,17 @@
     wsSecSync("ports");
   }
 
-  // Adresse = /preview/{task}/{port} + Subpath. In der Leiste zeigt nur
-  // das „wichtige Ende“ (Subpath, z. B. /greet/world) — die volle URL
+  // Adresse = Subdomain (Handoff, s. PREVIEW_DOMAIN) ODER
+  // /preview/{task}/{port} + Subpath. In der Leiste zeigt nur das
+  // „wichtige Ende“ (Subpath, z. B. /greet/world) — die volle URL
   // liefert „↗ In neuem Tab öffnen“.
   function wsPrevUrl(sub) {
+    if (PREVIEW_DOMAIN) {
+      // Subdomain-Modus: Label kennt nur der Server → immer über den
+      // Handoff (setzt Cookie, 302 auf die App). Subpath als path-Param.
+      return "/preview-handoff/" + {{ task.id }} + "?port=" + wsPrev.port +
+             (sub && sub !== "/" ? "&path=" + encodeURIComponent(sub) : "");
+    }
     return PREVIEW_BASE + "/preview/" + {{ task.id }} + "/" + wsPrev.port +
            (sub === "/" ? "/" : sub);
   }
@@ -807,6 +818,7 @@
   // ohne laufende Eingaben zu überschreiben.
   document.getElementById("ws-preview-frame").addEventListener("load", () => {
     if (wsView !== "preview" || !wsPrev.port) return;
+    if (PREVIEW_DOMAIN) return;  // Subdomain: Cross-Origin, keine Sync möglich
     const input = document.getElementById("ws-preview-url");
     if (document.activeElement === input) return;
     try {

@@ -34,23 +34,32 @@ relative Pfade laden zuverlässig (wie beim früheren Zweit-Port-Design).
 """
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import os
+import re
+import secrets
 import struct
-from urllib.parse import quote, urlsplit
+import time
+from datetime import timedelta
+from urllib.parse import parse_qsl, quote, urlsplit
 
-from fastapi import APIRouter, Request, WebSocket
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Query, Request, WebSocket
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from sqlmodel import select
+from starlette.responses import Response
+from starlette.websockets import WebSocket as StarletteWebSocket
 
 from compute_agent.auth import make_token
 from compute_agent.preview_pipe import (HeadError, build_request_head,
                                         parse_response_head, read_head)
-from config import PREVIEW_AGENT_PORT
+from config import PREVIEW_AGENT_PORT, PREVIEW_BASE_DOMAIN, SECRET_KEY
 
 logger = logging.getLogger("tutorai.preview")
 
 _HEAD_TIMEOUT = 90.0   # Agent-Head (Relay-Spawn + Ziel-Connect inkl.)
+_BODY_IDLE_TIMEOUT = 120.0  # Agent liefert Body nicht weiter → abbrechen
 _BODY_CAP = 100 * 1024 * 1024   # Request-Body-Cap (Uploads)
 _WS_MSG_CAP = 32 * 1024 * 1024  # WS-Message-Cap pro Richtung
 
@@ -155,6 +164,203 @@ def _parse_preview_path(rest: str, query: str) -> tuple[int | None, str]:
     if query:
         up += "?" + query
     return int(port_str), up
+
+
+# ── Subdomain-Preview ─────────────────────────────────────────────
+# Jede Workspace-Web-App bekommt eine eigene Subdomain:
+#   https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/<app-path>
+# Die Apps laufen auf / (kein Base-Pfad). Die Subdomain ist nur
+# Routungs-Hinweis — Auth bleibt der access_token-Cookie (User muss
+# zum Label-User passen) + der übliche Task/Course-Check. Der Cookie
+# fehlt auf der fremden Domain initially → Handoff-Ticket (One-Shot,
+# s. preview_handoff) setzt ihn beim ersten Besuch.
+
+_LABEL_RE = re.compile(r"^(\d{1,9})-(\d{1,5})-(\d{1,9})-([0-9a-f]{6})$")
+_TICKET_TTL = 60  # Sekunden (Handoff-Ticket)
+_used_tickets: dict[str, float] = {}  # jti → Ablauf (One-Shot)
+
+
+def _label_h6(task_id: int, port: int, user_id: int) -> str:
+    """24-Bit-Tag aus dem SECRET (Label praktisch unerraten; Auth
+    bleibt der Cookie — das Tag verhindert nur, dass beliebige
+    Subdomains auf Workspaces routen)."""
+    return hashlib.sha256(
+        f"{SECRET_KEY}|preview-subdomain|{task_id}:{port}:{user_id}"
+        .encode()).hexdigest()[:6]
+
+
+def preview_label(task_id: int, port: int, user_id: int) -> str:
+    """Stabiles Subdomain-Label für (Task, Port, User)."""
+    return f"{task_id}-{port}-{user_id}-{_label_h6(task_id, port, user_id)}"
+
+
+def _parse_label_host(host: str):
+    """Host (ohne Port) → (task, port, user, h6) bei Preview-Subdomain,
+    sonst None."""
+    if not PREVIEW_BASE_DOMAIN:
+        return None
+    suffix = "." + PREVIEW_BASE_DOMAIN
+    if not host.endswith(suffix):
+        return None
+    m = _LABEL_RE.match(host[: -len(suffix)])
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+
+
+def _query_param(query_b: bytes, name: str) -> str:
+    for k, v in parse_qsl(query_b.decode("latin-1"), keep_blank_values=True):
+        if k == name:
+            return v
+    return ""
+
+
+def _ticket_create(task_id: int, port: int, user_id: int, next_path: str) -> str:
+    """One-Shot-Handoff-Ticket (JWT, 60 s): erlaubt das Setzen des
+    access_token-Cookies auf der Subdomain für genau diesen User/
+    Task/Port."""
+    from services import auth_service
+    return auth_service.create_access_token(
+        {"sub": user_id, "pv": 1, "task": task_id, "port": port,
+         "next": next_path, "jti": secrets.token_hex(8)},
+        expires_delta=timedelta(seconds=_TICKET_TTL))
+
+
+def _ticket_check(ticket: str, task_id: int, port: int, user_id: int):
+    """Ticket validieren (Signatur, Expiry, Bindung, One-Shot).
+    Liefert das gebundene Ziel-Pfad oder None."""
+    from services import auth_service
+    now = time.time()
+    if len(_used_tickets) > 4096:
+        for jti in [j for j, exp in _used_tickets.items() if exp < now]:
+            _used_tickets.pop(jti, None)
+    payload = auth_service.decode_access_token(ticket) if ticket else None
+    if not payload or payload.get("pv") != 1:
+        return None
+    if payload.get("sub") != user_id:
+        return None
+    if payload.get("task") != task_id or payload.get("port") != port:
+        return None
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or jti in _used_tickets:
+        return None
+    _used_tickets[jti] = now + _TICKET_TTL
+    nxt = payload.get("next") or "/"
+    if (not isinstance(nxt, str) or not nxt.startswith("/")
+            or nxt.startswith("//") or "\\" in nxt):
+        nxt = "/"
+    return nxt
+
+
+def _error_page(status: int, title: str, hint: str = "") -> Response:
+    hint_html = f"<p class='hint'>{hint}</p>" if hint else ""
+    html = (
+        "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
+        "<title>TutorAI-Preview</title></head>"
+        "<body style='font-family:system-ui,sans-serif;max-width:42em;"
+        "margin:5em auto;color:#374151;padding:0 1em'>"
+        f"<h2 style='font-size:1.25rem'>{title}</h2>{hint_html}"
+        "</body></html>")
+    return Response(html, status_code=status, media_type="text/html",
+                    headers={"Cache-Control": "no-store"})
+
+
+class PreviewSubdomainMiddleware:
+    """Routet Preview-Subdomains direkt auf den Preview-Proxy.
+
+    Nur aktiv, wenn PREVIEW_BASE_DOMAIN gesetzt ist und der Host ein
+    Label '<task>-<port>-<user>-<h6>' der Basis-Domain ist; alle
+    anderen Requests gehen unverändert weiter (Inner-App).
+
+    Bewusst rohes ASGI (nicht BaseHTTPMiddleware): WebSocket-Scopes
+    müssen ebenfalls behandelt werden. HTTP+WS delegieren auf die
+    gewöhnlichen Routen-Funktionen (preview_http/preview_ws) — dieselbe
+    Auth/Task-Logik wie im Pfad-Modus.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for n, v in scope.get("headers") or ():
+            if n == b"host":
+                host = v.decode("latin-1").lower()
+                if host.rsplit(":", 1)[-1].isdigit() and ":" in host:
+                    host = host.rsplit(":", 1)[0]
+                break
+        parsed = _parse_label_host(host)
+        if parsed is None:
+            await self.app(scope, receive, send)
+            return
+        task_id, port, user_id, h6 = parsed
+        if not hmac.compare_digest(_label_h6(task_id, port, user_id), h6):
+            # Unbekannte Subdomain: keine Details leaksen
+            if scope["type"] == "http":
+                await _error_page(404, "Unbekannte Preview.")(scope, receive, send)
+            else:
+                await StarletteWebSocket(scope, receive, send).close(code=4404)
+            return
+
+        path = scope.get("path") or "/"
+        ticket = _query_param(scope.get("query_string") or b"", "ticket")
+        if path == "/__preview_auth":
+            await self._auth(scope, receive, send, task_id, port, user_id,
+                             ticket)
+            return
+
+        cookie = ""
+        for n, v in scope.get("headers") or ():
+            if n == b"cookie":
+                cookie = v.decode("latin-1")
+                break
+        from services import auth_service
+        payload = auth_service.decode_access_token(
+            _cookie_value(cookie, "access_token"))
+        if not payload or payload.get("sub") != user_id:
+            if scope["type"] == "http":
+                await _error_page(
+                    403, "Zugriff verweigert.",
+                    "Öffne die Aufgabe in TutorAI — der Link ist nur für "
+                    "deine eigene Sitzung gültig.")(scope, receive, send)
+            else:
+                await StarletteWebSocket(scope, receive, send).close(code=1008)
+            return
+
+        rest = f"{port}/{path.lstrip('/')}"
+        if scope["type"] == "http":
+            response = await preview_http(task_id, rest,
+                                          Request(scope, receive))
+            await response(scope, receive, send)
+        else:
+            await preview_ws(task_id, rest,
+                             StarletteWebSocket(scope, receive, send))
+
+    @staticmethod
+    async def _auth(scope, receive, send, task_id: int, port: int,
+                    user_id: int, ticket: str) -> None:
+        """Handoff: Ticket → access_token-Cookie auf der Subdomain → 302."""
+        if scope["type"] != "http":
+            await StarletteWebSocket(scope, receive, send).close(code=1008)
+            return
+        nxt = _ticket_check(ticket, task_id, port, user_id)
+        if nxt is None:
+            resp = _error_page(
+                403, "Handoff abgelaufen.",
+                "Bitte die Vorschau über TutorAI neu öffnen.")
+            await resp(scope, receive, send)
+            return
+        from services import auth_service
+        resp = RedirectResponse(nxt, status_code=302)
+        resp.set_cookie(
+            "access_token",
+            auth_service.create_access_token({"sub": user_id}),
+            httponly=True, secure=True, samesite="lax",
+            max_age=8 * 3600, path="/")
+        await resp(scope, receive, send)
 
 
 # ── Agent-Leiste: TCP + WS-Frames + Chunked ──────────────────────
@@ -432,7 +638,11 @@ async def preview_http(task_id: int, rest: str, request: Request):
                 if out:
                     yield out
             while True:
-                chunk = await a_reader.read(65536)
+                try:
+                    chunk = await asyncio.wait_for(
+                        a_reader.read(65536), timeout=_BODY_IDLE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    break  # Agent totstill → Stream beenden (Leak-Schutz)
                 if not chunk:
                     break
                 if decoder:
@@ -609,18 +819,64 @@ async def preview_ws(task_id: int, rest: str, websocket: WebSocket):
 
     t1 = asyncio.create_task(_browser_to_agent())
     t2 = asyncio.create_task(_agent_to_browser())
-    done, _pending = await asyncio.wait({t1, t2},
-                                        return_when=asyncio.FIRST_COMPLETED)
-    for t in (t1, t2):
-        t.cancel()
-    for t in (t1, t2):
-        try:
-            await t
-        except (asyncio.CancelledError, Exception):
-            pass
-    await _aclose(a_writer)
+    try:
+        done, _pending = await asyncio.wait({t1, t2},
+                                            return_when=asyncio.FIRST_COMPLETED)
+        for t in (t1, t2):
+            t.cancel()
+        for t in (t1, t2):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+    finally:
+        # Auch bei Cancellation des Handlers (Client-RST, Shutdown) den
+        # Agent-Writer schließen — sonst wartet der Agent-Pump ewig auf
+        # EOF und das Relay frisst das pids-Limit des Containers.
+        await _aclose(a_writer)
     # Browser-Seite ggf. noch offen (Agent-EOF ohne Close)
     try:
         await websocket.close(code=1001)
     except Exception:
         pass
+
+
+@router.get("/preview-handoff/{task_id}")
+async def preview_handoff(request: Request,
+                          task_id: int,
+                          port: int = Query(0),
+                          path: str = Query("/")):
+    """302 zur Preview-Subdomain (nur mit PREVIEW_BASE_DOMAIN).
+
+    Erstbesuch: legt über ein One-Shot-Handoff-Ticket den access_token-
+    Cookie auf der Subdomain an (/__preview_auth) und zeigt dann die
+    App unter `path`. Browser folgt der Kette in iframe ODER neuem Tab
+    — die UI nutzt nur diese URL, das Label kennt sie nicht.
+    """
+    if not PREVIEW_BASE_DOMAIN:
+        return _json(400, "Preview-Subdomains sind nicht konfiguriert.")
+    if not (1 <= port <= 65535):
+        return _json(400, "Ungültiger Port.")
+    nxt = (path or "/").strip()
+    if not nxt.startswith("/") or nxt.startswith("//") or "\\" in nxt:
+        return _json(400, "Ungültiger Pfad.")
+    try:
+        ctx = await _resolve(task_id, _cookie_value(
+            request.headers.get("cookie", ""), "access_token"))
+    except _AuthError as e:
+        return _json(e.status, e.message)
+    except Exception:
+        logger.warning("Preview-Handoff: Auth/Task-Check fehlgeschlagen",
+                       exc_info=True)
+        return _json(500, "Interner Fehler.")
+    if ctx is None:
+        return _json(503, "Workspace derzeit nicht verfügbar.")
+    _agent_url, _agent_key, _key, user_id = ctx
+    if not user_id:
+        return _json(401, "Nicht authentifiziert.")
+    ticket = _ticket_create(task_id, port, user_id, nxt)
+    label = preview_label(task_id, port, user_id)
+    return RedirectResponse(
+        url=(f"https://{label}.{PREVIEW_BASE_DOMAIN}"
+             f"/__preview_auth?ticket={ticket}"),
+        status_code=302)

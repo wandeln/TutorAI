@@ -137,6 +137,7 @@ def migrate_schema():
             "workspace_memory": "VARCHAR DEFAULT '4g'",  # Memory-Limit
             "workspace_disk_quota": "REAL DEFAULT 1.0",  # Disk-Quota des Student-Volumes in GB (0 = ohne Limit)
             "workspace_internet": "BOOLEAN DEFAULT 0",  # Internet für Studenten-Läufe
+            "workspace_preview_root_ports": "VARCHAR",  # JSON-Liste Ports ohne Base-Path-Preview (z. B. [8000])
         },
         "submissions": {
             "workspace_snapshot": "VARCHAR",  # Pfad zu workspace.tar.gz

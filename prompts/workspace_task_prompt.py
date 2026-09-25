@@ -213,6 +213,29 @@ Testverhalten von test.sh/.test_private.sh).
     (kein Task-Image-Build) • .test_solution.sh → „🧪 Musterlösung testen“
     nicht verfügbar. Liefere ein Skript nur, wenn seine Funktion für die
     Aufgabe sinnvoll ist.
+    - PREVIEW-APPS (Web-UIs im Student-Container — z. B. Jupyter
+      Notebook, TensorBoard, Streamlit, Gradio, FastAPI oder ein
+      noVNC-Desktop): Als zusätzliche Run-Skripte (z. B. "jupyter.sh",
+      "tensorboard.sh", access: "readonly") anliefern, wenn eine Web-UI
+      für die Lösung sinnvoll ist (z. B. Notebook für EDA/Training).
+      Die Studierenden starten das Skript im Terminal und öffnen den
+      Port in der Browser-Preview. Die App MUSS auf 0.0.0.0 OHNE
+      Base-Pfad (auf /) lauschen — TutorAI routet jeden Port über eine
+      eigene Subdomain zur App (Routing/Auth übernimmt die Plattform,
+      das Skript kümmert sich nicht darum). Das ist auch der normale
+      Zustand bei lokaler Ausführung ohne TutorAI. Muster
+      (POSIX-kompatibel, Port frei wählbar; belegt übliche Ports wie
+      80/443 vermeiden):
+      * Jupyter: `jupyter notebook --allow-root --ip 0.0.0.0 --port
+        8000 --ServerApp.token=''`
+      * TensorBoard: `tensorboard --logdir logs/ --host 0.0.0.0
+        --port 6006`
+      * Streamlit: `streamlit run app.py --server.port 8501`
+      * Gradio: App-Code mit `server_port=7860` (keine root_path!)
+      * FastAPI: `uvicorn app:app --host 0.0.0.0 --port 8000`
+      * noVNC-Desktop (VNC-Server, z. B. `vncserver :1` auf VNC-Port
+        5901; noVNC-Web auf Port 6081 — der zu öffnende Port):
+        `websockify --web /usr/share/novnc 6081 127.0.0.1:5901`
 - "folders": Objekt { <Ordnerpfad>: "readonly" | "hidden" } — die
   Zugriffs-Klassen von ORDNERN (erbten auf alle Dateien darunter; die
   restriktivste Klasse gewinnt). NUR Ordner listen, die NICHT editierbar

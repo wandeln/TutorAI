@@ -140,6 +140,11 @@ def parse_spec(spec) -> dict:
             "Spec muss ein JSON-Object sein (die alte YAML-Spec wird "
             "nicht mehr unterstützt)")
 
+    # Entfernt mit der Subdomain-Preview (Apps laufen auf /) — alte
+    # Instanzen können den Key noch kurz nach dem Update senden:
+    # still ignorieren statt alle Workspaces hart zu brechen.
+    spec = {k: v for k, v in spec.items() if k != "preview_root_ports"}
+
     unknown = set(spec) - ALLOWED_KEYS
     if unknown:
         raise SpecError(f"Unbekannte Key(s): {', '.join(sorted(unknown))}")

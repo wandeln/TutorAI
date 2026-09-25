@@ -89,10 +89,11 @@ def filter_hop_by_hop(headers):
     upgrade_value = b""
     for name, value in headers:
         if name in HOP_BY_HOP:
-            if name == "connection":
+            # WICHTIG: bytes-Vergleich (Name kommt von parse_*_head als bytes)
+            if name == b"connection":
                 tokens = [t.lower().strip() for t in value.split(b",")]
                 upgrade_wanted = b"upgrade" in tokens
-            elif name == "upgrade" and value:
+            elif name == b"upgrade" and value:
                 upgrade_value = value
             continue
         out.append((name, value))

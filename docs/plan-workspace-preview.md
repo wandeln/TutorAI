@@ -172,10 +172,18 @@ Pipes fließt.
     schließen sonst nicht — Relay wird dann SIGKILLt).
   - Relay-Connect-Fehler (Port frei) → 502 + Relay-stderr-Text.
   - `REGISTRY.touch(key)` je Request (Idle-Schutz).
-- **`preview_pipe.py`** (neu, geteilt mit dem Backend-Proxy): Request-/\
+- **`preview_pipe.py`** (neu, geteilt mit dem Backend-Proxy): Request-/
   Response-Head-Parsing, Hop-by-Hop-Filter, Error-Antworten,
   `pump_pair` (bidirektionales Pumpen), `ResponseBody`/
   `_ChunkedFraming` (Body-Ende-Erkennung, Pass-through ohne Dekodieren).
+  ⚠️ Header-Namen sind hier **bytes** — alle Vergleiche müssen
+  Bytes-Literals sein (`b"connection"`, `b"upgrade"`). Ein str-Vergleich
+  (`== "connection"`) würde die Upgrade-Erkennung stumm totlegen:
+  Weiterleitung immer als plain GET + `connection: close` → Ziel-App
+  (z. B. Jupyter) antwortet `400 GET` statt 101 → Backend schließt die
+  WS vor dem Accept (Uvicorn loggt `connection rejected (403 Forbidden)`) →
+  Browser: WebSocket failed. (Real-World-Bug 2026-09-25, daher fixen
+  immer mit Bytes.)
 - **`terminal.py`** (neu): PTY-Session um den docker-CLI-Prozess:
   `pty.openpty()` + `TIOCSWINSZ` (Default 160×40) → CLI erkennt TTY →
   Container-PTY wird mit dieser Größe angelegt und Resize wird

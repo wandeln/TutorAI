@@ -1381,14 +1381,21 @@ async def workspace_status(
 async def workspace_port_kill(
     task_id: int,
     port: int,
+    force: bool = False,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ):
-    """Prozess eines lauschenden Ports beenden (Preview-UI: × beim Port)."""
+    """Prozess eines lauschenden Ports beenden (Preview-UI: × beim Port).
+
+    Ohne force: SIGTERM + 5 s Wartezeit; danach noch belegt → 409
+    (UI bietet erzwungene Beendigung als zweiten Schritt an).
+    force=true: SIGKILL über den ganzen Prozessbaum.
+    """
     task = await _load_ws_task(task_id, session, user)
     client = _ws_client_or_error(session, task)
     try:
-        await asyncio.to_thread(client.kill_port, _ws_key(task, user), port)
+        await asyncio.to_thread(
+            client.kill_port, _ws_key(task, user), port, force)
     except ComputeAgentError as e:
         raise _agent_http(e)
     return {"ok": True}

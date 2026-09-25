@@ -193,9 +193,11 @@ Pipes fließt.
     `/proc/net/tcp{,6}` (LISTEN-Zustand `0A` → Inode → Port/Hex) +
     `/proc/*/fd`-Walk (Inode → PID). **Kein procps/ss nötig**, funktioniert
     auch bei `network=none` (Loopback existiert). Ausgabe `[{port, pid}]`.
-  - `kill_workspace_port(key, port)`: PID aus dem Scan → Prozessbaum-Kill
-    (gleiche `kt()`-/`/proc`-Walk-Logik wie `runs._TREE_KILL`). Port frei
-    → 404.
+  - `kill_workspace_port(key, port, force)`: PIDs aus dem Scan (alle
+    Inode-Halter) → Prozessbaum-Signal (`kt()`, gleiche `/proc`-Walk-Logik
+    wie `runs._TREE_KILL`), danach Verifikation per Re-Scan. Port frei →
+    404 · ohne force: SIGTERM + 5 s Wartezeit, danach noch belegt → 409
+    (UI bietet Force-Kill an) · force: SIGKILL, danach noch belegt → 409.
 - **`main.py`**: neue Routes `GET /workspaces/{key}/ports`,
   `POST /workspaces/{key}/ports/{port}/kill`, `WS /workspaces/{key}/terminal`
   (Token per Query, `op = ws:{key}`; Keepalive-Touch alle 60 s, damit ein

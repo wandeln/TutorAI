@@ -837,18 +837,32 @@
     } catch (err) { /* Cross-Origin/Fehlerseite — ignorieren */ }
   });
 
-  async function wsPortKill(port) {
-    if (!confirm("Prozess auf Port " + port + " beenden?")) return;
+  // 1. Klick = Stop-Versuch (SIGTERM, Agent wartet 5 s); Prozess hängt
+  // danach noch (409) → 2. Schritt: erzwungene Beendigung (SIGKILL).
+  async function wsPortKill(port, force) {
+    const msg = force
+      ? "Port " + port + " reagiert nicht auf den Stop-Versuch.\n"
+        + "Prozessbaum erzwungen beenden (Kill)?"
+      : "Prozess auf Port " + port + " beenden?";
+    if (!confirm(msg)) return;
     try {
-      const res = await fetch(WS_API + "/ports/" + port + "/kill", {
-        method: "POST", credentials: "same-origin",
-      });
-      if (!res.ok && res.status !== 404) {
+      const res = await fetch(
+        WS_API + "/ports/" + port + "/kill" + (force ? "?force=true" : ""),
+        { method: "POST", credentials: "same-origin" });
+      if (res.ok) {
+        if (force) showToast("Port " + port + " erzwungen beendet", "success");
+      } else if (res.status === 404) {
+        /* Port ist (inzwischen) frei — nichts zu tun */
+      } else if (res.status === 409 && !force) {
+        wsPortKill(port, true);  // 2. Klick: erzwungene Beendigung
+        return;
+      } else {
         const data = await res.json().catch(() => ({}));
-        showToast("Port nicht beendet: " + (data.detail || res.status), "error");
+        showToast("Port " + port + " nicht beendet: "
+                  + (data.detail || res.status), "error");
       }
     } catch (err) {
-      showToast("Port nicht beendet: " + err.message, "error");
+      showToast("Port " + port + " nicht beendet: " + err.message, "error");
     }
     if (wsPrev.port === port) {
       document.getElementById("ws-preview-frame").src = "about:blank";

@@ -397,12 +397,16 @@ def workspace_ports(key: str, payload: dict = Depends(auth.verify_token)) -> dic
 
 @app.post("/workspaces/{key}/ports/{port}/kill")
 @_translate
-def workspace_port_kill(key: str, port: int,
+def workspace_port_kill(key: str, port: int, force: bool = False,
                         payload: dict = Depends(auth.verify_token)) -> dict:
-    """Prozessbaum des Ports killen (Port nicht belegt → 404)."""
+    """Prozessbaum des Ports beenden (verifiziert per Re-Scan).
+
+    Port nicht belegt → 404 · danach noch belegt → 409 (UI kann mit
+    force=true erneut versuchen: SIGKILL statt SIGTERM).
+    """
     _op(payload, f"ws:{key}")
     _touch(key)
-    docker_ops.kill_workspace_port(key, port)
+    docker_ops.kill_workspace_port(key, port, force=force)
     return {"ok": True}
 
 

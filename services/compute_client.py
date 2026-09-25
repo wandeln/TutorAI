@@ -218,10 +218,16 @@ class ComputeClient:
                              task_id=task, student_id=student, timeout=60)
         return resp.json().get("ports") or []
 
-    def kill_port(self, key: str, port: int) -> None:
-        """Prozessbaum eines lauschenden Ports killen (frei → 404)."""
+    def kill_port(self, key: str, port: int, force: bool = False) -> None:
+        """Prozessbaum eines lauschenden Ports beenden.
+
+        ohne force: SIGTERM (+5 s Wartezeit) · force: SIGKILL.
+        Port frei → 404 · danach noch belegt → 409.
+        """
         course, task, student = _key_parts(key)
-        self._request("POST", f"/workspaces/{key}/ports/{port}/kill",
+        self._request("POST",
+                      f"/workspaces/{key}/ports/{port}/kill"
+                      + ("?force=true" if force else ""),
                       op=f"ws:{key}", task_id=task, student_id=student)
 
     def snapshot(self, key: str) -> bytes:

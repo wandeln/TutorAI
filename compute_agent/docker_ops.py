@@ -994,10 +994,10 @@ _PORT_SCAN_SCRIPT = (
 )
 
 
-def list_workspace_ports(key: str) -> list[dict]:
-    """Im Container lauschende Ports: [{port, pid}] (sortiert, dedupliziert).
+def _port_scan(key: str) -> dict[int, set[str]]:
+    """Alle LISTEN-Ports des Containers: {port: {pid, …}}.
 
-    Funktioniert auch bei network=none (Loopback existiert immer).
+    Sammelt ALLE PIDs, die den Socket-Inode halten (früher nur der erste).
     """
     _ensure_running(key)
     code, out_b, _err, _ = _run_capped(
@@ -1005,7 +1005,7 @@ def list_workspace_ports(key: str) -> list[dict]:
         timeout=30, cap=1_000_000)
     if code != 0:
         raise DockerError("Port-Scan im Workspace fehlgeschlagen", 500)
-    pid_by_ino: dict[str, str] = {}
+    pids_by_ino: dict[str, set[str]] = {}
     listeners: list[tuple[str, int]] = []
     section = None
     for line in out_b.decode(errors="replace").splitlines():
@@ -1025,32 +1025,74 @@ def list_workspace_ports(key: str) -> list[dict]:
                 listeners.append((ino, port))
         elif section == "P":
             pid, ino = parts
-            pid_by_ino.setdefault(ino, pid)
-    ports: list[dict] = []
-    seen: set[int] = set()
+            pids_by_ino.setdefault(ino, set()).add(pid)
+    ports: dict[int, set[str]] = {}
     for ino, port in listeners:
-        if port in seen:
-            continue
-        seen.add(port)
-        ports.append({"port": port, "pid": pid_by_ino.get(ino)})
-    ports.sort(key=lambda p: p["port"])
+        ports.setdefault(port, set()).update(pids_by_ino.get(ino, ()))
     return ports
 
 
-def kill_workspace_port(key: str, port: int) -> None:
-    """Prozessbaum des Ports killen (gleiche /proc-Walk-Logik wie Runs).
+def list_workspace_ports(key: str) -> list[dict]:
+    """Im Container lauschende Ports: [{port, pid}] (sortiert, dedupliziert).
 
-    Port nicht (mehr) belegt → DockerError 404.
+    Funktioniert auch bei network=none (Loopback existiert immer).
     """
-    match = next((p for p in list_workspace_ports(key) if p["port"] == port),
-                 None)
-    if match is None or not match.get("pid"):
+    return [{"port": port, "pid": min(pids) if pids else None}
+            for port, pids in sorted(_port_scan(key).items())]
+
+
+# Wie runs._TREE_KILL, aber Signal-Parameter (15/9): rekursiv den
+# Prozessbaum (Kinder zuerst, dann Wurzel) mit dem Signal versehen.
+_TREE_SIGNAL = (
+    'kt(){ r=$1; sig=$2; for d in /proc/[0-9]*; do p=${d#/proc/}; '
+    '[ "$p" = "$r" ] && continue; s=$(cat "$d/stat" 2>/dev/null) || continue; '
+    's=${s##*) }; set -- $s; [ "$2" = "$r" ] && kt $p $sig; done; '
+    'kill -$sig "$r" 2>/dev/null; }'
+)
+
+
+def _port_tree_signal(key: str, pids: set[str], sig: int) -> None:
+    """Signal an den Prozessbaum jedes PIDs senden.
+
+    check=True: schlug der docker-exec-Spawn fehl (z. B. PIDs-Limit
+    EAGAIN), ist der Kill NICHT erfolgt → Fehler nach oben statt
+    stillen 200. Der Exit-Code selbst ist egal (verifiziert wird
+    per Re-Scan); deshalb am Ende `true`.
+    """
+    for p in pids:
+        if not p.isdigit():
+            raise DockerError(f"Ungültige PID aus Port-Scan: {p!r}", 500)
+    cmd = (_TREE_SIGNAL + "; "
+           + "".join(f"kt {p} {sig}; " for p in sorted(pids)) + "true")
+    _docker("exec", container_name(key), "sh", "-c", cmd, timeout=30)
+
+
+def kill_workspace_port(key: str, port: int, force: bool = False) -> None:
+    """Prozessbaum des Ports beenden und per Re-Scan VERIFIZIEREN.
+
+    - ohne force: SIGTERM, bis zu 5 s warten. Port danach noch belegt
+      → 409 (UI kann den Force-Kill als zweiten Schritt anbieten).
+    - force: SIGKILL über den ganzen Baum. Danach noch belegt → 409
+      (Prozess z. B. in uninterruptible Sleep).
+    - Port nicht (mehr) belegt → 404.
+    """
+    pids = _port_scan(key).get(port) or set()
+    if not pids:
         raise DockerError(f"Port {port} wird nicht (mehr) belegt", 404)
-    # Funktionslokal: runs importiert docker_ops (Zirkel).
-    from .runs import _TREE_KILL
-    cmd = f'{_TREE_KILL}; kt "{match["pid"]}"'
-    _docker("exec", container_name(key), "sh", "-c", cmd,
-            timeout=30, check=False)
+    _port_tree_signal(key, pids, 9 if force else 15)
+    deadline = time.monotonic() + (3.0 if force else 5.0)
+    while time.monotonic() < deadline:
+        time.sleep(0.5)
+        if not _port_scan(key).get(port):
+            return
+    if force:
+        msg = (f"Port {port} ist auch nach erzwungener Beendigung noch belegt — "
+               f"Prozess hängt vermutlich (uninterruptible State). "
+               f"Workspace ggf. zurücksetzen.")
+    else:
+        msg = (f"Port {port} ist nach dem Stop-Versuch noch belegt — "
+               f"Prozess reagiert nicht auf SIGTERM.")
+    raise DockerError(msg, 409)
 
 
 def list_files(key: str) -> list[dict]:

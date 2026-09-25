@@ -20,6 +20,7 @@ Flow je Request:
 """
 
 import asyncio
+import fcntl
 import logging
 import os
 import re
@@ -46,6 +47,66 @@ _HEAD_TIMEOUT = 60.0  # Antwort-Head des Ziels (Relay-Connect inkl.)
 async def _write_all(writer, data: bytes) -> None:
     writer.write(data)
     await writer.drain()
+
+
+class _FdStreamReader:
+    """Pipes-Fd via loop.add_reader (nonblocking, Event-Loop-Thread).
+
+    WICHTIG: Kein `run_in_executor(None, os.read, …)` — jede Langzeit-
+    Connection (SSE/WS-Preview) würde damit einen Executor-Thread
+    für immer blockieren. Der Default-Pool hat nur min(32, CPU+4)
+    Threads; ein Jupyter-UI-Ladeburst (~15 parallele Relays) erschöpft
+    ihn komplett → danach friert der GANZE Agent (Terminal-Input,
+    neue Terminals, Relay-Spawns — alles Executor-basiert).
+    add_reader hält 0 Threads pro Connection (selbes Muster wie der
+    PTY-Read in terminal.py).
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, fd: int) -> None:
+        self._loop = loop
+        self._fd = fd
+        self._buf = bytearray()
+        self._waker = asyncio.Event()
+        self._done = False
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        loop.add_reader(fd, self._on_readable)
+
+    def _on_readable(self) -> None:
+        try:
+            while True:
+                chunk = os.read(self._fd, 65536)
+                if not chunk:
+                    self._done = True
+                    self._waker.set()
+                    return
+                self._buf.extend(chunk)
+        except (BlockingIOError, InterruptedError):
+            pass  # kein (weiteres) Daten mehr → Callback war's
+        except OSError:
+            self._done = True
+            self._waker.set()
+            return
+        if self._buf:
+            self._waker.set()
+
+    async def read(self, n: int) -> bytes:
+        """Bis zu n Bytes; b'' = EOF (Pipe geschlossen)."""
+        while not self._buf:
+            if self._done:
+                return b""
+            self._waker.clear()
+            await self._waker.wait()
+        n = min(n, len(self._buf))
+        out = bytes(self._buf[:n])
+        del self._buf[:n]
+        return out
+
+    def close(self) -> None:
+        try:
+            self._loop.remove_reader(self._fd)
+        except Exception:
+            pass
 
 
 class PreviewServer:
@@ -82,7 +143,6 @@ class PreviewServer:
 
     async def _handle_conn(self, reader, writer) -> None:
         loop = asyncio.get_running_loop()
-        logger.warning("[WS-A] conn start")  # TODO-debug
         try:
             head_b, leftover = await read_head(reader)
         except HeadError:
@@ -155,6 +215,11 @@ class PreviewServer:
                 pass
         threading.Thread(target=_drain_err, daemon=True).start()
 
+        # Relay-STDOUT via add_reader (0 Executor-Threads pro Connection,
+        # s. _FdStreamReader). Vor dem Request senden anlegen: frühe
+        # Antwort-Bytes liegen sicher im Kernel-Pipe-Puffer.
+        out = _FdStreamReader(loop, proc.stdout.fileno())
+
         try:
             # Upstream-Request an den Relay (→ Ziel im Container).
             # WICHTIG: flushen — Popen.stdin ist ein BufferedWriter;
@@ -181,13 +246,11 @@ class PreviewServer:
                 content_length -= len(chunk)
 
             # Antwort-Head vom Relay (Ziel-Connect-Fehler → EOF → 502)
-            out_fd = proc.stdout.fileno()
             head_buf = bytearray()
             try:
                 while b"\r\n\r\n" not in head_buf:
                     chunk = await asyncio.wait_for(
-                        loop.run_in_executor(None, os.read, out_fd, 65536),
-                        timeout=_HEAD_TIMEOUT)
+                        out.read(65536), timeout=_HEAD_TIMEOUT)
                     if not chunk:
                         err_text = err_buf.decode(errors="replace").strip()
                         logger.warning("Preview %s Port %s ohne Head: %s",
@@ -196,7 +259,12 @@ class PreviewServer:
                             502, err_text or "Ziel-Server nicht erreichbar"))
                         return
                     head_buf.extend(chunk)
-                    if len(head_buf) > 32768:
+                    # Limit gilt für den ANSWER-HEAD — ein einzelnes Read
+                    # kann aber bis zu 64 KB HEAD+BODY liefern (lokale
+                    # Pipes liefern große Antworten oft in einem Stück).
+                    # 128 KB = 2× Max-Read, damit nur ein wirklich riesiger
+                    # Head (z. B. 100-KB-Cookies) abgebrochen wird.
+                    if len(head_buf) > 131072:
                         await _write_all(writer, build_error(502))
                         return
             except asyncio.TimeoutError:
@@ -220,43 +288,9 @@ class PreviewServer:
                 async def _w_client(data: bytes) -> None:
                     await _write_all(writer, data)
 
-                # TODO-debug: instrumentierte pump_pair
-                async def _pump_dbg(tag: str, read, write) -> None:
-                    while True:
-                        try:
-                            data = await read()
-                        except Exception as e:
-                            logger.warning("[WS-A] %s read-err: %r", tag, e)
-                            return
-                        logger.warning("[WS-A] %s read %d bytes (eof=%s)",
-                                       tag, len(data), not data)
-                        if not data:
-                            return
-                        try:
-                            await write(data)
-                        except Exception as e:
-                            logger.warning("[WS-A] %s write-err: %r", tag, e)
-                            return
-
-                tA = asyncio.create_task(
-                    _pump_dbg("A(backend→relay)",
-                              lambda: reader.read(65536), _send_to_relay))
-                tB = asyncio.create_task(
-                    _pump_dbg("B(relay→backend)",
-                              lambda: loop.run_in_executor(
-                                  None, os.read, out_fd, 65536),
-                              _w_client))
-                done, _ = await asyncio.wait({tA, tB},
-                                             return_when=asyncio.FIRST_COMPLETED)
-                logger.warning("[WS-A] first pump done: %s",
-                               [t is tA for t in done])
-                for t in (tA, tB):
-                    t.cancel()
-                for t in (tA, tB):
-                    try:
-                        await t
-                    except BaseException:
-                        pass
+                await pump_pair(
+                    lambda: reader.read(65536), _send_to_relay,
+                    lambda: out.read(65536), _w_client)
             else:
                 body = ResponseBody(status, resp_headers,
                                     head_method=(method == "HEAD"))
@@ -265,14 +299,14 @@ class PreviewServer:
                     await _write_all(writer, leftover)
                     eod = body.feed(leftover)
                 while not eod:
-                    chunk = await loop.run_in_executor(
-                        None, os.read, out_fd, 65536)
+                    chunk = await out.read(65536)
                     if not chunk:
                         break
                     await _write_all(writer, chunk)
                     eod = body.feed(chunk)
         finally:
             # Relay-Session beenden (neuer Prozess je Request — s. Plan)
+            out.close()
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
@@ -282,6 +316,10 @@ class PreviewServer:
                     pass
             try:
                 proc.wait(timeout=5)
+            except Exception:
+                pass
+            try:
+                proc.stdout.close()
             except Exception:
                 pass
 

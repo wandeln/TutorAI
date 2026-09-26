@@ -1,19 +1,19 @@
 """
-Download-Pakete für Workspace-Aufgaben (s. docs/plan-workspace-tasks.md §7.2).
+Download-Pakete für Workspace-Aufgaben.
 
 Erzeugt selbstlaufende tar.gz-Pakete mit docker-compose.yml, sodass
 Studenten und Tutoren Aufgaben auch LOKAL (auf dem eigenen Rechner)
 ausführen können — ohne Zugriff auf die AICampus-Server.
 
-Prinzip (entschlossen in §11):
+Prinzip:
   - Basis ist IMMER ein öffentliches Standard-Image (FROM python:3.11-slim,
     FROM debian:bookworm-slim, …) — das wird beim lokalen Build von den
     öffentlichen CDNs registriert, NIE von unseren Servern.
   - images/ = die Image-Spec-Dockerfile der Aufgabe 1:1 ins Paket (Compose
-    baut daraus; s. plan-compute-engines-images.md). Tasks ohne auflösbare
+    baut daraus). Tasks ohne auflösbare
     Image-Spec sind nicht paketierbar (ValueError).
 
-Zugriffsklassen (statt Pfad-Zonen, s. plan-workspace-access-classes.md):
+Zugriffsklassen (statt Pfad-Zonen):
   - ``workspace/`` enthält ALLE öffentlichen Dateien (✏️ edit + 🔒 read-only)
     AM REALEN PFAD (data/ bleibt data/ in workspace/).
   - Je 🔒-Top-Level-Pfad ein ro-Bind-Mount

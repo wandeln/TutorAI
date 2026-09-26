@@ -7,7 +7,7 @@ run.sh, test.sh, .solution/, .tests/) und flachen Umgebungsfeldern
 (workspace_timeout/cpu/memory/internet/main_file).
 
 Hier bleibt: `validate_workspace_generation()` — Validierung des
-LLM-Outputs (unvertrauenswürdige Eingabe, s. Plan §7.1).
+LLM-Outputs (unvertrauenswürdige Eingabe).
 """
 
 import re
@@ -17,7 +17,7 @@ _MEM_RE = re.compile(r"^\d+(\.\d+)?[bkmg]$")
 
 
 def validate_workspace_generation(data: dict) -> dict:
-    """Validiert & bereinigt LLM-Output (unvertrauenswürdige Eingabe, s. Plan §7.1).
+    """Validiert & bereinigt LLM-Output (unvertrauenswürdige Eingabe).
 
     Wirft ValueError mit UI-tauglicher Meldung. Gibt ein bereinigtes
     Dict NUR mit den tatsächlich übergebenen Schlüsseln zurück.
@@ -140,7 +140,7 @@ def validate_workspace_generation(data: dict) -> dict:
                 clean_folders[p] = a
             out["folders"] = clean_folders or None
 
-    # Compute-Engine + Image-Spec (Phase 6, s. plan-compute-engines-images.md):
+    # Compute-Engine + Image-Spec (Phase 6):
     # Typ-Checks hier, Existenz-Checks in api/tutor.py (braucht DB-Session).
     if "workspace_image" in data:
         v = data.get("workspace_image")

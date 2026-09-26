@@ -1089,7 +1089,7 @@ async def ai_generate_task(
                 "workspace_internet": task.workspace_internet,
                 "workspace_main_file": task.workspace_main_file or "",
             }
-        # Engine-/Image-Spec-Kontext (s. plan-compute-engines-images.md):
+        # Engine-/Image-Spec-Kontext:
         # das LLM wählt aus registrierten Engines + existierenden Specs oder
         # schlägt eine neue Spec vor (proposed_image_spec, UI bestätigt).
         from services import image_spec_service
@@ -1751,7 +1751,7 @@ async def generate_course_report(
 # WORKSPACE DATEIEN (Tutor-Datei-Manager)
 #
 # Der Dateibaum = die reale Container-Dateistruktur. Jede Datei/Ordner
-# hat eine Zugriffs-Klasse (s. docs/plan-workspace-access-classes.md):
+# hat eine Zugriffs-Klasse (s. docs/user-guide.md §3.3):
 #   ✏️ edit      → public, editierbar (im Student-Volume)
 #   🔒 readonly  → public, read-only (shared auf dem Agenten, ro-Mount)
 #   👤 hidden    → privat (Student sieht es nie, nur Grading)

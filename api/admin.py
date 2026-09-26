@@ -773,7 +773,7 @@ async def get_global_settings(
         "ldap_base_dn": gs.ldap_base_dn,
         "ldap_bind_dn": gs.ldap_bind_dn,
         "ldap_user_search": gs.ldap_user_search,
-        # Compute/Workspace (s. plan-workspace-tasks.md §2.8/§3)
+        # Compute/Workspace
         "compute_enabled": bool(gs.compute_enabled),
         "compute_agents": gs.compute_agents or "",
         "workspace_gpu_enabled": bool(gs.workspace_gpu_enabled),

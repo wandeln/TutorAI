@@ -1,5 +1,4 @@
-"""Einmalige Migration: Image-Specs YAML → reines Dockerfile
-(s. docs/plan-compute-engines-images.md, 2026-09-18).
+"""Einmalige Migration: Image-Specs YAML → reines Dockerfile (2026-09-18).
 
 1. ALTER TABLE image_specs RENAME COLUMN spec_yaml TO dockerfile
 2. DROP COLUMN gpu_mode (nur SQLite ≥ 3.35; sonst bleibt die Spalte

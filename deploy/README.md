@@ -187,7 +187,7 @@ Der Statusbereich zeigt die Health aller Engines (30-s-Cache).
 
 ---
 
-## Sicherheit (Kurzfassung, s. Plan §9)
+## Sicherheit (Kurzfassung)
 
 - Agent bindet nur auf `127.0.0.1` (nativ) bzw. nur im Compose-Netz (Docker).
   Einziger externer Zugangsweg: SSH-Tunnel mit Key-Auth.

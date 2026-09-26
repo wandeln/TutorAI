@@ -103,7 +103,7 @@ def migrate_schema():
             "llm_api_url_public": "VARCHAR",
             "llm_api_key_public": "VARCHAR",
             "llm_model_public": "VARCHAR",
-            # Compute/Workspaces (per-Student-Docker-Container, s. plan-workspace-tasks.md)
+            # Compute/Workspaces (per-Student-Docker-Container)
             "compute_enabled": "BOOLEAN DEFAULT 0",
             "compute_agents": "VARCHAR",  # JSON-Liste [{name,url,key,gpu}]
             "compute_idle_timeout": "INTEGER DEFAULT 1200",

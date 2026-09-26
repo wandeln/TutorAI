@@ -1,341 +1,152 @@
 # 📚 AICampus
 
-AI-gestütztes Tutoring-System für Übungsaufgaben an Universitäten.
+**KI-Plattform für MINT-Lehre — mit voller Datenhoheit.**
 
-PROFs und Tutoren erstellen Aufgaben mit LLM-Unterstützung, Studenten lösen Aufgaben und erhalten sofortiges, konstruktives Feedback — alles über einen zentralen Server.
+AICampus bündelt drei Dinge, die Sie für moderne Lehre brauchen: **KI-gestützte
+Erstellung von Lehrmaterialien**, **automatisiertes Feedback für Studierende** und
+**alles für den Kursalltag** — laufend auf Ihren eigenen Servern. Keine Cloud,
+keine externen APIs: AICampus arbeitet mit **lokalen LLMs** (Qwen, Llama,
+Mistral & Co. auf Ihren GPU-Servern). Alle Daten — Lösungen, Einreichungen,
+Kursmaterial — bleiben in Ihrem Netz.
 
 ## ✨ Features
 
-### Rollen-Modell
+### 🔒 Datenschutz durch lokale LLMs
 
-Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (pro Kurs):
+- **Keine Cloud, kein Datenabfluss:** AICampus spricht jeden
+  **OpenAI-kompatiblen Endpoint** — betreiben Sie Ihr LLM mit vLLM, TGI oder
+  Ollama auf Ihren eigenen (Uni-)GPU-Servern.
+- **Zwei Endpoints, ein Prinzip:** Vertrauliche Daten (Einreichungen,
+  Korrekturen) gehen nur an Ihr *privates* LLM; für nicht-sensitive Aufgaben
+  (z. B. neue Aufgaben generieren) ist ein zweites, optionales *öffentliches*
+  Endpoint konfigurierbar.
+- LLM-Verbindung per **SSH-Tunnel** möglich (reboot-fester systemd-Service) —
+  auch wenn der GPU-Server nur per SSH erreichbar ist.
+- Optionale **LDAP-Anbindung** (Uni-Accounts) und JWT-Auth mit httpOnly-Cookies.
 
-| Globale Rolle | Beschreibung |
-|---|---|
-| **Admin** | Admin-Konsole: Kurse & User verwalten, globale LLM/LDAP-Einstellungen anpassen |
-| **User** | Standard-Rolle — Berechtigungen werden über die Kurs-Rolle bestimmt |
+### 🎓 Automatisiertes Feedback & Hilfestellung für Studierende
 
-| Kurs-Rolle | Kann |
-|---|---|
-| **Prof** | Kurs bearbeiten (Name, Semester, Beschreibung), Mitglieder verwalten (hinzufügen, Rollen ändern, entfernen), Einladungslinks erstellen, Aufgaben erstellen/bearbeiten/löschen, Sichtbarkeit umschalten, Aufgaben per Drag-and-Drop ordnen, Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript-Kapitel verwalten (anlegen, LLM-bearbeiten, freischalten, per Drag-and-Drop ordnen, löschen) + Slides anlegen & löschen, Medienbibliothek (Auto-Upload + LLM-Beschreibung, Datei-Ersatz, Delete) |
-| **Tutor** | Aufgaben erstellen/bearbeiten (LLM-Aufgabe generieren), Einreichungen korrigieren, Feedback überschreiben, Übersichtstabelle + Excel-Export, Skript-Kapitel anlegen, LLM-bearbeiten, freischalten, ordnen + Slides anlegen & bearbeiten |
-| **Student** | Aufgaben sehen & lösen, sofortiges LLM-Feedback erhalten, eigene Punkte einsehen, Tests ausführen (Code-Aufgaben), vorherige/nächste Aufgabe navigieren, freigeschaltene Skript-Kapitel & Slides lesen, Name & Passwort selbst ändern |
+- **Sofortiges Feedback zu jeder Abgabe** — statt Wartezeit auf Sprechstunde:
+  - **Textaufgaben:** LLM-Korrektur mit konstruktivem, differenziertem Feedback
+  - **Codeaufgaben:** automatische Prüfung per Unit-Tests (sichtbare +
+    versteckte Tests), serverseitige Sandbox mit CPU-/RAM-/Timeout-Limits
+  - **Workspace-Aufgaben:** automatische Bewertung ganzer Code-Umgebungen —
+    Studierende bekommen einen **eigenen, isolierten Container** (Mini-IDE mit
+    Editor, Terminal und Web-Preview), auf Wunsch **mit GPU**
+  - **Sokratische Hinweise:** das LLM führt an der Aufgabe entlang, statt die
+    Lösung wegzugeben
+- Versuchslimits, Abgabefristen und Punkte pro Aufgabe — automatisch.
+- **Kurs-Forum** mit Kanälen für Fragen & Austausch.
+- Für Sie: **Punktestands-Übersicht, Korrektur-Workflow und Excel-Export**.
 
-> **Hinweis:** Ein globaler Admin hat uneingeschränkten Zugriff auf alle Kurse, auch ohne Kurs-Mitgliedschaft. Ein Prof kann alle Kurs-Rollen zuweisen — nur die Ernennung zu Prof darf der Admin.
+### 🧠 KI-Unterstützung bei der Erstellung von Lehrmaterialien
 
-### Kurs-Beitritt
+- **Übungsaufgaben:** aus Thema + Schwierigkeitsgrad generiert das LLM
+  Text-, Code- oder Workspace-Aufgaben — inkl. Vorlage, Unit-Tests und
+  Musterlösung, die Sie vor der Freigabe prüfen und anpassen.
+- **Vorlesungsskript:** Kapitel in Markdown mit **LaTeX und Mermaid-Diagrammen**
+  per LLM erzeugen oder bestehende Kapitel überarbeiten lassen — Kapitel für
+  Kapitel einzeln freischaltbar.
+- **Slides:** Folien-Decks (reveal.js) LLM-gestützt erstellen, präsentieren
+  und als PDF exportieren.
+- **Interaktive Applets:** per Beschreibung — oder als **Referenzbild**
+  (z. B. eine Skizze aus einem Paper) — generiert das LLM interaktive
+  HTML-Applets für Ihr Kursmaterial.
+- **Bestehendes Material importieren:** bestehende Skripte & Folien als Zip
+  (PDF, PowerPoint, Word) hochladen — ein mehrstufiger LLM-Wizard wandelt es
+  interaktiv in Kurskapitel, Slide-Decks, Medien und eine
+  **Quellenbibliothek (BibTeX)** um.
+- **Medienbibliothek:** Bilder hochladen, das Vision-LLM erzeugt Titel und
+  Beschreibung automatisch; Verwendungen im Material werden nachverfolgt.
 
-- **Einladungslinks:** Prof/Admin generiert Token mit Gültigkeitsdauer und optionaler Nutzungsgrenze. Copy-to-Clipboard der vollständigen Join-URL.
-- **Manuelle Einladung:** Prof/Admin sucht User und fügt sie direkt zum Kurs hinzu (mit Rollenauswahl)
-- **Join-Seite:** User gibt Token ein (via Link) und tritt dem Kurs bei
+### 🏫 Alles für den Kursalltag
 
-### Aufgabentypen
+- **Rollenmodell:** Admin, Prof, Tutor, Student — mit klarer
+  Berechtigungslogik (Details in der [User Guide](docs/user-guide.md)).
+- **Kurse** per Einladungslink (mit Gültigkeit & Nutzungsgrenze) oder
+  manueller Hinzufügung.
+- 100 % Open-Source, 100 % auf Ihrer Hardware.
 
-- **Textaufgaben** — Freier Text mit Markdown & LaTeX-Rendering, LLM-basierte Korrektur
-- **Codeaufgaben** — Python-Code mit Unit-Tests (public/private), sandbox-basierte Ausführung, CodeMirror-Editor
+## 🚀 Quick Start
 
-### Kurs-Material & Medienbibliothek
+**Voraussetzungen:** Linux-Server (oder macOS/Windows zum Ausprobieren),
+Docker + Docker Compose, ein OpenAI-kompatibles LLM-Endpoint
+(z. B. vLLM/Ollama auf einem GPU-Server).
 
-- **Registerkarten je Kurs:** Skript, Slides, Aufgaben, Übersicht (Tutor+), Medien (PROF+), Mitglieder (PROF+)
-- **Vorlesungsskript** — besteht aus mehreren Markdown-Kapiteln (LaTeX, Mermaid); jedes Kapitel einzeln per LLM anpassbar (Titel/Inhalt), für Studenten einzeln freischaltbar (Auge-Icon), per Drag-and-Drop ordnbar; Studenten sehen nur die freigeschalteten Kapitel in der Reihenfolge (Lesefluss); bestehende Einzel-Skripte werden beim Server-Start automatisch in ein Kapitel migriert
-- **Vorlesungs-Slides** — ein Markdown-Dokument, Folien durch `---` getrennt (reveal.js-Rendering folgt in einem späteren Schritt)
-- **Medienbibliothek je Kurs** (`data/media/course_{id}/`) — Bilder (PNG/JPG/WebP/GIF, max. 5 MB, UUID-Namen); Upload startet automatisch bei Dateiauswahl (Vorschau + Progress), LLM erzeugt Titel & Beschreibung (Vision-Modell erforderlich); Datei kann später ersetzt werden (gleicher Pfad → Markdown-Referenzen bleiben gültig)
-- **Medien-Versand** nur über authentifizierte Route (Kurs-Membership erforderlich; wer ein Medium sehen darf, steuert die Sichtbarkeit des einbindenden Inhalts)
-- **Einbindung & Verwendungs-Tracking:** Medien werden per Markdown-Snippet eingebunden (`![Titel](/media/{course_id}/{datei})`); die Verwendungs-Orte (Skript/Slides/Aufgabe) werden automatisch aus dem Content abgeleitet (`media_usages`), doppelte Referenzen werden markiert
+### Docker (empfohlen)
 
-### LLM-Integration
+```bash
+git clone <repo-url> AICampus && cd AICampus
 
-- OpenAI-kompatibler API-Endpoint (Qwen3, Llama, Mistral, etc.)
-- Globale LLM-Konfiguration in der Admin-Konsole (Endpoint, Modell, API-Key)
-- Verbindungstest direkt in der UI
-- LLM-Assisted Task Creation: Prof/Tutor gibt Thema + Schwierigkeitsgrad ein, LLM generiert Aufgabenentwurf
+# 1) Konfiguration: LLM-Endpoint setzen
+cp .env.example .env
+nano .env                       # LLM_API_URL, LLM_API_KEY, LLM_MODEL, …
 
-### User-Self-Service
+# 2) Start (Web-App + Compute-Agent für Workspace-Aufgaben)
+export COMPUTE_AGENT_KEY=<Wert von COMPUTE_AGENT_KEY aus der .env>
+docker compose -f deploy/compose.local.yml up --build -d
+```
 
-- Name und Passwort ändern (über „Meine Einstellungen" in der Navigation)
-- Bei LDAP-Accounts: Nameänderung möglich, Passwortänderung erfolgt über LDAP
+- Web-App: <http://localhost:8000>
+- **Erster Login: `admin` / `admin` — Passwort nach dem ersten Login ändern!**
+- Danach in der **Admin-Konsole**: LLM-Verbindung testen, Kurs anlegen,
+  Mitglieder einladen, optional Compute-Engine registrieren.
 
-### Sicherheit
-
-- Server-basierte Code-Sandbox (`subprocess` + `resource` limits)
-- Timeout, Memory-Limit, CPU-Limit
-- Erlaubte Python-Module konfigurierbar (Standardbibliothek + `math`, `collections`, `matplotlib`, etc.)
-- JWT-Auth mit httpOnly-Cookies
-- Optionale LDAP-Authentifizierung (globale Konfiguration)
-- RBAC: Globale Rollen + Kurs-Rollen
-
-## 🛠️ Tech-Stack (100% Open-Source)
-
-| Komponente | Technologie | Lizenz |
-|---|---|---|
-| Backend | FastAPI + SQLModel | MIT |
-| Frontend | Jinja2 + HTMX + Tailwind CDN | MIT |
-| Code-Editor | CodeMirror 5 | MIT |
-| Markdown + LaTeX | marked + KaTeX | MIT |
-| Syntax-Highlighting | highlight.js | BSD-3 |
-| Drag-and-Drop | SortableJS | MIT |
-| Datenbank | SQLite (→ PostgreSQL) | Public Domain |
-| Auth | JWT + hashlib (SHA-256) + LDAP | MIT |
-| LLM Client | openai SDK | Apache 2.0 |
-| Excel | openpyxl | MIT |
-
-## 🚀 Installation
-
-### 1. Clone & Dependencies
+### Nativ (ohne Docker)
 
 ```bash
 cd AICampus
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env            # LLM-Endpoint setzen
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### 2. Konfiguration
+Produktiv-Betrieb via systemd + nginx: `aicampus.service` + `nginx.conf`
+liegen im Repo ([Details](docs/installation.md)).
 
-```bash
-cp .env.example .env
-# .env bearbeiten (LLM-Endpoint, LDAP, etc.)
-```
+> **Workspace-Aufgaben** (eigene Container pro Student, GPU) erfordern
+> zusätzlich den Compute-Agent — Installation in
+> [docs/installation.md](docs/installation.md). Ohne Agent bleiben
+> Text- und Code-Aufgaben voll funktionsfähig; Workspace-Aufgaben
+> degradieren sauber (Ausführen/Abgeben ausgegraut).
 
-Wichtige Umgebungsvariablen:
+## 🛠️ Tech-Stack (100 % Open-Source)
 
-| Variable | Standard | Beschreibung |
+| Komponente | Technologie | Lizenz |
 |---|---|---|
-| `SECRET_KEY` | `dev-secret-change-me-in-production` | JWT-Signatur-Secret |
-| `LLM_API_URL` | `http://localhost:8001/v1` | OpenAI-kompatibler Endpoint |
-| `LLM_API_KEY` | `sk-default` | API-Key für LLM |
-| `LLM_MODEL` | `Qwen3-32B` | Modellname |
-| `LDAP_ENABLED` | `false` | LDAP-Auth aktivieren |
-| `SANDBOX_TIMEOUT` | `15` | Code-Ausführung Timeout (Sekunden) |
-| `SANDBOX_MEMORY_MB` | `512` | Memory-Limit für Sandbox |
+| Backend | Python · FastAPI · SQLModel | MIT |
+| Frontend | Jinja2 · HTMX · Tailwind CSS | MIT |
+| Code-Editor | CodeMirror 6 | MIT |
+| Markdown + LaTeX | marked · KaTeX | MIT |
+| Slides | reveal.js | MIT |
+| Terminal (Workspace) | xterm.js | MIT |
+| Visualisierung | Plotly · Chart.js · Three.js | MIT |
+| Syntax-Highlighting | highlight.js | BSD-3 |
+| Drag-and-Drop | SortableJS | MIT |
+| Datenbank | SQLite (→ PostgreSQL) | Public Domain |
+| Auth | PyJWT (HS256) · SHA-256 · LDAP (ldap3) | MIT |
+| LLM-Client | openai SDK (OpenAI-kompatibel) | Apache-2.0 |
+| Compute | Docker (Container pro Student, GPU-Passthrough) | Apache-2.0 |
+| Excel-Export | openpyxl | MIT |
 
-### 3. Start
+## 📖 Dokumentation
 
-**Entwicklungsmodus** (mit Hot-Reload):
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
+| Dokument | Inhalt |
+|---|---|
+| [docs/installation.md](docs/installation.md) | Ausgeführte Installation: Docker, systemd, Compute-Agent, Multi-Server, SSH-Tunnel, GPU, Backups |
+| [docs/configuration.md](docs/configuration.md) | Alle Konfigurationsoptionen (`.env`), LLM-Setups, LDAP, Preview-Subdomains |
+| [docs/user-guide.md](docs/user-guide.md) | Rollen, Aufgabentypen, Kursmaterial, Medien, Applets, Import, Forum — für Professoren & Tutoren |
+| [docs/architecture.md](docs/architecture.md) | Projektstruktur, Komponenten, Debugging & Logs |
 
-**Hintergrund-Start** (Output wird geloggt):
-```bash
-nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 > server-output.log 2>&1 &
-```
+**API-Dokumentation** (automatisch generiert, während der App läuft):
 
-Der Server ist dann unter `http://localhost:8000` erreichbar.
-
-> **Debugging:** Server-Logs (Errors, Request-Trace, etc.) landen in `server-output.log`. Bei Problemen immer zuerst die letzten Zeilen dieser Datei prüfen:
-> ```bash
-> tail -n 50 server-output.log
-> ```
-
-### 4. Erster Start
-
-Beim ersten Start wird automatisch ein Admin-Account angelegt:
-
-| Username | Password | Rolle |
-|---|---|---|
-| `admin` | `admin` | Admin |
-
-> **Wichtig:** Ändere das Admin-Passwort nach dem ersten Login in den Einstellungen!
-
-Melde dich mit diesen Credentials an und erstelle über die **Admin-Konsole** deine ersten Kurse, User und Aufgaben.
-
-## 📁 Projektstruktur
-
-```
-AICampus/
-├── main.py                  # FastAPI App + Web-Routes
-├── config.py                # Zentrale Konfiguration (env vars)
-├── .env                     # Secrets & Settings
-├── requirements.txt
-├── database/
-│   ├── base.py              # DB Engine + Session
-│   └── models.py            # SQLModel Tabellen (User, Course, Task, ...)
-├── services/
-│   ├── auth_service.py      # JWT + LDAP Auth + RBAC
-│   ├── llm_service.py       # OpenAI-kompatibler LLM-Client
-│   ├── grading_service.py   # Grading-Orchestrierung
-│   ├── sandbox_runner.py    # Sichere Code-Ausführung
-│   ├── settings_resolver.py # Settings-Auflösung (global → Kurs)
-│   ├── export_service.py    # Excel-Export (.xlsx)
-│   └── media_service.py     # Medien-Speicher + MediaUsage-Reconciliation
-├── api/
-│   ├── auth.py              # Login/Logout/Register
-│   ├── admin.py             # Kurs + User + globale Settings (Admin)
-│   ├── course_members.py    # Kurs-Mitglieder + Einladungen (Prof/Admin)
-│   ├── tutor.py             # Aufgaben + Korrektur + Übersicht
-│   ├── student.py           # Aufgaben + Einreichung + Feedback
-│   ├── media.py             # Medienbibliothek: Upload/Ersatz/Liste/Edit/LLM-Beschreibung (PROF)
-│   ├── materials.py         # Slides (Markdown, je Kurs max. 1)
-│   ├── script.py            # Skript-Kapitel: CRUD/Freischalten/Reihenfolge/LLM-Generierung
-│   └── user_settings.py     # Eigene Einstellungen bearbeiten
-├── templates/
-│   ├── base.html            # Master-Layout (Nav, Toast, Markdown/LaTeX)
-│   ├── login.html           # Login-Seite
-│   ├── dashboard.html       # Kurs-Übersicht nach Login
-│   ├── join.html            # Kurs-Beitritt per Einladungslink
-│   ├── user_settings.html   # Eigene Einstellungen
-│   ├── admin/
-│   │   └── dashboard.html   # Admin-Konsole (Kurse, User, Settings)
-│   ├── course/              # Kurs-Tab-Seiten (Tab-Leiste + Rollensichtbarkeit)
-│   │   ├── base.html        # Parent: Kurs-Header, Tabs, Kurs-Edit-Modal
-│   │   ├── _tabs.html       # Tab-Leiste-Partial (Skript/Slides/Aufgaben/Übersicht/Medien/Mitglieder)
-│   │   ├── slides.html      # Tab 'Folien': Kachel-Übersicht (Live-Preview, Design)
-│   │   ├── slides_edit.html # Folien-Editor (Markdown, Live-Preview, LLM) für Tutor/PROF
-│   │   ├── slides_present.html # Präsentation (Reveal.js) + PDF-Export
-│   │   ├── script.html      # Tab 'Skript': Kapitel-Liste (Tutor) / Lesefluss (Student)
-│   │   ├── media.html       # Tab 'Medien': Upload, Verwendungs-Orte (PROF/Admin)
-│   │   ├── tasks_student.html  # Tab 'Aufgaben': Punktestand + Filter (Student)
-│   │   ├── tasks_tutor.html    # Tab 'Aufgaben': Drag-and-Drop, Sichtbarkeit (Tutor/PROF)
-│   │   ├── overview.html      # Tab 'Übersicht': Punktübersicht + Excel-Export
-│   │   └── members.html       # Tab 'Mitglieder': Rollen, Einladungen (PROF/Admin)
-│   ├── tutor/
-│   │   ├── task_detail.html # Aufgabe erstellen/bearbeiten (LLM-Aufgabe generieren)
-│   │   └── submission_review.html # Einzelne Einreichung bewerten
-│   └── student/
-│       └── task_solve.html  # Aufgabe lösen (Editor + Markdown/LaTeX)
-├── static/
-│   ├── css/main.css         # Custom Styles
-│   └── js/markdown-renderer.js # Markdown + LaTeX Rendering
-├── prompts/
-│   ├── grading_prompt.py    # LLM-Grading-Prompt-Templates
-│   ├── creation_prompt.py   # LLM-Task-Creation-Prompt (Text-Aufgaben)
-│   ├── code_task_prompt.py  # LLM-Code-Task-Prompt (Vorlage/Tests/Lösung)
-│   └── script_prompt.py     # LLM-Prompt für Skript-Kapitel (Titel/Inhalt als JSON)
-└── data/
-    ├── aicampus.db          # SQLite-Datenbank (dev)
-    └── media/course_{id}/   # Kurs-Medien (UUID-Namen, per Upload)
-```
-
-## 🎓 LLM-Setup
-
-Das System erwartet einen **OpenAI-kompatiblen** API-Endpoint. Die Konfiguration erfolgt in der Admin-Konsole (oder via `.env`).
-
-### Qwen3 auf Uni-Server
-
-```bash
-# .env
-LLM_API_URL=http://llm-server.uni.de:8001/v1
-LLM_API_KEY=sk-your-key
-LLM_MODEL=Qwen3-32B
-```
-
-### Ollama (lokal)
-
-```bash
-# .env
-LLM_API_URL=http://localhost:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=qwen2.5:32b
-```
-
-### vLLM / TGI
-
-```bash
-LLM_API_URL=http://localhost:8000/v1
-LLM_API_KEY=
-LLM_MODEL=meta-llama/Llama-3.1-70B-Instruct
-```
-
-### SSH-Tunnel zu einem nur per SSH erreichbaren LLM-Server (persistent)
-
-Wenn der LLM-Server in einem anderen Netz liegt oder per Firewall nicht direkt erreichbar ist
-(z. B. vLLM auf einem Uni-GPU-Server, nur SSH offen), kann man einen SSH-Local-Port-Forward
-als **systemd-Service** einrichten — reboot-fest mit Auto-Restart:
-
-```bash
-# 1) SSH-Key erzeugen (falls noch nicht vorhanden) und Public-Key auf den LLM-Server kopieren
-ssh-keygen -t ed25519 -C "aicampus-llm-tunnel"
-ssh-copy-id user@llm-server   # alternativ: Public-Key manuell nach ~/.ssh/authorized_keys
-
-# 2) systemd-Service anlegen (er setzt Key-Auth voraus, kein Passwort-Prompt)
-sudo tee /etc/systemd/system/aicampus-llm-tunnel.service > /dev/null << 'EOF'
-[Unit]
-Description=AICampus LLM SSH-Tunnel
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=wandel
-ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -L 0.0.0.0:8001:localhost:8001 user@llm-server
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 3) Aktivieren
-sudo systemctl daemon-reload
-sudo systemctl enable --now aicampus-llm-tunnel
-
-# 4) Prüfen: Port muss lauschen
-ss -tln | grep 8001
-```
-
-Dann im `.env` einfach den lokalen Tunnel-Port als Endpoint angeben:
-
-```bash
-LLM_API_URL=http://localhost:8001/v1
-```
-
-**Bei Docker-Deployment** (AICampus läuft in einem Container) sind zwei Dinge zusätzlich nötig:
-
-1. Der Container erreicht den Host nicht über `localhost`, sondern über die Docker-Host-IP.
-   Am einfachsten per `extra_hosts` in der Compose-Datei:
-   ```yaml
-   services:
-     aicampus:
-       extra_hosts: ["host.docker.internal:host-gateway"]
-   ```
-   und `LLM_API_URL=http://host.docker.internal:8001/v1` im `.env`.
-   **Wichtig:** `host-gateway` löst auf die **docker0-IP** (üblich `172.17.0.1`), nicht auf die
-   IP des Compose-Netzwerks — beide Subnetze müssen ggf. freigegeben sein.
-2. Falls auf dem Host **UFW** aktiv ist: Docker-Container-Traffic auf nicht-published Ports wird
-   per Default gedroppt. Freigabe für die Docker-Subnetze:
-   ```bash
-   sudo ufw allow from 172.17.0.0/16 to any port 8001 proto tcp
-   sudo ufw allow from 172.18.0.0/16 to any port 8001 proto tcp
-   ```
-
-**Fehlersuche:** `journalctl -u aicampus-llm-tunnel -n 50` — ein `Permission denied
-(publickey)`-Fehler deutet auf ein Key-Problem (z. B. überschriebene `authorized_keys` auf dem
-LLM-Server), sonst liegt es am SSH-Server/Netz. In der AICampus-Admin-Konsole lässt sich die
-Verbindung jederzeit per „LLM testen" prüfen.
-
-## 📖 API-Dokumentation
-
-Automatisch generierte OpenAPI-Docs:
-
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-
-## 🔐 LDAP-Auth
-
-Optional konfigurierbar — global in der Admin-Konsole oder via `.env`:
-
-```bash
-# Globale LDAP-Konfiguration (.env)
-LDAP_ENABLED=true
-LDAP_SERVER=ldap://ldap.uni.de
-LDAP_BASE_DN=dc=informatik,dc=uni,dc=de
-LDAP_BIND_DN=cn=ldapbrowse,dc=informatik,dc=uni,dc=de
-LDAP_BIND_PW=...
-LDAP_USER_SEARCH=(uid={username})
-```
-
-Die Admin-Konsole bietet eine vollständige LDAP-Konfiguration mit Verbindungstest. Bei Active Directory kann der Search Filter z. B. auf `(sAMAccountName={username})` gesetzt werden. Bei aktiviertem LDAP werden neue User automatisch angelegt, wenn die LDAP-Auth erfolgreich ist.
-
-## 🤝 Contributing
-
-1. Fork & Branch erstellen
-2. Änderungen committen
-3. Pull Request eröffnen
+- Swagger UI: <http://localhost:8000/docs>
+- ReDoc: <http://localhost:8000/redoc>
 
 ## 📄 License
 
-MIT — 100% Open-Source, freier Einsatz an Universitäten.
+MIT — 100 % Open-Source, freier Einsatz an Universitäten.
 
 ---
 

@@ -81,7 +81,7 @@ HIDDEN_IMAGE_REPOS: frozenset[str] = frozenset(
     ).split(",") if r.strip()
 )
 
-# ── Limits (Sicherheit, s. Plan §9) ───────────────────────────────
+# ── Limits (Sicherheit) ──────────────────────────────────────────
 MAX_FILE_SIZE: int = 50 * 1024 * 1024          # 50 MB pro Datei
 # Fallback-Disk-Quota pro Workspace (wenn die Aufgabe keine eigene
 # Quota gesetzt hat) + Cap für Snapshots (tar.gz) — mit der Task-Quota

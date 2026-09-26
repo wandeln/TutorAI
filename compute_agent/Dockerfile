@@ -6,7 +6,7 @@
 
 # Relay-Quellcode zuerst kompilieren (Go-Stage) — das statische Binary
 # (~1–2 MB) landet im Agent-Image und wird on-demand per `docker cp`
-# in die Workspace-Container kopiert (Preview-Tunnel, s. plan-workspace-preview.md).
+# in die Workspace-Container kopiert (Preview-Tunnel).
 FROM golang:1.24-alpine AS relay
 WORKDIR /build
 COPY compute_agent/relay/go.mod compute_agent/relay/relay.go .

@@ -1,6 +1,6 @@
 """
 Image-Spec — reines Dockerfile als „Rezept" für ein Workspace-Image
-(s. docs/plan-compute-engines-images.md, Format-Wechsel 2026-09-18).
+# (Format-Wechsel 2026-09-18).
 
 Die Spec ist ein Dockerfile (DB-Spalte `dockerfile`), der Name (Slug)
 liegt daneben als eigene DB-Spalte — keine YAML-Wrapper mehr, keine

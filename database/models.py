@@ -194,7 +194,7 @@ class TaskBase(SQLModel):
     is_visible: bool = Field(default=True)             # Für Studenten sichtbar
     display_order: int = Field(default=0)              # Anzeigereihenfolge im Kurs
     hints_enabled: bool = Field(default=True)          # Socratic-Hints fuer Studenten
-    # Workspace-Aufgaben (task_type=workspace), s. docs/plan-workspace-tasks.md:
+    # Workspace-Aufgaben (task_type=workspace):
     # Skript-basiertes Modell: Run/Tests/Init laufen über Task-Dateien
     # (run.sh, test.sh, .test_private.sh, .init.sh, .init_hidden.sh, .test_solution.sh);
     # die Umgebung wird hier per einfachen Feldern konfiguriert.
@@ -205,7 +205,7 @@ class TaskBase(SQLModel):
     workspace_internet: bool = Field(default=False)             # Internet für Studenten-Läufe (Build hat immer)
     workspace_main_file: Optional[str] = Field(default=None, max_length=200)  # Editor-Hauptdatei (relativ)
     workspace_assets_status: Optional[str] = Field(default=None)  # JSON je Agent: assets + task_image-Status
-    # Compute-Engines + Image-Specs, s. docs/plan-compute-engines-images.md:
+    # Compute-Engines + Image-Specs:
     workspace_engines: Optional[str] = Field(default=None)      # JSON-Liste Engine-Namen (geordnet) — Pool für Routing/Prebuild
     workspace_image: Optional[str] = Field(default=None, max_length=50)  # Image-Spec-Name (Kurs-Scope > global)
     workspace_preview_root_ports: Optional[str] = Field(default=None)  # VERWORFEN (Subdomain-Preview) — Spalte bleibt, ungenutzt
@@ -287,7 +287,7 @@ class TaskUpdate(SQLModel):
 
 
 # ═══════════════════════════════════════════════════════════════════
-# IMAGE SPEC ("Rezept" für Workspace-Images, s. plan-compute-engines-images.md)
+# IMAGE SPEC ("Rezept" für Workspace-Images)
 # ═══════════════════════════════════════════════════════════════════
 
 class ImageSpec(SQLModel, table=True):
@@ -325,7 +325,7 @@ class TaskWorkspaceFile(SQLModel, table=True):
     """Metadaten einer Workspace-Datei. Der Inhalt liegt auf Disk:
     data/workspaces/{task_id}/<path>
 
-    Zugriffsklassen (s. docs/plan-workspace-access-classes.md):
+    # Zugriffsklassen (s. docs/user-guide.md §3.3):
     `access` ist die EXPLIZITE Klasse der Datei (NULL = erben von den
     Ordner-Vorfahren). Effektive Klasse = restriktivste von (eigene,
     alle Ordner-Vorfahren): hidden > readonly > edit.

@@ -2,7 +2,7 @@
 Docker-Operationen des Compute-Agenten (via docker-CLI, subprocess).
 
 Alle Funktionen sind synchron; FastAPI führt sie im Threadpool aus
-(sync-def-Endpoints). Container-Modell (s. Plan §2.3):
+(sync-def-Endpoints). Container-Modell:
 - Container `aicampus-{key}`, key = ws-{course}-{task}-{student}
 - Volume `aicampus-{key}` → /workspace (einziger schreibbarer Ort)
 - Read-only Root-FS, /tmp als tmpfs; je 🔒-Pfad (spec.readonly_paths)

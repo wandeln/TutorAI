@@ -587,7 +587,7 @@ class LLMService:
         in EINEM LLM-Call (Single-Prompt): title, description,
         model_solution (Skizze + Bewertungskriterien), env, files, folders —
         plus workspace_image/workspace_engines/proposed_image_spec, wenn
-        require_image_selection (s. Plan §7.1 — das LLM schlägt vor, die
+        require_image_selection (das LLM schlägt vor, die
         Infrastruktur befehligt nie; Validierung serverseitig).
 
         generate_fields ist in der Abarbeitungs-REIHENFOLGE übergeben
@@ -646,7 +646,7 @@ class LLMService:
         config: Optional[dict] = None,
     ):
         """LLM generiert ein komplettes Dockerfile (Image-Spec) aus einer
-        Beschreibung (s. plan-compute-engines-images.md). Das Ergebnis ist
+        Beschreibung. Das Ergebnis ist
         ein ENTWURF: validiert hier (Dockerfile-Regeln), bestätigt vom
         Tutor/Prof in der UI, erst dann gespeichert/installiert.
 

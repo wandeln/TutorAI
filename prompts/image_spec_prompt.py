@@ -1,5 +1,5 @@
 """
-Prompt für die LLM-Generierung von Image-Specs (s. docs/plan-compute-engines-images.md).
+Prompt für die LLM-Generierung von Image-Specs.
 
 Format seit 2026-09-18: Das LLM liefert ein komplettes DOCKERFILE als
 Entwurf (kein YAML). Der Name der Spec ist vorgegeben (UI-Feld) und wird

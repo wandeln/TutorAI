@@ -116,7 +116,7 @@ async def lifespan(app: FastAPI):
         if not admin_exists:
             _create_admin(session)
 
-        # Kuratierte globale Image-Specs (idempotent, s. plan-compute-engines-images.md)
+        # Kuratierte globale Image-Specs (idempotent)
         image_spec_service.seed_global_specs(session)
 
     yield
@@ -314,7 +314,7 @@ app.include_router(script_api.router)
 app.include_router(forum.router)
 app.include_router(script_questions.router)
 app.include_router(importer.router)
-app.include_router(preview_proxy.router)  # /preview/{task}/{port}/… (same-origin, s. plan-workspace-preview.md)
+app.include_router(preview_proxy.router)  # /preview/{task}/{port}/… (same-origin)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -1751,7 +1751,7 @@ async def task_page(
                 "workspace_disk_quota": task.workspace_disk_quota if is_tutor else None,
                 "workspace_internet": task.workspace_internet if is_tutor else None,
                 "workspace_assets_status": task.workspace_assets_status if is_tutor else None,
-                # Compute-Engines/Image-Spec (nur Tutor, s. plan-compute-engines-images.md)
+                # Compute-Engines/Image-Spec (nur Tutor)
                 "workspace_engines": (
                     json.loads(task.workspace_engines)
                     if (task.workspace_engines and is_tutor) else None),

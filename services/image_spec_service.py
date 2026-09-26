@@ -1,6 +1,5 @@
 """
-Image-Spec-Service: Storage & Auflösung der Image-"Rezepte"
-(s. docs/plan-compute-engines-images.md).
+Image-Spec-Service: Storage & Auflösung der Image-"Rezepte".
 
 Format seit 2026-09-18: Die Spec ist ein REINES DOCKERFILE (DB-Spalte
 `dockerfile`), der Name (Slug) liegt als eigene DB-Spalte daneben.

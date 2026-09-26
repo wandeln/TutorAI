@@ -57,7 +57,7 @@ class RunJob:
                 "finished_at": self.finished_at,
                 "duration": (self.finished_at or time.time()) - self.started_at,
             }
-        # GPU-Queue: wie viele GPU-Jobs stehen vor mir? (FIFO, s. Plan §10)
+        # GPU-Queue: wie viele GPU-Jobs stehen vor mir? (FIFO)
         if self.gpu and out["status"] == "queued":
             out["queue_position"] = queue_position_ahead(self)
         return out

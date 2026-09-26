@@ -1251,7 +1251,7 @@ async def _load_ws_task(task_id: int, session: Session, user: User) -> Task:
 
 def _ws_client_or_error(session: Session, task: Task) -> ComputeClient:
     """Gesunden Agent wählen oder 503 (degradierter Modus).
-    Routing über den Engine-Pool der Aufgabe (s. plan-compute-engines-images.md).
+    Routing über den Engine-Pool der Aufgabe.
     Zusätzlich: Aufgabe muss lauffähig sein (Image + Engines hinterlegt),
     sonst graceful 503 — deckt alle Workspace-Endpoints ab."""
     if not workspace_service.is_enabled(session, task.course_id):

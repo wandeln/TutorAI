@@ -643,7 +643,7 @@ class PrivateTest(unittest.TestCase):
       Object.assign(body, (typeof window._workspaceEnvFields === "function")
         ? window._workspaceEnvFields()
         : {});
-      // Compute-Engine-Pool + Image-Spec (s. plan-compute-engines-images.md)
+      // Compute-Engine-Pool + Image-Spec
       body.workspace_engines = (typeof window._workspaceEngineNames === "function")
         ? window._workspaceEngineNames()
         : [];

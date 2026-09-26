@@ -2,7 +2,6 @@
  * AICampus Image-Spec-UI — gemeinsame UI-Logik für die Image-Spec-Verwaltung
  * (Admin-Konsole: globale Specs, Kurs-Settings: Kurs-Specs).
  *
- * S. docs/plan-compute-engines-images.md:
  * - Spec = "Rezept" (reines Dockerfile, Name in eigener DB-Spalte)
  * - Installation = konkretes Image auf einer Engine (deterministisches Tag)
  *

@@ -1,7 +1,6 @@
 """
 Workspace-Service: Orchestrierung zwischen AICampus (DB, Disk) und den
-Compute-Agenten (s. docs/plan-workspace-tasks.md,
-    docs/plan-workspace-access-classes.md).
+Compute-Agenten.
 
 Verantwortlichkeiten:
 - Agent-Auswahl (effektive Compute-Config: Kurs > Global > .env, GPU-Routing, Health-Cache)
@@ -54,7 +53,7 @@ MAX_LLM_FILE_CHARS = 100_000    # je Datei im LLM-Grading-Kontext
 MAX_LLM_TOTAL_CHARS = 400_000   # gesamt im LLM-Grading-Kontext
 HEALTH_TTL = 30                 # Health-Cache (Sekunden)
 
-# Dateilimits (s. Plan §9)
+# Dateilimits
 MAX_FILE_BYTES = 50 * 1024 * 1024            # 50 MB pro Datei
 MAX_WORKSPACE_TOTAL_BYTES = 512 * 1024 * 1024  # 512 MB je Aufgaben-Workspace
 
@@ -105,7 +104,7 @@ def ensure_fresh_workspace(client: ComputeClient, key: str, spec: dict,
     return resp
 
 
-# ── Zugriffsklassen (explizit pro Datei/Ordner, s. Plan) ──────────
+# ── Zugriffsklassen (explizit pro Datei/Ordner) ──────────────────
 # Effektive Klasse = restriktivste von (eigene explizite, alle Ordner-
 # Vorfahren). Restriktivität: hidden > readonly > edit.
 ACCESS_VALUES = ("edit", "readonly", "hidden")
@@ -403,7 +402,7 @@ class WorkspaceService:
     def pick_agent(self, session: Session,
                    course_id: Optional[int] = None,
                    engine_names: Optional[list[str]] = None) -> Optional[dict]:
-        """Routing (s. plan-compute-engines-images.md):
+        """Routing:
         - Engine-Pool: geordnete Liste (Task.workspace_engines) oder alle
           registrierten Engines (lokal bevorzugt, wenn kein Pool)
         - GPU-Regeln entscheidet die Engine (gpus-Setting), nicht das Task

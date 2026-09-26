@@ -101,7 +101,7 @@ SANDBOX_ALLOWED_MODULES = [
 
 # ─── Compute / Workspaces ──────────────────────────────────────────
 # Anbindung an Compute-Engines für Workspace-Aufgaben (per-Student-Docker-Container
-# auf einem separaten oder lokalen Server, s. docs/plan-workspace-tasks.md).
+# auf einem separaten oder lokalen Server, s. docs/installation.md).
 # Workspace-Aufgaben sind immer verfügbar; ohne erreichbare Engine degradieren
 # die Views sauber (kein Feature-Flag mehr).
 COMPUTE_AGENT_URL = os.getenv("COMPUTE_AGENT_URL", "http://127.0.0.1:8700")

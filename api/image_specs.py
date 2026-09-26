@@ -1,6 +1,6 @@
 """
 Image-Spec-Endpoints: globale Specs (Admin) + Kurs-Specs (Prof) +
-Engine-Image-Proxy (s. docs/plan-compute-engines-images.md).
+Engine-Image-Proxy.
 
 Rollen:
 - Admin: globale Specs verwalten (CRUD + LLM-Generierung), Installation auf

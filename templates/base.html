@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#1d4ed8">
   <!-- Favicon (Inline-SVG — verhindert /favicon.ico-404) -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
-  <title>TutorAI{% block title %} - {{ page_title or "Übungsaufgaben" }}{% endblock %}</title>
+  <title>AICampus{% block title %} - {{ page_title or "Übungsaufgaben" }}{% endblock %}</title>
 
   <!-- HTMX (BSD-3) — lokal gespiegelt -->
   <script src="{{ asset('vendor/htmx.min.js') }}"></script>
@@ -37,9 +37,9 @@
     .markdown-preview h6 {
       font-weight: 700 !important;
     }
-    /* .tutorai-bibliography: Quellenverzeichnis — die [N]-Nummer steht im
+    /* .aicampus-bibliography: Quellenverzeichnis — die [N]-Nummer steht im
        Eintrag selbst, daher bewusst ohne List-Marker (sonst doppelte Nummer). */
-    .markdown-preview ul:not(.tutorai-bibliography) {
+    .markdown-preview ul:not(.aicampus-bibliography) {
       list-style-type: disc !important;
     }
     .markdown-preview ul ul {
@@ -109,8 +109,8 @@
       <!-- Logo / Home -->
       <a href="/" class="text-xl font-bold flex items-center gap-2 hover:opacity-90 transition mr-2">
         <span>📚</span>
-        <span class="hidden sm:inline">TutorAI</span>
-        <span class="sm:hidden">TutorAI</span>
+        <span class="hidden sm:inline">AICampus</span>
+        <span class="sm:hidden">AICampus</span>
       </a>
 
       <!-- Desktop Navigation -->
@@ -233,7 +233,7 @@
   <!-- ─── Footer ──────────────────────────────────────────────── -->
   <footer class="bg-gray-800 text-gray-400 py-4 mt-8">
     <div class="container mx-auto px-4 text-center text-sm">
-        <p>TutorAI &copy; 2026 &mdash; <a href="https://github.com/wandeln/TutorAI">Open-Source</a> &mdash; Hosted @ <a href="https://cg.cs.uni-bonn.de">Uni-Bonn</a></p>
+        <p>AICampus &copy; 2026 &mdash; <a href="https://github.com/wandeln/AICampus">Open-Source</a> &mdash; Hosted @ <a href="https://cg.cs.uni-bonn.de">Uni-Bonn</a></p>
     </div>
   </footer>
 

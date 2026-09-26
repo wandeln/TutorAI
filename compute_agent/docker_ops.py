@@ -3,8 +3,8 @@ Docker-Operationen des Compute-Agenten (via docker-CLI, subprocess).
 
 Alle Funktionen sind synchron; FastAPI führt sie im Threadpool aus
 (sync-def-Endpoints). Container-Modell (s. Plan §2.3):
-- Container `tutorai-{key}`, key = ws-{course}-{task}-{student}
-- Volume `tutorai-{key}` → /workspace (einziger schreibbarer Ort)
+- Container `aicampus-{key}`, key = ws-{course}-{task}-{student}
+- Volume `aicampus-{key}` → /workspace (einziger schreibbarer Ort)
 - Read-only Root-FS, /tmp als tmpfs; je 🔒-Pfad (spec.readonly_paths)
   ein ro-Bind-Mount aus dem geteilten Asset-Verzeichnis nach /workspace
 - Container ist ephemeral (Reaper), der State lebt im Volume
@@ -47,15 +47,15 @@ def key_parts(key: str) -> tuple[int, int, int]:
 
 
 def container_name(key: str) -> str:
-    return f"tutorai-{key}"
+    return f"aicampus-{key}"
 
 
 def volume_name(key: str) -> str:
-    return f"tutorai-{key}"
+    return f"aicampus-{key}"
 
 
 def ws_network_name(key: str) -> str:
-    return f"tutorai-net-{key}"
+    return f"aicampus-net-{key}"
 
 
 def ensure_ws_network(key: str) -> None:
@@ -175,22 +175,22 @@ def pull_image(image: str) -> None:
 def resolve_image(image: str) -> str:
     """Image-Referenz prüfen (und bei Autopull nachziehen, wenn öffentlich).
 
-    TutorAI-gelieferte Refs (tutorai/spec/*, kuratierte tutorai/*-Images)
-    werden NICHT gepullt — die installiert TutorAI per Image-Spec auf der
+    AICampus-gelieferte Refs (aicampus/spec/*, kuratierte aicampus/*-Images)
+    werden NICHT gepullt — die installiert AICampus per Image-Spec auf der
     Engine. Fehlt ein solches Image → klare 409-Meldung.
     """
     if not image_exists(image) and config.AUTOPULL \
-            and not image.startswith("tutorai/"):
+            and not image.startswith("aicampus/"):
         try:
             pull_image(image)
         except DockerError as e:
             raise DockerError(f"Image-Pull fehlgeschlagen: {e}", 409) from e
     if not image_exists(image):
-        if image.startswith("tutorai/spec/"):
+        if image.startswith("aicampus/spec/"):
             raise DockerError(
                 f"Image {image} fehlt auf diesem Node — bitte die "
-                "Image-Spec in der TutorAI-UI auf der Engine installieren", 409)
-        if image.startswith("tutorai/task/"):
+                "Image-Spec in der AICampus-UI auf der Engine installieren", 409)
+        if image.startswith("aicampus/task/"):
             raise DockerError(
                 f"Task-Image {image} fehlt auf diesem Node — die "
                 "Initialisierung (.init.sh-Build) läuft noch oder ist "
@@ -292,17 +292,17 @@ def list_images() -> list[dict]:
                     "created": parts[3], "spec_name": None, "spec_hash": None})
     # Labels: `docker images` kennt {{.Label}} nicht → inspect in einem Zug
     # (alle Image-IDs als Argumente). Neben den Spec-Labels werden die
-    # Task-Image-Labels (tutorai.task / tutorai.task.hash) mit ausgelesen.
+    # Task-Image-Labels (aicampus.task / aicampus.task.hash) mit ausgelesen.
     ids_proc = _docker("images", "--format", "{{.ID}}", check=False, timeout=30)
     ids = ids_proc.stdout.decode().split()
     labels: dict[str, tuple[str | None, str | None, str | None, str | None]] = {}
     if ids:
         proc = _docker(
             "image", "inspect", "--format",
-            '{{.Id}}\t{{index .Config.Labels "tutorai.spec.name"}}\t'
-            '{{index .Config.Labels "tutorai.spec.hash"}}\t'
-            '{{index .Config.Labels "tutorai.task"}}\t'
-            '{{index .Config.Labels "tutorai.task.hash"}}',
+            '{{.Id}}\t{{index .Config.Labels "aicampus.spec.name"}}\t'
+            '{{index .Config.Labels "aicampus.spec.hash"}}\t'
+            '{{index .Config.Labels "aicampus.task"}}\t'
+            '{{index .Config.Labels "aicampus.task.hash"}}',
             *ids, check=False, timeout=30)
         for line in proc.stdout.decode().splitlines():
             parts = line.split("\t")
@@ -335,14 +335,14 @@ def list_images() -> list[dict]:
 
 def _do_spec_build(ref: str, dockerfile: str,
                    spec_name: str = "", spec_hash: str = "") -> None:
-    with tempfile.TemporaryDirectory(prefix="tutorai-imgbuild-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="aicampus-imgbuild-") as tmp:
         ctx = Path(tmp)
         (ctx / "Dockerfile").write_text(dockerfile, encoding="utf-8")
         args = ["docker", "build", "-t", ref, "-f", str(ctx / "Dockerfile")]
         if spec_name:
-            args += ["--label", f"tutorai.spec.name={spec_name}"]
+            args += ["--label", f"aicampus.spec.name={spec_name}"]
         if spec_hash:
-            args += ["--label", f"tutorai.spec.hash={spec_hash}"]
+            args += ["--label", f"aicampus.spec.hash={spec_hash}"]
         args.append(str(ctx))
         try:
             proc = subprocess.run(
@@ -448,7 +448,7 @@ def remove_image(ref: str, force: bool = False) -> int:
     repo = last.rsplit(":", 1)[0] if ":" in last else last
     if repo in config.HIDDEN_IMAGE_REPOS:
         raise DockerError(
-            "Core-Image des TutorAI-Sets kann nicht entfernt werden", 409)
+            "Core-Image des AICampus-Sets kann nicht entfernt werden", 409)
     with _BUILDS_LOCK:
         b = _BUILDS.get(ref)
         if b and b["status"] == "building":
@@ -504,7 +504,7 @@ def volume_exists(key: str) -> bool:
 def _spec_gpus(spec: dict) -> str | list[int]:
     """GPU-Modus der Workspace-Spec: "all" | "none" | [int, …].
 
-    Kommt aus der Engine-Regel "gpus" (von TutorAI injiziert); ohne
+    Kommt aus der Engine-Regel "gpus" (von AICampus injiziert); ohne
     Injektion: "none" (GPU-Fähigkeit folgt aus der Compute-Engine).
     """
     gpus = spec.get("gpus")
@@ -549,9 +549,9 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
     args = [
         "create",
         "--name", container_name(key),
-        "--label", f"tutorai.ws={key}",
-        "--label", f"tutorai.course={course}",
-        "--label", f"tutorai.mounts={_mounts_hash(spec, course, _task)}",
+        "--label", f"aicampus.ws={key}",
+        "--label", f"aicampus.course={course}",
+        "--label", f"aicampus.mounts={_mounts_hash(spec, course, _task)}",
         "--read-only",
         "--tmpfs", _TMPFS_SPEC,
         "-v", f"{volume_name(key)}:/workspace",
@@ -599,7 +599,7 @@ def _build_create_args(key: str, spec: dict, image: str) -> list[str]:
 def _mounts_hash(spec: dict, course: int, task: int) -> str:
     """Fingerprint des ro-Mount-Layouts (Pfad + Quellen-Status).
 
-    Ländet als Label `tutorai.mounts`; ändert sich das Layout (neuer 🔒-
+    Ländet als Label `aicampus.mounts`; ändert sich das Layout (neuer 🔒-
     Pfad, Quelle erscheint/verschwindet, 🔒-DATEI wird editiert), wird
     der Container neu angelegt (Volume bleibt). Datei-Quellen brauchen
     Size+Mtime im Hash: ein ro-File-Bind-Mount klebt auf der alten Inode,
@@ -688,7 +688,7 @@ def ensure_container(key: str, spec: dict) -> dict:
     noch frisch ist (erster Start des Studenten). Läuft der Container mit
     anderem Image als gewünscht (z. B. Task-Image-Wechsel nach
     .init.sh-Änderung) ODER mit einem anderen ro-Mount-Layout (Label
-    tutorai.mounts), wird der Container neu angelegt — das Volume
+    aicampus.mounts), wird der Container neu angelegt — das Volume
     (Studenten-Dateien) bleibt erhalten.
     """
     course, task, _ = key_parts(key)
@@ -696,7 +696,7 @@ def ensure_container(key: str, spec: dict) -> dict:
     state = container_state(key)
     if state is not None and (
             _container_image(key) not in (None, desired)
-            or _container_label(key, "tutorai.mounts") != _mounts_hash(spec, course, task)):
+            or _container_label(key, "aicampus.mounts") != _mounts_hash(spec, course, task)):
         # Image-/Mount-Mismatch → Container weg (Volume bleibt), neu anlegen
         clean_phantom_mounts(key)  # Mount-Point-Reste VOR dem Rm räumen
         _docker("rm", "-f", container_name(key), timeout=60, check=False)
@@ -743,7 +743,7 @@ def stop_container_soft(key: str) -> None:
 
 
 def list_workspaces() -> list[dict]:
-    proc = _docker("ps", "-a", "--filter", "label=tutorai.ws",
+    proc = _docker("ps", "-a", "--filter", "label=aicampus.ws",
                    "--format", "{{.Labels}}\t{{.Status}}", check=False)
     out = []
     for line in proc.stdout.decode().splitlines():
@@ -752,7 +752,7 @@ def list_workspaces() -> list[dict]:
         labels, status = line.split("\t", 1)
         key = None
         for part in labels.split(","):
-            if part.startswith("tutorai.ws="):
+            if part.startswith("aicampus.ws="):
                 key = part.split("=", 1)[1]
                 break
         if key:
@@ -1241,7 +1241,7 @@ def write_starter_files(key: str, files: list[dict],
     wie assets_sync (Host-Asset-Dir) und init_build (Build-Quellen).
     """
     n = 0
-    with tempfile.TemporaryDirectory(prefix="tutorai-starter-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="aicampus-starter-") as tmp:
         for d in folders or []:
             rel = safe_workspace_path(str(d))  # wirft bei unsauberem Pfad
             os.makedirs(os.path.join(tmp, os.path.relpath(rel, "/workspace")),
@@ -1483,11 +1483,11 @@ def all_workspace_mem_usage() -> dict[str, int]:
             if len(parts) != 2:
                 continue
             name, mem = parts
-            if not name.startswith("tutorai-ws-"):
+            if not name.startswith("aicampus-ws-"):
                 continue
             m = re.match(r"([\d.]+)\s*([KMGTPE]?i?B)\b", mem)
             if m:
-                out[name[len("tutorai-"):]] = int(
+                out[name[len("aicampus-"):]] = int(
                     float(m.group(1)) * _MEM_UNIT_MULT.get(m.group(2), 1))
         return out
     except Exception:
@@ -1609,9 +1609,9 @@ def _live_mount_sources(course: int, task: int) -> set[str]:
     rmdir/Ersetzung einer solchen Quelle desynct den Mount auf der alten
     Inode (Stale View im Container, ggf. Kernel-Hang) — Purge/Prune
     dürfen aktive Quellen daher nicht räumen."""
-    prefix = f"tutorai-ws-{course}-{task}-"
+    prefix = f"aicampus-ws-{course}-{task}-"
     out: set[str] = set()
-    proc = _docker("ps", "--filter", f"label=tutorai.course={course}",
+    proc = _docker("ps", "--filter", f"label=aicampus.course={course}",
                    "--format", "{{.Names}}", check=False)
     if proc.returncode != 0:
         return out
@@ -1690,7 +1690,7 @@ def purge_missing_assets(course: int, task: int, keep_paths: list[str],
 INIT_BUILDS: dict[str, dict] = {}   # "{course}:{task}:{hash}" → Build-Status
 INIT_BUILDS_LOCK = threading.Lock()
 # Task-Locks: Builds derselben Aufgabe teilen sich den Build-Container-Namen
-# (tutorai-init-{c}-{t}) — parallele Builds derselben Aufgabe würden sich
+# (aicampus-init-{c}-{t}) — parallele Builds derselben Aufgabe würden sich
 # gegenseitig per rm -f/create bekämpfen (Race bei schnellen Re-Klicks).
 INIT_TASK_LOCKS: dict[tuple[int, int], threading.Lock] = {}
 INIT_TASK_LOCKS_LOCK = threading.Lock()
@@ -1706,7 +1706,7 @@ def _init_task_lock(course: int, task: int) -> threading.Lock:
 
 
 def task_image_ref(course: int, task: int, init_hash: str) -> str:
-    return f"tutorai/task/{course}-{task}:{init_hash}"
+    return f"aicampus/task/{course}-{task}:{init_hash}"
 
 
 def task_image_alias(course: int, task: int, init_hash: str) -> str | None:
@@ -1754,7 +1754,7 @@ def init_build_running(course: int, task: int) -> bool:
 
 
 def _init_container_name(course: int, task: int) -> str:
-    return f"tutorai-init-{course}-{task}"
+    return f"aicampus-init-{course}-{task}"
 
 
 def _init_tmp_dir(course: int, task: int, init_hash: str) -> Path:
@@ -2030,12 +2030,12 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
         args = [
             "create",
             "--name", name,
-            "--label", "tutorai.init-build=1",
-            "--label", f"tutorai.task={course}/{task}",
-            "--label", f"tutorai.task.hash={init_hash}",
+            "--label", "aicampus.init-build=1",
+            "--label", f"aicampus.task={course}/{task}",
+            "--label", f"aicampus.task.hash={init_hash}",
         ]
         if deadline:
-            args += ["--label", f"tutorai.task.deadline={deadline}"]
+            args += ["--label", f"aicampus.task.deadline={deadline}"]
         args += ["--network", "bridge", "--pids-limit", "1024",
                  "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m,mode=1777"]
         # ✏️-Bereich = Host-Temp-Dir (rw); 🔒-Bereiche = shared Asset-Dir
@@ -2060,7 +2060,7 @@ def _do_init_build_core(id_key: str, course: int, task: int, init_hash: str,
 
     def _commit(target_ref: str) -> None:
         # docker commit unterstützt KEINE Labels-Flags — die Cleanup-Labels
-        # (tutorai.task, .hash, .deadline) kommen als Create-Labels des
+        # (aicampus.task, .hash, .deadline) kommen als Create-Labels des
         # Build-Containers und werden vom Commit vererbt.
         _docker("stop", name, timeout=60)
         _docker("commit", "--change", 'CMD ["sleep", "infinity"]',
@@ -2394,7 +2394,7 @@ def seed_volume(key: str, course: int, task: int) -> int:
     seed_paths = manifest.get("seed") or set()
     if not seed_paths:
         return 0
-    with tempfile.TemporaryDirectory(prefix="tutorai-seeds-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="aicampus-seeds-") as tmp:
         n = 0
         for rel in sorted(seed_paths):
             if any(x in ("", "..") for x in rel.split("/")):
@@ -2444,14 +2444,14 @@ def remove_task_images(course: int, task: int,
     force) sowie alte Alias-Marker (Image-Commit-Skip-Builds).
     `keep` (aktuelle Task-Image-Ref) bleibt erhalten — ebenso der Marker
     des dazugehörigen Hashes."""
-    proc = _docker("images", "--filter", f"label=tutorai.task={course}/{task}",
+    proc = _docker("images", "--filter", f"label=aicampus.task={course}/{task}",
                    "--format", "{{.Repository}}:{{.Tag}}", check=False, timeout=30)
     refs = [l.strip() for l in proc.stdout.decode().splitlines() if l.strip()]
     # Legacy: Alias-Tags auf dem Basis-Image (vor der Marker-Umstellung)
     # vererben KEINE Task-Labels — zusätzlich per Namensraum fangen (nur
     # der Tag wird entfernt, das Basis-Image bleibt über eigene Tags).
     proc = _docker("images", "--filter",
-                   f"reference=tutorai/task/{course}-{task}:*",
+                   f"reference=aicampus/task/{course}-{task}:*",
                    "--format", "{{.Repository}}:{{.Tag}}", check=False,
                    timeout=30)
     for l in proc.stdout.decode().splitlines():
@@ -2486,13 +2486,13 @@ def cull_deadline_images() -> int:
     Nur Images ohne (laufende oder gestoppte) nutzung; der Rest wird im
     nächsten Durchlauf erneut geprüft. Fehler werden still geschluckt.
     """
-    proc = _docker("images", "--filter", "label=tutorai.task.deadline",
+    proc = _docker("images", "--filter", "label=aicampus.task.deadline",
                    "--format", "{{.Repository}}:{{.Tag}}", check=False, timeout=30)
     refs = [l.strip() for l in proc.stdout.decode().splitlines() if l.strip()]
     if not refs:
         return 0
     proc = _docker("image", "inspect",
-                   "--format", '{{index .Config.Labels "tutorai.task.deadline"}}',
+                   "--format", '{{index .Config.Labels "aicampus.task.deadline"}}',
                    *refs, check=False, timeout=30)
     removed = 0
     now = time.time()

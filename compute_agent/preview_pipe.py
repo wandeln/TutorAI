@@ -142,7 +142,7 @@ def build_error(status: int, message: str = "") -> bytes:
         404: "Not Found", 411: "Length Required", 413: "Payload Too Large",
         502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout",
     }.get(status, "Error")
-    body = f"TutorAI-Preview: {text}"
+    body = f"AICampus-Preview: {text}"
     if message:
         body += f" — {message[:300]}"
     body_b = body.encode("utf-8", "replace")

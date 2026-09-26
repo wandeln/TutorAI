@@ -1,7 +1,7 @@
 """
 Datenbank-Modelle (SQLModel).
 
-Alle Tabellen von TutorAI. Jede Tabelle hat:
+Alle Tabellen von AICampus. Jede Tabelle hat:
 - Ein Table-Model (für die DB)
 - Ein CreateSchema (für POST/PUT)
 - Ein ReadSchema (für Responses)

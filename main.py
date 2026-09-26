@@ -1,5 +1,5 @@
 """
-TutorAI: FastAPI Application Entry Point
+AICampus: FastAPI Application Entry Point
 
 Start mit:
     uvicorn main:app --reload --host 0.0.0.0 --port 8000
@@ -211,7 +211,7 @@ def migrate_forum_channels():
 
 
 app = FastAPI(
-    title="TutorAI",
+    title="AICampus",
     description="AI-gestütztes Tutoring-System für Übungsaufgaben an Universitäten",
     version="0.1.0",
     lifespan=lifespan,
@@ -224,12 +224,12 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # At startup, hash every file in static/ and build a lookup map.
 # `asset("css/main.css")` → "/static/css/main.css?v=a1b2c3d4"
 # Changing the file content changes the hash → browser fetches fresh.
-# Dev-Modus (TUTORAI_DEV=1, Live-Code via compose.dev.yml): ?v= kommt
+# Dev-Modus (AICAMPUS_DEV=1, Live-Code via compose.dev.yml): ?v= kommt
 # aus der Datei-Mtime statt aus der Startup-Map → jeder Save erzeugt
 # eine neue URL, ohne dass die App neu starten muss.
 
 _static_hashes: dict[str, str] = {}
-_dev_mode = os.environ.get("TUTORAI_DEV") == "1"
+_dev_mode = os.environ.get("AICAMPUS_DEV") == "1"
 
 if (BASE_DIR / "static").exists():
     for root, _dirs, files in os.walk(BASE_DIR / "static"):
@@ -1185,7 +1185,7 @@ _APPLET_HEIGHT_SCRIPT = (
     "\n<script>\n"
     "(function () {\n"
     "  function report() {\n"
-    '    try { parent.postMessage({ source: "tutorai-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n'
+    '    try { parent.postMessage({ source: "aicampus-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n'
     "  }\n"
     '  window.addEventListener("load", report);\n'
     '  window.addEventListener("resize", report);\n'
@@ -1198,7 +1198,7 @@ _APPLET_HEIGHT_SCRIPT = (
 
 def _with_applet_height_script(html: str) -> str:
     """Applet-HTML um ein Auto-Size-Boilerplate erweitern (idempotent)."""
-    if "tutorai-applet" in html:
+    if "aicampus-applet" in html:
         return html  # Boilerplate bereits vorhanden
     m = re.search(r"</body\s*>", html, re.IGNORECASE)
     if m:

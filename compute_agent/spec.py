@@ -8,10 +8,10 @@ zusätzliche Mounts gibt es nicht mehr — das übernehmen die Task-Skripte
 Aufgabe liegen (🔒-Skripte read-only gemountet, 👤-Skripte nie im
 Student-Container).
 
-TutorAI injiziert das konkrete Container-IMAGE (aus der Image-Spec der
+AICampus injiziert das konkrete Container-IMAGE (aus der Image-Spec der
 Aufgabe) in `image` sowie — wenn die Aufgabe Init-Skripte hat — die
 Task-Image-Referenz in `task_image` (vom Agent gebaut via init-build).
-Die GPU-Fähigkeit folgt aus der Compute-Engine: TutorAI injiziert die
+Die GPU-Fähigkeit folgt aus der Compute-Engine: AICampus injiziert die
 Engine-Regel in `gpus` ("all" | "none" | [int, …]).
 
 `readonly_paths`: Top-Level-Pfade der Zugriffs-Klasse 🔒 (Dateien oder
@@ -62,7 +62,7 @@ def _int(value, field: str, lo: int, hi: int) -> int:
 def _gpus(value, field: str = "gpus") -> str | list[int] | None:
     """GPU-Modus der Engine: "all" | "none" | Liste von GPU-Nummern.
 
-    None = nicht gesetzt (TutorAI injiziert die Engine-Regel; Default ohne
+    None = nicht gesetzt (AICampus injiziert die Engine-Regel; Default ohne
     Injektion ist "none" — kein GPU).
     """
     if value is None:
@@ -131,7 +131,7 @@ def parse_spec(spec) -> dict:
     image, task_image, working_dir, limits, timeout, gpus, internet,
     main_file, readonly_paths, disk_quota_mb. (`image` ist Pflicht,
     `task_image`, `main_file` und `disk_quota_mb` optional — das Image
-    wird von TutorAI aus der Image-Spec der Aufgabe injiziert.)
+    wird von AICampus aus der Image-Spec der Aufgabe injiziert.)
     """
     if spec is None:
         spec = {}
@@ -153,7 +153,7 @@ def parse_spec(spec) -> dict:
     image = _str(image, "image") if image is not None else None
     if image is None:
         raise SpecError(
-            "image fehlt (wird normalerweise von TutorAI aus der "
+            "image fehlt (wird normalerweise von AICampus aus der "
             "Image-Spec der Aufgabe injiziert)")
     if image.startswith("/") or ".." in image:
         raise SpecError("image: Host-Pfade sind nicht erlaubt")
@@ -167,7 +167,7 @@ def parse_spec(spec) -> dict:
     timeout = _int(spec.get("timeout", config.DEFAULT_TIMEOUT),
                    "timeout", 1, config.MAX_TIMEOUT)
 
-    # GPU-Regel der Engine ("gpus", injiziert von TutorAI). Ohne Injektion:
+    # GPU-Regel der Engine ("gpus", injiziert von AICampus). Ohne Injektion:
     # kein GPU — die Fähigkeit folgt immer aus der Compute-Engine.
     gpus = _gpus(spec.get("gpus"))
     if gpus is None:

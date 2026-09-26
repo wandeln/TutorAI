@@ -1,5 +1,5 @@
 /*
- * TutorAI Image-Spec-UI — gemeinsame UI-Logik für die Image-Spec-Verwaltung
+ * AICampus Image-Spec-UI — gemeinsame UI-Logik für die Image-Spec-Verwaltung
  * (Admin-Konsole: globale Specs, Kurs-Settings: Kurs-Specs).
  *
  * S. docs/plan-compute-engines-images.md:
@@ -24,7 +24,7 @@
  *      Image-Liste der Engine (mit Build-Status + Löschen)
  *
  * Aufruf (s. templates/admin/dashboard.html, templates/course/settings.html):
- *   window.TutorAIImageSpecs.init({
+ *   window.AICampusImageSpecs.init({
  *     mount:        HTMLElement,   // Container, in den die Sektion gerendert wird
  *     specsUrl:     string,        // z. B. "/api/admin/image-specs"
  *     title:        string,        // Überschrift (optional)
@@ -572,5 +572,5 @@
     loadSpecs();
   }
 
-  window.TutorAIImageSpecs = { init: init };
+  window.AICampusImageSpecs = { init: init };
 })();

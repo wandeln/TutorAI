@@ -51,7 +51,7 @@ import { properties } from "@codemirror/legacy-modes/mode/properties";
 // einer der beiden Varianten korrekt, damit beide Paketspielarten laufen.
 const keymapExt = (bindings) => (Array.isArray(bindings) ? keymap.of(bindings) : bindings);
 
-// ── TutorAI-Annotationen (Port von codemirror-mode-tutorai.js) ────────
+// ── AICampus-Annotationen (Port von codemirror-mode-aicampus.js) ────────
 // StateField statt Overlay-Mode: Ein Scan über das Dokument legt die
 // cm-ta-*-Klassen AUF das Markdown-Highlighting. Regelreihenfolge und
 // Verhalten stimmen 1:1 mit dem CM5-Overlay überein — inkl. der
@@ -276,7 +276,7 @@ function languageFor(mode) {
     case "css": return css();
     case "markdown":
     case "gfm": return markdown();
-    case "tutorai-markdown":
+    case "aicampus-markdown":
       return [markdown(), annotationField];
     case "application/json":
     case "json": return json();
@@ -309,7 +309,7 @@ function languageFor(mode) {
 // - sql: Dialekt-Keywords (im Paket mitgeliefert)
 // - python / c / c++: das Paket liefert keine Quelle → einfache
 //   Keyword-Listen (completeFromList, rein textbasiert)
-// - tutorai-markdown / gfm / markdown: TutorAI-Quelle (@-Befehle,
+// - aicampus-markdown / gfm / markdown: AICampus-Quelle (@-Befehle,
 //   Referenzen, Box-Typen; Labels: aktuelles Dokument + kursweite Refmaps)
 
 const PYTHON_KEYWORDS = [
@@ -387,7 +387,7 @@ const TA_REF_TYPES = [
 // Kinds mit Refmap-Labels (→ Label-Completion mit Quellen-Preview)
 const REF_KINDS = new Set(["fig", "eq", "code", "box", "tab"]);
 
-// Cursor in einem Code-Block? Dort ist @ nur Text → kein TutorAI-Completion.
+// Cursor in einem Code-Block? Dort ist @ nur Text → kein AICampus-Completion.
 function insideFence(state, pos) {
   let open = false;
   const lineTo = state.doc.lineAt(pos).number;
@@ -462,13 +462,13 @@ function ensureCourseRefData() {
   return _courseRefPromise;
 }
 
-// TutorAI-Markdown: Zwei-Stufen-Completion.
+// AICampus-Markdown: Zwei-Stufen-Completion.
 //   "@<Wort>"            → @-Befehle + Referenz-Typen
 //   "@<typ>:<label-Präfix>" → Labels dieses Typs (bzw. Box-Typen
 //                             nach "@startbox:")
 // validFor steuert, welche Zeichen die Liste lokal filtern (statt
 // neu zu fragen) — der Wechselpunkt ":" löst damit die 2. Stufe aus.
-const tutoraiCompletion = (context) => {
+const aicampusCompletion = (context) => {
   const state = context.state;
   if (insideFence(state, context.pos)) return null;
   // 100 Zeichen vor dem Cursor reichen (Befehle/Labels sind kurz).
@@ -526,7 +526,7 @@ const tutoraiCompletion = (context) => {
   }
 
   // Stufe 1: "@Wort-Präfix". Vor dem @ darf keine Alphanumerik stehen,
-  // sonst ist es wahrscheinlich eine E-Mail-Adresse, keine TutorAI-Syntax.
+  // sonst ist es wahrscheinlich eine E-Mail-Adresse, keine AICampus-Syntax.
   const word = /(^|[^A-Za-z0-9])@([\p{L}-]*)$/u.exec(before);
   if (word) {
     const prefix = word[2];
@@ -548,12 +548,12 @@ const tutoraiCompletion = (context) => {
 // mitgelieferten Quellen — z. B. globalThis für JS, Keywords für SQL).
 function autocompletionFor(mode) {
   switch (modeName(mode)) {
-    case "tutorai-markdown":
+    case "aicampus-markdown":
     case "gfm":
     case "markdown":
       ensureCourseRefData(); // Fire-and-forget, einmal pro Seite gecacht
       return autocompletion({
-        override: [tutoraiCompletion],
+        override: [aicampusCompletion],
         // Nach Auswahl von "fig:" / "startbox:" etc. direkt mit der
         // nächsten Stufe (Labels/Box-Typen) weitervervollständigen.
         activateOnCompletion: (c) => c.label.endsWith(":"),

@@ -1,4 +1,4 @@
-# TutorAI — lokales Hybrid-Setup (TutorAI + Compute-Agent auf EINER Maschine)
+# AICampus — lokales Hybrid-Setup (AICampus + Compute-Agent auf EINER Maschine)
 #
 # Start (vom Repo-Root):
 #   docker compose -f deploy/compose.local.yml up --build -d
@@ -14,17 +14,17 @@
 # (der Agent steuert den Host-Daemon über docker.sock; Container starten
 # automatisch mit den in der Engine-UI erlaubten GPUs).
 #
-# Hinweis: Im Docker-Betrieb ist der Agent für TutorAI unter
+# Hinweis: Im Docker-Betrieb ist der Agent für AICampus unter
 # http://compute-agent:8700 erreichbar (Compose-Netz). Falls die
 # Admin-Registry (Compute/Workspace) konfiguriert ist, dort genau diese
 # URL eintragen — das .env-Fallback-URL http://127.0.0.1:8700 ist im
 # Container-Modus NICHT erreichbar.
 
 services:
-  tutorai:
+  aicampus:
     build: ..
-    image: tutorai-app:local
-    container_name: tutorai
+    image: aicampus-app:local
+    container_name: aicampus
     env_file: ../.env
     extra_hosts:
       # LLM-Zugriff laeuft ueber einen SSH-Tunnel auf dem HOST (Port 8001).
@@ -36,7 +36,7 @@ services:
       COMPUTE_AGENT_URL: http://compute-agent:8700
       # .env hat den Host-Pfad (sqlite:////home/...); im Container liegt die
       # DB unter dem Mount /app/data
-      DATABASE_URL: sqlite:////app/data/tutor.db
+      DATABASE_URL: sqlite:////app/data/aicampus.db
     ports:
       - "127.0.0.1:8000:8000"   # für LAN-Zugriff auf "8000:8000" ändern
     volumes:
@@ -49,13 +49,13 @@ services:
     build:
       context: ..
       dockerfile: compute_agent/Dockerfile
-    image: tutorai-compute-agent:local
-    container_name: tutorai-compute-agent
+    image: aicampus-compute-agent:local
+    container_name: aicampus-compute-agent
     environment:
       AGENT_HOST: "0.0.0.0"     # nur im Compose-Netz erreichbar
       AGENT_KEY: ${COMPUTE_AGENT_KEY:-}
       AGENT_PORT: "8700"
-      ASSET_ROOT: /opt/tutorai/assets
+      ASSET_ROOT: /opt/aicampus/assets
       # Host-Pfad zum selben Verzeichnis (der Docker-Daemon auf dem Host
       # braucht Host-Pfade für die Asset-Bind-Mounts in den Workspaces).
       # Voraussetzung: Compose vom REPO-ROOT starten (s. Header).
@@ -78,7 +78,7 @@ services:
       # Bind-Mount statt Named Volume: Der Agent übergibt Asset-Pfade an
       # den Docker-Daemon, der sie als HOST-Pfad auflöst. Ein Named Volume
       # wäre dem Daemon nicht als Pfad zugänglich → leere Asset-Mounts.
-      - ../data/compute-assets:/opt/tutorai/assets
+      - ../data/compute-assets:/opt/aicampus/assets
       # Optional: GPU-Sichtbarkeit IM Agent-Container (nvidia-smi), damit die
       # Engine-UI die GPUs der Maschine als Checkboxen anzeigen kann. Ohne die
       # Mounts meldet Health gpus: [] → UI-Fallback "alle erlauben/keine".

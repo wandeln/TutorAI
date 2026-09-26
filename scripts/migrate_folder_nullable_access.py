@@ -20,11 +20,11 @@ Teil 2 — nullable access (idempotent, nur wenn nötig):
   (DDL ist in SQLite transaktional — alles-or-nichts).
 - PostgreSQL: ``ALTER COLUMN access DROP NOT NULL``.
 
-Aufruf (im TutorAI-Container, damit Code + DB zusammenpassen):
+Aufruf (im AICampus-Container, damit Code + DB zusammenpassen):
     sudo docker compose -f deploy/compose.local.yml -f deploy/compose.dev.yml \\
-        exec tutorai timeout 120 python -m scripts.migrate_folder_nullable_access --dry-run
+        exec aicampus timeout 120 python -m scripts.migrate_folder_nullable_access --dry-run
     sudo docker compose -f deploy/compose.local.yml -f deploy/compose.dev.yml \\
-        exec tutorai timeout 120 python -m scripts.migrate_folder_nullable_access
+        exec aicampus timeout 120 python -m scripts.migrate_folder_nullable_access
 """
 
 import argparse

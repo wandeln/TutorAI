@@ -29,7 +29,7 @@ entfernt (sonst blockieren Jupyter & Co. das iframe; lokale
 Single-User-Installation).
 
 Bekannte Einschränkung: Absolute Asset-Pfade in der previewten App
-(z. B. `/static/…`) lösen sich gegen den TutorAI-Origin auf → nur
+(z. B. `/static/…`) lösen sich gegen den AICampus-Origin auf → nur
 relative Pfade laden zuverlässig (wie beim früheren Zweit-Port-Design).
 """
 
@@ -56,7 +56,7 @@ from compute_agent.preview_pipe import (HeadError, build_request_head,
                                         parse_response_head, read_head)
 from config import PREVIEW_AGENT_PORT, PREVIEW_BASE_DOMAIN, SECRET_KEY
 
-logger = logging.getLogger("tutorai.preview")
+logger = logging.getLogger("aicampus.preview")
 
 _HEAD_TIMEOUT = 90.0   # Agent-Head (Relay-Spawn + Ziel-Connect inkl.)
 _BODY_IDLE_TIMEOUT = 120.0  # Agent liefert Body nicht weiter → abbrechen
@@ -87,7 +87,7 @@ class _WsEof(Exception):
 # ── Header-Hilfen ─────────────────────────────────────────────────
 
 def _sanitize_cookie(raw: str) -> str | None:
-    """Cookie-Header ohne das TutorAI-access_token weitergeben.
+    """Cookie-Header ohne das AICampus-access_token weitergeben.
 
     Cookies sind pro HOST (nicht pro Port) → die Ziel-App (Jupyter & Co.)
     setzt auf demselben Origin eigene Cookies, die der Browser in
@@ -266,7 +266,7 @@ def _error_page(status: int, title: str, hint: str = "") -> Response:
     hint_html = f"<p class='hint'>{hint}</p>" if hint else ""
     html = (
         "<!doctype html><html lang='de'><head><meta charset='utf-8'>"
-        "<title>TutorAI-Preview</title></head>"
+        "<title>AICampus-Preview</title></head>"
         "<body style='font-family:system-ui,sans-serif;max-width:42em;"
         "margin:5em auto;color:#374151;padding:0 1em'>"
         f"<h2 style='font-size:1.25rem'>{title}</h2>{hint_html}"
@@ -334,7 +334,7 @@ class PreviewSubdomainMiddleware:
             if scope["type"] == "http":
                 await _error_page(
                     403, "Zugriff verweigert.",
-                    "Öffne die Aufgabe in TutorAI — der Link ist nur für "
+                    "Öffne die Aufgabe in AICampus — der Link ist nur für "
                     "deine eigene Sitzung gültig.")(scope, receive, send)
             else:
                 await StarletteWebSocket(scope, receive, send).close(code=1008)
@@ -360,7 +360,7 @@ class PreviewSubdomainMiddleware:
         if nxt is None:
             resp = _error_page(
                 403, "Handoff abgelaufen.",
-                "Bitte die Vorschau über TutorAI neu öffnen.")
+                "Bitte die Vorschau über AICampus neu öffnen.")
             await resp(scope, receive, send)
             return
         from services import auth_service

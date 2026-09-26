@@ -1,4 +1,4 @@
-/* ─── TutorAI: Custom Styles ────────────────────────────────────── */
+/* ─── AICampus: Custom Styles ────────────────────────────────────── */
 
 /* HTMX Loading Indicator */
 .htmx-indicator {
@@ -186,7 +186,7 @@
 /* Quellenverzeichnis: die [N]-Nummer steht im Eintrag selbst —
    bündig links, ohne Listen-Einrückung (höhere Spezifität als die
    !important-Regel oben) */
-.markdown-preview ul.tutorai-bibliography {
+.markdown-preview ul.aicampus-bibliography {
   padding-left: 0 !important;
 }
 
@@ -276,7 +276,7 @@
 /* Code-LaTeX ($…$ in Code-Blöcken, s. applyCodeMath): Standard-Code-
    Textfarbe (Atom One Dark Foreground, grau) statt der Farbe des
    umgebenden hljs-Tokens (z. B. Orange/Creme). */
-.tutorai-code-math { color: #abb2bf !important; }
+.aicampus-code-math { color: #abb2bf !important; }
 
 /* ─── Blockquotes ────────────────────────────────────────────── */
 
@@ -338,7 +338,7 @@
 
 /* Nummerierte Abbildungen & Gleichungen (latex-artige Querverweise) */
 
-.tutorai-figure {
+.aicampus-figure {
   margin: 1.25rem auto;
   text-align: center;
   scroll-margin-top: 100px;
@@ -350,7 +350,7 @@
    expliziter {.height} ist 16:9-breit statt vollbreit und würde sonst
    linksbündig stehen. Vollbreit-Medien (Applets, width:100%) bleiben
    davon unberührt (margin:auto wirkt bei voller Breite nicht). */
-.tutorai-figure > :is(img, iframe) {
+.aicampus-figure > :is(img, iframe) {
   display: block;
   margin-left: auto;
   margin-right: auto;
@@ -358,11 +358,11 @@
 
 /* Gezoomtes Medium ({.zoom=X}) liegt im <span>-Wrapper — das Iframe darin
    zentrieren (Videos mit {.height} sind dort 16:9-breit statt 100%). */
-.tutorai-figure .tutorai-applet-zoom {
+.aicampus-figure .aicampus-applet-zoom {
   text-align: center;
 }
 
-.tutorai-figure figcaption {
+.aicampus-figure figcaption {
   margin-top: 0.5rem;
   font-size: 0.875rem;
   color: #6b7280;
@@ -370,7 +370,7 @@
 
 /* Subfiguren: mehrere Medien in EINE Abbildung (s. _parseSubfigInners in
    markdown-renderer.js) — Flex-Reihe mit Wrap, nebeneinander zentriert. */
-.tutorai-subfig-row {
+.aicampus-subfig-row {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-evenly;
@@ -378,19 +378,19 @@
   gap: 0.75rem 1rem;
 }
 
-.tutorai-subfig-item {
+.aicampus-subfig-item {
   margin: 0;
   text-align: center;
 }
 
-.tutorai-subfig-item img,
-.tutorai-subfig-item iframe {
+.aicampus-subfig-item img,
+.aicampus-subfig-item iframe {
   display: block;
   margin: 0 auto;
   max-width: 100%;
 }
 
-.tutorai-subfig-item figcaption {
+.aicampus-subfig-item figcaption {
   margin-top: 0.35rem;
   font-size: 0.875rem;
   color: #6b7280;
@@ -399,12 +399,12 @@
 /* Beschriftete Code-Blöcke ({#code:label}[caption]): Caption unter dem Code,
    analog zu Abbildungen. Kein text-align:center — der Code füllt die Breite,
    nur die Caption steht mittig darunter. */
-.tutorai-code-figure {
+.aicampus-code-figure {
   margin: 1.25rem 0;
   scroll-margin-top: 100px;
 }
 
-.tutorai-code-figure figcaption {
+.aicampus-code-figure figcaption {
   margin-top: 0.5rem;
   font-size: 0.875rem;
   color: #6b7280;
@@ -415,7 +415,7 @@
    Pipe-Tabelle): Caption unter der Tabelle, analog zu Abbildungen/Code.
    Kein text-align:center — die Tabelle füllt die Breite, nur die Caption
    steht mittig darunter. */
-.tutorai-table-figure {
+.aicampus-table-figure {
   margin: 1.25rem 0;
   scroll-margin-top: 100px;
 }
@@ -425,24 +425,24 @@
    --tab-zoom ({zoom=X} in der Tabellen-Label-Zeile, s. 1j2/4b in
    markdown-renderer.js): Skript-Kontext — Basisgröße = ererbte Größe,
    ohne Zoom ist 1em dem inherit-Wert gleich (unverändert). */
-.tutorai-table-figure table {
+.aicampus-table-figure table {
   margin-bottom: 0.25rem !important;
   font-size: calc(1em * var(--tab-zoom, 1));
 }
 
-.tutorai-table-figure figcaption {
+.aicampus-table-figure figcaption {
   margin-top: 0.5rem;
   font-size: 0.875rem;
   color: #6b7280;
   text-align: center;
 }
 
-.tutorai-equation {
+.aicampus-equation {
   position: relative;
   scroll-margin-top: 100px;
 }
 
-.tutorai-equation .tutorai-eq-num {
+.aicampus-equation .aicampus-eq-num {
   position: absolute;
   right: 0;
   top: 50%;
@@ -452,26 +452,26 @@
 }
 
 /* Nummerierte Sections (h2–h6) im Skript: dezente Nummer vor der Überschrift */
-.markdown-preview .tutorai-sec-num {
+.markdown-preview .aicampus-sec-num {
   color: #9ca3af;
   font-weight: 600;
 }
 
-.tutorai-xref {
+.aicampus-xref {
   color: #2563eb !important;
   text-decoration: none !important;
 }
 
-.tutorai-xref:hover {
+.aicampus-xref:hover {
   text-decoration: underline !important;
 }
 
-.tutorai-xref-broken {
+.aicampus-xref-broken {
   color: #dc2626;
 }
 
 /* Aufgaben-Boxen: @task:{id}-Referenzen in Skript & Aufgabenstellung */
-.tutorai-taskbox {
+.aicampus-taskbox {
   display: flex;
   align-items: center;
   gap: 0.875rem;
@@ -484,13 +484,13 @@
   scroll-margin-top: 100px;
 }
 
-.tutorai-taskbox-icon {
+.aicampus-taskbox-icon {
   font-size: 1.5rem;
   flex-shrink: 0;
 }
 
 /* Hinweis-/Merksatz-Boxen: @startbox:{typ} … @endbox (Renderer: markdown-renderer.js) */
-.tutorai-callbox {
+.aicampus-callbox {
   border: 1px solid #e2e8f0;
   border-left: 4px solid #94a3b8;
   border-radius: 0.75rem;
@@ -499,7 +499,7 @@
   scroll-margin-top: 100px;
 }
 
-.tutorai-callbox-head {
+.aicampus-callbox-head {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -507,59 +507,59 @@
   font-weight: 600;
 }
 
-.tutorai-callbox-icon {
+.aicampus-callbox-icon {
   font-size: 1.1rem;
 }
 
-.tutorai-callbox-body {
+.aicampus-callbox-body {
   padding: 0 1.25rem 0.5rem;
 }
 
-.tutorai-callbox-body > :first-child { margin-top: 0.25rem; }
-.tutorai-callbox-body > :last-child { margin-bottom: 0.25rem; }
+.aicampus-callbox-body > :first-child { margin-top: 0.25rem; }
+.aicampus-callbox-body > :last-child { margin-bottom: 0.25rem; }
 
 /* Typ-Farben: linker Balken, Hintergrund & Kopf-Zeichenfarbe */
-.tutorai-callbox-merksatz { border-left-color: #3b82f6; background: #eff6ff; }
-.tutorai-callbox-merksatz .tutorai-callbox-head { color: #1d4ed8; }
-.tutorai-callbox-hinweis { border-left-color: #f59e0b; background: #fffbeb; }
-.tutorai-callbox-hinweis .tutorai-callbox-head { color: #b45309; }
-.tutorai-callbox-bemerkung { border-left-color: #94a3b8; background: #f8fafc; }
-.tutorai-callbox-bemerkung .tutorai-callbox-head { color: #475569; }
-.tutorai-callbox-warnung { border-left-color: #ef4444; background: #fef2f2; }
-.tutorai-callbox-warnung .tutorai-callbox-head { color: #b91c1c; }
-.tutorai-callbox-beispiel { border-left-color: #22c55e; background: #f0fdf4; }
-.tutorai-callbox-beispiel .tutorai-callbox-head { color: #15803d; }
+.aicampus-callbox-merksatz { border-left-color: #3b82f6; background: #eff6ff; }
+.aicampus-callbox-merksatz .aicampus-callbox-head { color: #1d4ed8; }
+.aicampus-callbox-hinweis { border-left-color: #f59e0b; background: #fffbeb; }
+.aicampus-callbox-hinweis .aicampus-callbox-head { color: #b45309; }
+.aicampus-callbox-bemerkung { border-left-color: #94a3b8; background: #f8fafc; }
+.aicampus-callbox-bemerkung .aicampus-callbox-head { color: #475569; }
+.aicampus-callbox-warnung { border-left-color: #ef4444; background: #fef2f2; }
+.aicampus-callbox-warnung .aicampus-callbox-head { color: #b91c1c; }
+.aicampus-callbox-beispiel { border-left-color: #22c55e; background: #f0fdf4; }
+.aicampus-callbox-beispiel .aicampus-callbox-head { color: #15803d; }
 
 /* Mathe-Boxen: Definition, Satz, Lemma, … (Typen in CALLOUT_TYPES,
    markdown-renderer.js) */
-.tutorai-callbox-definition { border-left-color: #8b5cf6; background: #f5f3ff; }
-.tutorai-callbox-definition .tutorai-callbox-head { color: #6d28d9; }
-.tutorai-callbox-satz { border-left-color: #6366f1; background: #eef2ff; }
-.tutorai-callbox-satz .tutorai-callbox-head { color: #4338ca; }
-.tutorai-callbox-lemma { border-left-color: #14b8a6; background: #f0fdfa; }
-.tutorai-callbox-lemma .tutorai-callbox-head { color: #0f766e; }
-.tutorai-callbox-proposition { border-left-color: #0ea5e9; background: #f0f9ff; }
-.tutorai-callbox-proposition .tutorai-callbox-head { color: #0369a1; }
-.tutorai-callbox-korollar { border-left-color: #a855f7; background: #faf5ff; }
-.tutorai-callbox-korollar .tutorai-callbox-head { color: #7e22ce; }
-.tutorai-callbox-beweis { border-left-color: #78716c; background: #fafaf9; }
-.tutorai-callbox-beweis .tutorai-callbox-head { color: #44403c; }
-.tutorai-callbox-frage { border-left-color: #ec4899; background: #fdf2f8; }
-.tutorai-callbox-frage .tutorai-callbox-head { color: #be185d; }
+.aicampus-callbox-definition { border-left-color: #8b5cf6; background: #f5f3ff; }
+.aicampus-callbox-definition .aicampus-callbox-head { color: #6d28d9; }
+.aicampus-callbox-satz { border-left-color: #6366f1; background: #eef2ff; }
+.aicampus-callbox-satz .aicampus-callbox-head { color: #4338ca; }
+.aicampus-callbox-lemma { border-left-color: #14b8a6; background: #f0fdfa; }
+.aicampus-callbox-lemma .aicampus-callbox-head { color: #0f766e; }
+.aicampus-callbox-proposition { border-left-color: #0ea5e9; background: #f0f9ff; }
+.aicampus-callbox-proposition .aicampus-callbox-head { color: #0369a1; }
+.aicampus-callbox-korollar { border-left-color: #a855f7; background: #faf5ff; }
+.aicampus-callbox-korollar .aicampus-callbox-head { color: #7e22ce; }
+.aicampus-callbox-beweis { border-left-color: #78716c; background: #fafaf9; }
+.aicampus-callbox-beweis .aicampus-callbox-head { color: #44403c; }
+.aicampus-callbox-frage { border-left-color: #ec4899; background: #fdf2f8; }
+.aicampus-callbox-frage .aicampus-callbox-head { color: #be185d; }
 
 /* Code-Box (@box:code): dunkle Fläche (atom-one-dark-Ton); die Box liefert
    den Hintergrund, das innere <pre> wird nahtlos (kein eigener
    Hintergrund/Rahmen/Margin/Shadow) — Slides-Overrides in slides.css. */
-.tutorai-callbox-code { border-left-color: #64748b; background: #282c34; }
-.tutorai-callbox-code .tutorai-callbox-head { color: #9da5b4; }
-.tutorai-callbox-code .tutorai-callbox-body { padding-bottom: 0.25rem; }
-.tutorai-callbox-code pre {
+.aicampus-callbox-code { border-left-color: #64748b; background: #282c34; }
+.aicampus-callbox-code .aicampus-callbox-head { color: #9da5b4; }
+.aicampus-callbox-code .aicampus-callbox-body { padding-bottom: 0.25rem; }
+.aicampus-callbox-code pre {
   margin: 0 !important;
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
 }
-.tutorai-callbox-code pre code {
+.aicampus-callbox-code pre code {
   padding: 0.5rem 1rem 0.75rem !important;
 }
 
@@ -567,20 +567,20 @@
    Die Spalten-Breiten kommen als Inline-Style (grid-template-columns: Nfr …);
    min-width: 0 lässt Grid-Items schrumpfen (sonst würde überlanger Inhalt
    z. B. Code-Blöcke aus der Spalte drücken). */
-.tutorai-cols {
+.aicampus-cols {
   display: grid;
   gap: 2.5em;
   align-items: start;
   width: 100%;
   text-align: left;
 }
-.tutorai-col {
+.aicampus-col {
   min-width: 0;
 }
 
 /* Applet-Iframes: interaktive HTML-Medien (.html) in Skript & Aufgaben
    (werden von markdown-renderer.js als Iframe gerendert, sandboxed) */
-.tutorai-applet {
+.aicampus-applet {
   width: 100%;
   height: 420px;
 }
@@ -589,7 +589,7 @@
    420 px — Breite = Spaltenbreite, Höhe daraus. Mit {.height=X} setzt
    der Renderer fixe Höhe + proportionale Breite inline (Inline-
    !important schlägt beide Regeln; width:100% aus slides.css ebenfalls). */
-.tutorai-applet.tutorai-video {
+.aicampus-applet.aicampus-video {
   aspect-ratio: 16 / 9;
   height: auto;
 }
@@ -600,7 +600,7 @@
    Iframe. (Skript-Seiten laden slides.css nicht → Regel hier global.
    Das Element ist ein <span> (kein div): erst parse-inline bleibt er im
    umgebenden <p> und erbt dessen font-size — s. slides.css. */
-.tutorai-applet-zoom {
+.aicampus-applet-zoom {
   display: inline-block;
   width: 100%;
   overflow: hidden;
@@ -621,7 +621,7 @@
    unter der sticky Nav-Bar verschwindet (Tutor-Zeile + Student-Karte) */
 #section-list > div,
 .script-chapter-card,
-.tutorai-bibliography li,  /* Zitation [N] → Eintrag im Quellenverzeichnis */
+.aicampus-bibliography li,  /* Zitation [N] → Eintrag im Quellenverzeichnis */
 #ref-list > div {           /* Deep-Link #ref-{key} im Quellen-Tab */
   scroll-margin-top: 100px;
 }
@@ -733,7 +733,7 @@ textarea {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Xref Hover-Previews (#tutorai-xref-tip)
+   Xref Hover-Previews (#aicampus-xref-tip)
    Vorschau des Zielobjekts bei Hover auf @eq:/@fig:/@code:/@box:/@sec:
    Referenzen (JS: markdown-renderer.js, data-xref-tip).
    pointer-events: none, damit das Tooltip sich nicht selbst ausblendet,
@@ -742,11 +742,11 @@ textarea {
 
 /* Long-Press auf Referenz-Links = Vorschau: iOS-Link-Callout deaktivieren
    (Zusatz zur contextmenu-Unterdrückung im JS; nur für Xref-Links). */
-a.tutorai-xref {
+a.aicampus-xref {
   -webkit-touch-callout: none;
 }
 
-#tutorai-xref-tip {
+#aicampus-xref-tip {
   position: fixed;
   z-index: 9999;
   display: none;
@@ -762,7 +762,7 @@ a.tutorai-xref {
   pointer-events: none;
 }
 
-#tutorai-xref-tip .tutorai-xref-tip-title {
+#aicampus-xref-tip .aicampus-xref-tip-title {
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
@@ -773,17 +773,17 @@ a.tutorai-xref {
 
 /* max-height = Frontend-Abkürzung sehr großer Vorschauen (serverseitig
    sind die Previews zudem auf ~320 Zeichen gekürzt). */
-#tutorai-xref-tip .tutorai-xref-tip-body {
+#aicampus-xref-tip .aicampus-xref-tip-body {
   max-height: 220px;
   overflow: hidden;
 }
 
-#tutorai-xref-tip .tutorai-xref-tip-text {
+#aicampus-xref-tip .aicampus-xref-tip-text {
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-#tutorai-xref-tip .tutorai-xref-tip-code {
+#aicampus-xref-tip .aicampus-xref-tip-code {
   margin: 0;
   padding: 8px;
   background: #f3f4f6;
@@ -794,7 +794,7 @@ a.tutorai-xref {
   overflow: hidden;
 }
 
-#tutorai-xref-tip .katex-display {
+#aicampus-xref-tip .katex-display {
   margin: 0;
 }
 
@@ -826,7 +826,7 @@ a.tutorai-xref {
   background: #fcd34d;
 }
 
-/* TutorAI-Annotationen (StateField „tutorai-annotations“): */
+/* AICampus-Annotationen (StateField „aicampus-annotations“): */
 .cm-ta-math { color: #b91c1c; }   /* LaTeX: $…$, $$…$$ */
 .cm-ta-box { color: #0f766e; font-weight: 600; }  /* @startbox/@endbox */
 .cm-ta-label { color: #7c3aed; }   /* {#typ:label} u. ä. */

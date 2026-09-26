@@ -188,7 +188,7 @@ def load_questions_payload(
         q_responses = []
         for r in responses_by_question.get(q.id, []):
             if r.source == "llm" or r.user_id is None:
-                r_name, r_role, r_avatar = "TutorAI", "LLM", None
+                r_name, r_role, r_avatar = "AICampus", "LLM", None
             else:
                 u = users.get(r.user_id)
                 r_name = u.name if u else "unknown"

@@ -66,7 +66,7 @@ class TerminalSession:
         # NICHT (wuerde wortlaechlich angezeigt) → dort statisches
         # Prompt. ${CONDA_DEFAULT_ENV:+…} zeigt eine aktive Conda-
         # Env im Prompt an (wird vom bash je Prompt neu ausgewertet).
-        pidfile = f"/tmp/.tutorai_term_{self._sid}.pid"
+        pidfile = f"/tmp/.aicampus_term_{self._sid}.pid"
         if script_path:
             # Einfache-Quote-Escape schützt vor ' im Pfad. exec erhält
             # die sh-PID → Orphan-Kill (comm-Check) deckt bash ab.
@@ -156,7 +156,7 @@ class TerminalSession:
         so keinen fremden Prozess mehr.
         """
         from .runs import _TREE_KILL
-        pf = f"/tmp/.tutorai_term_{self._sid}.pid"
+        pf = f"/tmp/.aicampus_term_{self._sid}.pid"
         cmd = (
             f"{_TREE_KILL}; pid=$(cat {pf} 2>/dev/null); rm -f {pf}; "
             "[ -n \"$pid\" ] && [ -d /proc/$pid ] && "

@@ -204,7 +204,7 @@
       </div>
       <!-- Auto-Size: Iframe passt sich an die gemeldete Applet-Höhe an (150–600 px) -->
       <div style="max-height: 600px">
-        <iframe id="applet-preview" class="tutorai-applet" sandbox="allow-scripts"
+        <iframe id="applet-preview" class="aicampus-applet" sandbox="allow-scripts"
                 title="Applet-Vorschau"></iframe>
       </div>
     </div>
@@ -260,7 +260,7 @@
     '<script>\n' +
     '(function () {\n' +
     '  function report() {\n' +
-    '    try { parent.postMessage({ source: "tutorai-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n' +
+    '    try { parent.postMessage({ source: "aicampus-applet", height: document.body.scrollHeight }, "*"); } catch (e) {}\n' +
     '  }\n' +
     '  window.addEventListener("load", report);\n' +
     '  window.addEventListener("resize", report);\n' +
@@ -269,7 +269,7 @@
     '  function sendError(message, detail) {\n' +
     '    try {\n' +
     '      var msg = String(message || "Unbekannter Fehler") + (detail ? "\\n" + String(detail) : "");\n' +
-    '      parent.postMessage({ source: "tutorai-applet-error", message: msg.slice(0, 1500) }, "*");\n' +
+    '      parent.postMessage({ source: "aicampus-applet-error", message: msg.slice(0, 1500) }, "*");\n' +
     '    } catch (e) {}\n' +
     '  }\n' +
     '  window.addEventListener("error", function (e) {\n' +
@@ -306,7 +306,7 @@
 
   window.addEventListener("message", (event) => {
     const d = event.data;
-    if (!d || d.source !== "tutorai-applet-error") return;
+    if (!d || d.source !== "aicampus-applet-error") return;
     const msg = String(d.message || "").trim();
     if (!msg) return;
     // Duplikate (z. B. wiederholt gemeldeter Load-Fehler) neu an das Ende schieben
@@ -325,7 +325,7 @@
   function updatePreview() {
     clearAppletErrors();
     let html = codeCM.getValue();
-    if (html.trim() && !html.includes("tutorai-applet")) {
+    if (html.trim() && !html.includes("aicampus-applet")) {
       const m = html.match(/<\/body\s*>/i);
       html = m
         ? html.slice(0, m.index) + APPLET_HEIGHT_SNIPPET + html.slice(m.index)

@@ -1,5 +1,5 @@
 /**
- * Markdown + LaTeX + Mermaid Renderer für TutorAI.
+ * Markdown + LaTeX + Mermaid Renderer für AICampus.
  *
  * Verwendet:
  * - marked.js (MIT) für Markdown-Parser
@@ -257,7 +257,7 @@ const CALLOUT_TYPES = {
 const BOX_EVENT_RE = /@startbox:([\p{L}0-9_-]+)|@endbox/gu;
 
 // ─── Spalten: @startcolumn … @nextcolumn … @endcolumn ──────────────────
-// Spaltenzeile als CSS Grid (Styling: main.css .tutorai-cols/.tutorai-col).
+// Spaltenzeile als CSS Grid (Styling: main.css .aicampus-cols/.aicampus-col).
 // @startcolumn öffnet die Zeile (1. Spalte), jedes @nextcolumn startet die
 // nächste Spalte, @endcolumn (nur am Zeilenanfang) schließt die Zeile.
 // Gewicht = positive Zahl nach ":" (Default 1) → fr-Breitenanteil (z. B.
@@ -347,11 +347,11 @@ function _convertColumnBlocks(text) {
   const bounds = [open.end];
   for (const s of scan.splits) { bounds.push(s.start, s.headEnd); weights.push(s.weight); }
   bounds.push(scan.close);
-  let html = '\n\n<div class="tutorai-cols" style="grid-template-columns:' +
+  let html = '\n\n<div class="aicampus-cols" style="grid-template-columns:' +
     weights.map((w) => w + 'fr').join(' ') + '">';
   for (let i = 0; i < weights.length; i++) {
     const body = _convertColumnBlocks(text.slice(bounds[i * 2], bounds[i * 2 + 1])).trim();
-    html += '\n<div class="tutorai-col">\n\n' + body + '\n\n</div>';
+    html += '\n<div class="aicampus-col">\n\n' + body + '\n\n</div>';
   }
   html += '\n</div>\n\n';
   return text.slice(0, open.start) + html + _convertColumnBlocks(text.slice(scan.closeEnd));
@@ -456,8 +456,8 @@ const APPLET_MIN_H = 150;
 const APPLET_MAX_H = 600;
 window.addEventListener('message', (event) => {
   const d = event.data;
-  if (!d || d.source !== 'tutorai-applet' || typeof d.height !== 'number' || !isFinite(d.height)) return;
-  document.querySelectorAll('iframe.tutorai-applet').forEach((f) => {
+  if (!d || d.source !== 'aicampus-applet' || typeof d.height !== 'number' || !isFinite(d.height)) return;
+  document.querySelectorAll('iframe.aicampus-applet').forEach((f) => {
     if (f.contentWindow === event.source) {
       // Gezoomte Applets ({.zoom=X}): Clamp zoom-korrigiert, damit die
       // VISIBLE Höhe (gemeldete Höhe × zoom) im selben Bereich bleibt.
@@ -473,13 +473,13 @@ window.addEventListener('message', (event) => {
         h = Math.max(1, Math.round(v / zoom));
       }
       f.style.height = h + 'px';
-      // Gezoomte Applets stehen in einem .tutorai-applet-zoom-Wrapper, dessen
+      // Gezoomte Applets stehen in einem .aicampus-applet-zoom-Wrapper, dessen
       // Höhe der sichtbaren (geskalten) Höhe folgen muss (transform ändert
       // nicht die Iframe-Layout-Box). offsetHeight statt h: die Iframe-Box
       // kann per CSS max-height kleiner sein (Default-Höhe ohne explizites
       // {.height} / {.height}=X), der Wrapper muss dem sichtbaren Ergebnis
       // folgen, nicht der unbeachteten Zielhöhe.
-      const wrap = f.parentElement && f.parentElement.classList.contains('tutorai-applet-zoom')
+      const wrap = f.parentElement && f.parentElement.classList.contains('aicampus-applet-zoom')
         ? f.parentElement
         : null;
       if (wrap) wrap.style.height = Math.round((f.offsetHeight || h) * zoom) + 'px';
@@ -599,7 +599,7 @@ function _bibEntryHtml(r) {
   if (r.url) links.push(
     `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">Link</a>`);
   if (links.length) entry += ' ' + links.join(' ');
-  return `<span class="tutorai-bibnum text-gray-400 font-mono">[${r.num}]</span> ` + entry;
+  return `<span class="aicampus-bibnum text-gray-400 font-mono">[${r.num}]</span> ` + entry;
 }
 
 // Tabellen: inhaltslose Kopfzeile (alle <th> leer) → <thead> entfernen.
@@ -869,7 +869,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       const styleAttr = rgba ? ' style="background-color:' + rgba + '"' : '';
       return (
         text.slice(0, open.start) +
-        '\n\n<div class="tutorai-callbox tutorai-callbox-highlight"' + idAttr + styleAttr +
+        '\n\n<div class="aicampus-callbox aicampus-callbox-highlight"' + idAttr + styleAttr +
         '>\n\n' + _convertBoxBlocks(body).trim() + '\n\n</div>\n\n' +
         tail
       );
@@ -886,7 +886,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
         headTitle =
           escapeHtml(info.title) +
-          ` <a class="tutorai-callbox-num-link" href="/courses/${cid}/script#box:${label}"` +
+          ` <a class="aicampus-callbox-num-link" href="/courses/${cid}/script#box:${label}"` +
           ` title="Zur Box im Skript">${boxNum}</a>`;
       } else {
         headTitle = escapeHtml(info.title) + ' ' + boxNum;
@@ -899,11 +899,11 @@ async function renderMarkdown(text, targetElement, options = {}) {
     }
     return (
       text.slice(0, open.start) +
-      '\n\n<div class="tutorai-callbox tutorai-callbox-' + type + '"' + idAttr + '>\n' +
-      '<div class="tutorai-callbox-head">' +
-      '<span class="tutorai-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
+      '\n\n<div class="aicampus-callbox aicampus-callbox-' + type + '"' + idAttr + '>\n' +
+      '<div class="aicampus-callbox-head">' +
+      '<span class="aicampus-callbox-icon" aria-hidden="true">' + info.icon + '</span> ' +
       headTitle + '</div>\n' +
-      '<div class="tutorai-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n' +
+      '<div class="aicampus-callbox-body">\n\n' + body + '\n\n</div>\n</div>\n\n' +
       tail
     );
   }
@@ -1341,7 +1341,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       /\{#([Ff])ragment(?::([\p{L}0-9_-]+))?\}/gu,
       (m, fchar, id) => {
         const idAttr = id ? ` data-frag-id="${id}"` : '';
-        return `<span class="tutorai-frag-marker" data-frag="${_fragType(fchar, id)}"${idAttr}></span>`;
+        return `<span class="aicampus-frag-marker" data-frag="${_fragType(fchar, id)}"${idAttr}></span>`;
       }
     );
     // {#aaid:label} → Sentinel: _applyFragmentMarkers setzt data-id auf das
@@ -1350,7 +1350,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     // data-auto-animate-id). eq/fig nehmen {#aaid:…} oben bereits direkt.
     processed = processed.replace(
       /\{#aaid:([\p{L}0-9_-]+)\}/gu,
-      (m, label) => `<span class="tutorai-aaid-marker" data-aaid="${label}"></span>`
+      (m, label) => `<span class="aicampus-aaid-marker" data-aaid="${label}"></span>`
     );
   }
 
@@ -1476,7 +1476,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         if (slideMode && g && g.kind === 'code') {
           const cid = (refMap && refMap.courseId) || _getCourseId() || '';
           numHtml =
-            `<a class="tutorai-code-num-link" href="/courses/${cid}/script#code:${codeLabel}"` +
+            `<a class="aicampus-code-num-link" href="/courses/${cid}/script#code:${codeLabel}"` +
             ` title="Zum Code im Skript">Code ${codeNum}</a>`;
         } else {
           numHtml = `Code ${codeNum}`;
@@ -1486,7 +1486,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       if (numHtml) capParts.push(numHtml);
       if (codeCaption) capParts.push(renderCaptionMath(codeCaption));
       const idAttr = codeLabel !== null ? ` id="code:${codeLabel}"` : '';
-      blockHtml = `<figure class="tutorai-code-figure"${idAttr}>${blockHtml}` +
+      blockHtml = `<figure class="aicampus-code-figure"${idAttr}>${blockHtml}` +
         `<figcaption>${capParts.join(': ')}</figcaption></figure>`;
     }
     html = html.replace(`%%FC${idx}%%`, blockHtml.replace(/\$/g, '$$$$'));
@@ -1500,7 +1500,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   });
 
   // 4b. Restore labeled tables: Tabellen-Markdown per marked.parse → <table>,
-  //     in <figure class="tutorai-table-figure"> mit Caption "Tab. N: caption"
+  //     in <figure class="aicampus-table-figure"> mit Caption "Tab. N: caption"
   //     + Anker tab:label (wie Abbildungen/Code). MUST vor Schritt 6
   //     (Inline-Math) stehen: die Zell-Platzhalter (%%LATEX_INLINE%%/
   //     %%XREF%%/%%TASKREF%%) füllen die nachfolgenden html.replace direkt
@@ -1519,7 +1519,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const numHtml = (slideMode && g && g.kind === 'tab')
       ? (() => {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
-        return `<a class="tutorai-tab-num-link" href="/courses/${cid}/script#tab:${t.label}" title="Zur Tabelle im Skript">Tab. ${t.num}</a>`;
+        return `<a class="aicampus-tab-num-link" href="/courses/${cid}/script#tab:${t.label}" title="Zur Tabelle im Skript">Tab. ${t.num}</a>`;
       })()
       : `Tab. ${t.num}`;
     // {zoom=X}: --tab-zoom an der Figure (vererbt die Tabelle) → Schrift ×X
@@ -1527,7 +1527,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     // Caption (figcaption) bleibt in Normalgröße, wie beim Code-Zoom.
     const zoomAttr = t.zoom != null ? ` style="--tab-zoom: ${t.zoom}"` : '';
     const figHtml =
-      `<figure id="tab:${t.label}" class="tutorai-table-figure"${zoomAttr}>${tableHtml}` +
+      `<figure id="tab:${t.label}" class="aicampus-table-figure"${zoomAttr}>${tableHtml}` +
       `<figcaption>${numHtml}${t.caption ? `: ${renderCaptionMath(t.caption)}` : ''}</figcaption></figure>`;
     html = html.replace(`%%TAB_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
@@ -1620,13 +1620,13 @@ async function renderMarkdown(text, targetElement, options = {}) {
       if (slideMode && g && g.kind === 'eq') {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
         numHtml =
-          `<a class="tutorai-eq-num tutorai-eq-num-link" href="/courses/${cid}/script#eq:${label}"` +
+          `<a class="aicampus-eq-num aicampus-eq-num-link" href="/courses/${cid}/script#eq:${label}"` +
           ` title="Zur Gleichung im Skript">(${num})</a>`;
       } else {
-        numHtml = `<span class="tutorai-eq-num">(${num})</span>`;
+        numHtml = `<span class="aicampus-eq-num">(${num})</span>`;
       }
       const wrapped =
-        `<div id="eq:${label}" class="tutorai-equation"${fragAttrs}${aaidAttr}>${rendered}${numHtml}</div>`;
+        `<div id="eq:${label}" class="aicampus-equation"${fragAttrs}${aaidAttr}>${rendered}${numHtml}</div>`;
       html = html.replace(`%%LATEX_BLOCK_${idx}%%`, wrapped.replace(/\$/g, '$$$$'));
     } else if (frag || aaid) {
       // Unlabeled + Fragment: Katex' <span class="katex-display"> in ein
@@ -1713,7 +1713,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
     const dataMaxH = isApplet && !isExternalApplet && f.height != null ? ` data-max-h="${f.height}"` : '';
     const mediaTag = isApplet
-      ? `<iframe src="${escapeHtml(effSrc)}" class="tutorai-applet${isVideo ? ' tutorai-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
+      ? `<iframe src="${escapeHtml(effSrc)}" class="aicampus-applet${isVideo ? ' aicampus-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${safeAlt}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`
       : `<img src="${escapeHtml(f.src)}" alt="${safeAlt}"${mediaStyle}>`;
     // Gezoomte Applets in einen overflow:hidden-Wrapper (sichtbare =
     // geskalte Höhe; transform ändert die Iframe-Layout-Box nicht). Initiale
@@ -1735,7 +1735,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         ? 'calc(100% * 0.5625)'
         : `calc(150px * ${f.zoom})`);
     const innerMedia = (isApplet && f.zoom != null)
-      ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${mediaTag}</span>`
+      ? `<span class="aicampus-applet-zoom" style="height: ${zoomInitH}">${mediaTag}</span>`
       : mediaTag;
     const figFragAttrs = f.frag
       ? ` data-frag="${f.frag.type}"${f.frag.id ? ` data-frag-id="${f.frag.id}"` : ''}`
@@ -1747,11 +1747,11 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const numHtml = (slideMode && g && g.kind === 'fig')
       ? (() => {
         const cid = (refMap && refMap.courseId) || _getCourseId() || '';
-        return `<a class="tutorai-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
+        return `<a class="aicampus-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
       })()
       : `Abb. ${f.num}`;
     const figHtml =
-      `<figure id="fig:${f.label}" class="tutorai-figure"${figFragAttrs}${figAaidAttr}>` +
+      `<figure id="fig:${f.label}" class="aicampus-figure"${figFragAttrs}${figAaidAttr}>` +
       innerMedia +
       `<figcaption>${numHtml}${f.alt ? `: ${renderCaptionRef(f.alt, captionCtx)}` : ''}</figcaption></figure>`;
     html = html.replace(`%%FIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
@@ -1800,18 +1800,18 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const mediaStyle = parts.length ? ` style="${parts.join('; ')}"` : '';
     const dataMaxH = !isExternal && f.height != null ? ` data-max-h="${f.height}"` : '';
     const iframeTag =
-      `<iframe src="${escapeHtml(effSrc)}" class="tutorai-applet${isVideo ? ' tutorai-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
+      `<iframe src="${escapeHtml(effSrc)}" class="aicampus-applet${isVideo ? ' aicampus-video' : ''}" sandbox="${appletSandboxAttr(effSrc)}" loading="lazy" title="${escapeHtml(f.alt)}"${dataZoom}${dataMaxH}${mediaStyle}></iframe>`;
     const zoomInitH = f.height != null
       ? (isExternal ? `${f.height}px` : `min(calc(150px * ${f.zoom}), ${f.height}px)`)
       : (isVideo ? 'calc(100% * 0.5625)' : `calc(150px * ${f.zoom})`);
     // <span>-Wrapper (kein <div>): muss im umgebenden <p> bleiben, damit
     // das Iframe dieselbe font-size erbt wie im zoomlosen Fall (s. 6a).
     const iframeHtml = (f.zoom != null)
-      ? `<span class="tutorai-applet-zoom" style="height: ${zoomInitH}">${iframeTag}</span>`
+      ? `<span class="aicampus-applet-zoom" style="height: ${zoomInitH}">${iframeTag}</span>`
       : iframeTag;
     // Caption unter dem Medium: Alt-Text (unlabelt → ohne Nummer).
     const figHtml = f.alt.trim()
-      ? `<figure class="tutorai-figure">${iframeHtml}<figcaption>${renderCaptionRef(f.alt.trim(), captionCtx)}</figcaption></figure>`
+      ? `<figure class="aicampus-figure">${iframeHtml}<figcaption>${renderCaptionRef(f.alt.trim(), captionCtx)}</figcaption></figure>`
       : iframeHtml;
     html = html.replace(`%%APPLETFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
   });
@@ -1823,7 +1823,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const imgStyle = f.height != null ? ` style="max-height: ${f.height}px !important"` : '';
     const imgTag = `<img src="${escapeHtml(f.src)}" alt="${escapeHtml(f.alt)}"${imgStyle}>`;
     const imgHtml = (f.height != null || f.alt.trim())
-      ? `<figure class="tutorai-figure">${imgTag}` +
+      ? `<figure class="aicampus-figure">${imgTag}` +
         (f.alt.trim() ? `<figcaption>${renderCaptionRef(f.alt.trim(), captionCtx)}</figcaption>` : '') +
         `</figure>`
       : imgTag;
@@ -1845,12 +1845,12 @@ async function renderMarkdown(text, targetElement, options = {}) {
       const safeAlt = escapeHtml(inner.alt);
       const style = inner.height != null ? ` style="max-height: ${inner.height}px !important"` : '';
       const mediaTag = isAppletSrc(inner.src)
-        ? `<iframe src="${safeAlt}" class="tutorai-applet" sandbox="${appletSandboxAttr(inner.src)}" loading="lazy" title="${safeAlt}"${style}></iframe>`
+        ? `<iframe src="${safeAlt}" class="aicampus-applet" sandbox="${appletSandboxAttr(inner.src)}" loading="lazy" title="${safeAlt}"${style}></iframe>`
         : `<img src="${escapeHtml(inner.src)}" alt="${safeAlt}"${style}>`;
       const innerId = inner.label ? ` id="fig:${inner.label}"` : '';
       const letterPrefix = hasInnerLabel ? `${String.fromCharCode(97 + i)}) ` : '';
       const capText = (letterPrefix + inner.alt.trim()).trim();
-      return `<figure class="tutorai-subfig-item"${innerId}>${mediaTag}` +
+      return `<figure class="aicampus-subfig-item"${innerId}>${mediaTag}` +
         (capText ? `<figcaption>${renderCaptionRef(capText, captionCtx)}</figcaption>` : '') +
         `</figure>`;
     }).join('');
@@ -1866,7 +1866,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       numHtml = (slideMode && g && g.kind === 'fig')
         ? (() => {
           const cid = (refMap && refMap.courseId) || _getCourseId() || '';
-          return `<a class="tutorai-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
+          return `<a class="aicampus-fig-num-link" href="/courses/${cid}/script#fig:${f.label}" title="Zur Abbildung im Skript">Abb. ${f.num}</a>`;
         })()
         : `Abb. ${f.num}`;
     }
@@ -1874,8 +1874,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
     if (numHtml) capParts.push(numHtml);
     if (f.alt.trim()) capParts.push(renderCaptionRef(f.alt.trim(), captionCtx));
     const figHtml =
-      `<figure${idAttr} class="tutorai-figure tutorai-subfig"${fragAttrs}${aaidAttr}>` +
-      `<div class="tutorai-subfig-row"${rowStyle}>${items}</div>` +
+      `<figure${idAttr} class="aicampus-figure aicampus-subfig"${fragAttrs}${aaidAttr}>` +
+      `<div class="aicampus-subfig-row"${rowStyle}>${items}</div>` +
       (capParts.length ? `<figcaption>${capParts.join(': ')}</figcaption>` : '') +
       `</figure>`;
     html = html.replace(`%%SUBFIG_${idx}%%`, figHtml.replace(/\$/g, '$$$$'));
@@ -1926,7 +1926,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
       }
       if (num != null) {
         const span = document.createElement('span');
-        span.className = 'tutorai-sec-num';
+        span.className = 'aicampus-sec-num';
         span.textContent = num;
         const space = document.createTextNode('\u00a0');
         h.insertBefore(span, h.firstChild);
@@ -1965,8 +1965,8 @@ async function renderMarkdown(text, targetElement, options = {}) {
       // id + data-refkey = Ziel der Zitations-Links (slides.js navigiert + flashen).
       const r = ((refMap && refMap.references) || {})[x.label];
       const refHtml = r
-        ? `<span id="${refAnchorId(x.label)}" data-refkey="${x.label}" class="tutorai-bibentry">${_bibEntryHtml(r)}</span>`
-        : `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ bibentry:${x.label}</span>`;
+        ? `<span id="${refAnchorId(x.label)}" data-refkey="${x.label}" class="aicampus-bibentry">${_bibEntryHtml(r)}</span>`
+        : `<span class="aicampus-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ bibentry:${x.label}</span>`;
       html = html.replace(`%%XREF_${idx}%%`, refHtml);
       return;
     }
@@ -2032,20 +2032,20 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const figInner = kind === 'fig' && useLocalAnchor ? figInnerLocal[x.label] : null;
     if (useLocalAnchor && figInner && figInner.num != null) {
       // Subfigure-Inner: „Abb. N a)“ = Komplex-Nummer + Letter, In-Page-Anker.
-      refHtml = `<a href="#fig:${x.label}" class="tutorai-xref"${tipAttr}>Abb. ${figInner.num} ${figInner.letter})</a>`;
+      refHtml = `<a href="#fig:${x.label}" class="aicampus-xref"${tipAttr}>Abb. ${figInner.num} ${figInner.letter})</a>`;
     } else if (useLocalAnchor && local) {
-      refHtml = `<a href="#${kind}:${x.label}" class="tutorai-xref"${tipAttr}>${kindText} ${local}</a>`;
+      refHtml = `<a href="#${kind}:${x.label}" class="aicampus-xref"${tipAttr}>${kindText} ${local}</a>`;
     } else if (g && g.kind === kind) {
       const cid = (refMap && refMap.courseId) || '';
       const text = g.chapter ? 'Kap.' : kindText;
       const anchor = g.chapter ? `chapter-${g.sectionId}` : `${kind}:${x.label}`;
       const subSuffix = kind === 'fig' && g.sub ? ` ${g.sub})` : '';
-      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="tutorai-xref"${tipAttr}>${text} ${g.num}${subSuffix}</a>`;
+      refHtml = `<a href="/courses/${cid}/script#${anchor}" class="aicampus-xref"${tipAttr}>${text} ${g.num}${subSuffix}</a>`;
     } else if (sl && sl.kind === kind) {
       // Slide-eigenes Objekt (kein Skript-Label): Link auf die Folie.
       const cid = (slidesRefMap && slidesRefMap.courseId) || (refMap && refMap.courseId) || '';
       const subSuffix = kind === 'fig' && sl.sub ? ` ${sl.sub})` : '';
-      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="tutorai-xref"${tipAttr}>${kindText} S${sl.num}${subSuffix}</a>`;
+      refHtml = `<a href="/courses/${cid}/slides/${sl.deckId}/present#/${sl.h}/${sl.v}" class="aicampus-xref"${tipAttr}>${kindText} S${sl.num}${subSuffix}</a>`;
     } else if (slideMode && (local || (kind === 'fig' && figInnerLocal[x.label]))) {
       // Im aktuellen Slide definiert, aber noch nicht in der Refmap
       // (z. B. im Editor gerade erst angelegt und ungespeichert): Nummer
@@ -2057,10 +2057,10 @@ async function renderMarkdown(text, targetElement, options = {}) {
       const subSuffix = inner && inner.letter ? ` ${inner.letter})` : '';
       const href = slidePos ? `#/${slidePos.h}/${slidePos.v}` : null;
       refHtml = href
-        ? `<a href="${href}" class="tutorai-xref"${tipAttr}>${kindText} ${num}${subSuffix}</a>`
-        : `<span class="tutorai-xref"${tipAttr}>${kindText} ${num}${subSuffix}</span>`;
+        ? `<a href="${href}" class="aicampus-xref"${tipAttr}>${kindText} ${num}${subSuffix}</a>`
+        : `<span class="aicampus-xref"${tipAttr}>${kindText} ${num}${subSuffix}</span>`;
     } else {
-      refHtml = `<span class="tutorai-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
+      refHtml = `<span class="aicampus-xref-broken" title="Label unbekannt — zugehöriges Objekt fehlt">❓ ${x.kind}:${x.label}</span>`;
     }
     html = html.replace(`%%XREF_${idx}%%`, refHtml);
   });
@@ -2078,9 +2078,9 @@ async function renderMarkdown(text, targetElement, options = {}) {
       .map((r) =>
         `<li id="ref-${escapeHtml(r.key)}" class="text-sm text-gray-700 leading-relaxed">${_bibEntryHtml(r)}</li>`
       ).join('');
-    html += `<div class="tutorai-bibliography mt-6">`
+    html += `<div class="aicampus-bibliography mt-6">`
       + `<h3 class="text-base font-semibold text-gray-800 mb-2">Quellen</h3>`
-      + `<ul class="tutorai-bibliography list-none space-y-1.5">${items}</ul></div>`;
+      + `<ul class="aicampus-bibliography list-none space-y-1.5">${items}</ul></div>`;
   }
 
   // 6c. Restore task references (@task:{id})
@@ -2093,14 +2093,14 @@ async function renderMarkdown(text, targetElement, options = {}) {
     const t = refTasks[id];
     let boxHtml;
     if (!t) {
-      boxHtml = `<span class="tutorai-xref-broken" title="Aufgabe unbekannt — existiert nicht (mehr) oder ist nicht freigeschaltet">❓ Aufgabe ${escapeHtml(id)}</span>`;
+      boxHtml = `<span class="aicampus-xref-broken" title="Aufgabe unbekannt — existiert nicht (mehr) oder ist nicht freigeschaltet">❓ Aufgabe ${escapeHtml(id)}</span>`;
     } else if (refMap && refMap.mode === 'edit') {
       // PROF/TUTOR/Admin: kompakte Box mit Link zur Aufgabenseite
       boxHtml =
-        `<div class="tutorai-taskbox">` +
-        `<span class="tutorai-taskbox-icon" aria-hidden="true">📝</span>` +
+        `<div class="aicampus-taskbox">` +
+        `<span class="aicampus-taskbox-icon" aria-hidden="true">📝</span>` +
         `<div class="flex-1 min-w-0">` +
-        `<a href="/courses/${taskCid}/tasks/${t.id}" class="tutorai-xref font-semibold">${escapeHtml(t.title)}</a>` +
+        `<a href="/courses/${taskCid}/tasks/${t.id}" class="aicampus-xref font-semibold">${escapeHtml(t.title)}</a>` +
         `<div class="text-sm text-gray-500 mt-0.5">${t.maxPoints} Punkte · ${t.taskType === 'code' ? '💻 Code-Aufgabe' : '📄 Text-Aufgabe'}</div>` +
         `</div></div>`;
     } else {
@@ -2124,10 +2124,10 @@ async function renderMarkdown(text, targetElement, options = {}) {
         ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">💻 Code</span>'
         : '<span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">📄 Text</span>';
       boxHtml =
-        `<div class="tutorai-taskbox">` +
-        `<span class="tutorai-taskbox-icon" aria-hidden="true">📝</span>` +
+        `<div class="aicampus-taskbox">` +
+        `<span class="aicampus-taskbox-icon" aria-hidden="true">📝</span>` +
         `<div class="flex-1 min-w-0">` +
-        `<a href="/courses/${taskCid}/tasks/${t.id}" class="tutorai-xref text-base font-semibold">${escapeHtml(t.title)}</a>` +
+        `<a href="/courses/${taskCid}/tasks/${t.id}" class="aicampus-xref text-base font-semibold">${escapeHtml(t.title)}</a>` +
         `<div class="text-sm text-gray-500 mt-1">` +
         `${t.attemptsUsed}${t.maxAttempts != null ? '/' + t.maxAttempts : ''} Versuche${deadlineHtml}&nbsp;${typeBadge}${medalBadge ? '&nbsp;&nbsp;&nbsp;&nbsp;' + medalBadge : ''}` +
         `</div></div>` +
@@ -2207,7 +2207,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
           if (slideMode && g && g.kind === 'code') {
             const cid = (refMap && refMap.courseId) || _getCourseId() || '';
             numHtml =
-              `<a class="tutorai-code-num-link" href="/courses/${cid}/script#code:${b.label}"` +
+              `<a class="aicampus-code-num-link" href="/courses/${cid}/script#code:${b.label}"` +
               ` title="Zum Code im Skript">Code ${merNum}</a>`;
           } else {
             numHtml = `Code ${merNum}`;
@@ -2217,7 +2217,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
         if (numHtml) capParts.push(numHtml);
         if (b.caption) capParts.push(renderCaptionMath(b.caption));
         const idAttr = b.label !== null ? ` id="code:${b.label}"` : '';
-        blockHtml = `<figure class="tutorai-code-figure"${idAttr}>${blockHtml}` +
+        blockHtml = `<figure class="aicampus-code-figure"${idAttr}>${blockHtml}` +
           `<figcaption>${capParts.join(': ')}</figcaption></figure>`;
       }
       html = html.replace(`%%MERmaid_BLOCK_${idx}%%`, blockHtml.replace(/\$/g, '$$$$'));
@@ -2228,7 +2228,7 @@ async function renderMarkdown(text, targetElement, options = {}) {
   _cleanupBlockArtifacts(targetElement);
   if (slideMode) _applyFragmentMarkers(targetElement);
   // Code-LaTeX (z. B. Pseudo-Code): im Skript direkt auf der finalen DOM
-  // anwenden; in Slides erst NACH Reveal's Highlight-Pass (s. tutoraiWireCodeMath).
+  // anwenden; in Slides erst NACH Reveal's Highlight-Pass (s. aicampusWireCodeMath).
   if (!slideMode) applyCodeMath(targetElement);
 }
 
@@ -2327,7 +2327,7 @@ function _cleanupBlockArtifacts(root) {
 //      Sonderfälle: leeres <p> nach Codeblock, Marker direkt im Wrapper).
 //   1b: \htmlClass{fragment…}-Spans in gerenderten Formeln als Fragment-
 //      Hosts markieren (group/normal aus der ID-Klasse) — die inerten
-//      tutorai-katex-frag*-Klassen werden entfernt, „enclosing“ bleibt.
+//      aicampus-katex-frag*-Klassen werden entfernt, „enclosing“ bleibt.
 //   2: Alle [data-frag]-Elemente + Top-Level-Elemente der Folie (direkte
 //      Kinder der .markdown-preview-Wrapper, bei Boxen/Spaltenzeilen der
 //      Wrapper-<div>) in Dokumentreihenfolge sammeln.
@@ -2345,8 +2345,8 @@ function _applyFragmentMarkers(container) {
   const isPreviewWrap = (el) => el && el.classList && el.classList.contains('markdown-preview');
 
   // Phase 1: Sentinel auflösen (Fragmente + Auto-Animate-IDs)
-  container.querySelectorAll('span.tutorai-frag-marker, span.tutorai-aaid-marker').forEach((span) => {
-    const isAaid = span.classList.contains('tutorai-aaid-marker');
+  container.querySelectorAll('span.aicampus-frag-marker, span.aicampus-aaid-marker').forEach((span) => {
+    const isAaid = span.classList.contains('aicampus-aaid-marker');
     const fragType = span.getAttribute('data-frag') || 'normal';
     const fragId = span.getAttribute('data-frag-id');
     const aaid = span.getAttribute('data-aaid');
@@ -2356,7 +2356,7 @@ function _applyFragmentMarkers(container) {
       el !== container &&
       !isPreviewWrap(el) &&
       !blockRe.test(el.tagName) &&
-      !el.classList.contains('tutorai-equation')
+      !el.classList.contains('aicampus-equation')
     ) {
       el = el.parentElement;
     }
@@ -2389,21 +2389,21 @@ function _applyFragmentMarkers(container) {
   });
 
   // Phase 1b: \htmlClass{fragment…} in Formeln (via _katexFragRewrite nach
-  // tutorai-katex-frag(-id-<label>) umgeschrieben, s. renderLatex*): die
+  // aicampus-katex-frag(-id-<label>) umgeschrieben, s. renderLatex*): die
   // Spans als Fragment-Hosts markieren (ID → Gruppe), inerte Klassen
   // entfernen — ab Phase 2 laufen sie wie jedes [data-frag]-Element.
-  container.querySelectorAll('span.tutorai-katex-frag').forEach((span) => {
+  container.querySelectorAll('span.aicampus-katex-frag').forEach((span) => {
     let fragId = null;
     for (const c of span.classList) {
-      if (c.startsWith('tutorai-katex-fragid-')) fragId = c.slice('tutorai-katex-fragid-'.length);
+      if (c.startsWith('aicampus-katex-fragid-')) fragId = c.slice('aicampus-katex-fragid-'.length);
     }
-    span.classList.remove('tutorai-katex-frag');
-    if (fragId) span.classList.remove('tutorai-katex-fragid-' + fragId);
+    span.classList.remove('aicampus-katex-frag');
+    if (fragId) span.classList.remove('aicampus-katex-fragid-' + fragId);
     span.setAttribute('data-frag', fragId ? 'group' : 'normal');
     if (fragId) span.setAttribute('data-frag-id', fragId);
     // Marker für Phase 2b (visuelle Lesereihenfolge innerhalb der
     // Gleichung), in Phase 4 wieder entfernt.
-    span.setAttribute('data-tutorai-katexfrag', '');
+    span.setAttribute('data-aicampus-katexfrag', '');
   });
 
   // Phase 2: Fragment-Elemente + Top-Level-Elemente, Dokumentreihenfolge
@@ -2413,14 +2413,14 @@ function _applyFragmentMarkers(container) {
 
   // Phase 2b: Katex-Fragmente in visueller Lesereihenfolge (s. Hilf).
   // Beim ersten Render sind die Reveal-Sections noch display:none (Rects=0)
-  // → no-op; tutoraiResortFragments() macht es später noch einmal.
+  // → no-op; aicampusResortFragments() macht es später noch einmal.
   _visualKatexRunSort(allEls);
 
   // Phase 3: Schritt-Indizes
   _assignFragmentSteps(allEls);
 
-  // Phase 4: Die Marker data-frag/data-frag-id/data-tutorai-katexfrag
-  // bleiben bewusst stehen: tutoraiResortFragments() (slides.js ruft sie
+  // Phase 4: Die Marker data-frag/data-frag-id/data-aicampus-katexfrag
+  // bleiben bewusst stehen: aicampusResortFragments() (slides.js ruft sie
   // auf ready/slidechanged bzw. bei ?print-pdf auf) läuft dieselbe
   // Ableitung erneut, sobald die Folie gelayoutet ist, und braucht sie.
 }
@@ -2455,12 +2455,12 @@ function _collectFragmentEls(container, fragEls) {
 function _visualKatexRunSort(allEls) {
   for (let i = 0; i < allEls.length; ) {
     const first = allEls[i];
-    if (!first.hasAttribute('data-tutorai-katexfrag')) { i++; continue; }
+    if (!first.hasAttribute('data-aicampus-katexfrag')) { i++; continue; }
     const root = first.closest ? first.closest('.katex') : null;
     let j = i + 1;
     while (
       j < allEls.length &&
-      allEls[j].hasAttribute('data-tutorai-katexfrag') &&
+      allEls[j].hasAttribute('data-aicampus-katexfrag') &&
       root && allEls[j].closest && allEls[j].closest('.katex') === root
     ) j++;
     if (j - i > 1) {
@@ -2519,7 +2519,7 @@ function _assignFragmentSteps(allEls) {
 // Modus — synchron auf, sobald html.print-pdf gesetzt ist (noch vor
 // Reveal's setupPDF-Fragment-Paginierung). Setzt dieselben Attribute/Klassen
 // wie der erste Durchlauf (idempotent).
-function tutoraiResortFragments(container) {
+function aicampusResortFragments(container) {
   if (!container || !container.querySelectorAll) return;
   const fragEls = Array.from(container.querySelectorAll('[data-frag]'));
   if (fragEls.length === 0) return;
@@ -2659,19 +2659,19 @@ function renderLatexInline(latex) {
 // html.replace, wo das dortige $$-Escaping es verballern würde).
 function _citeHtml(kind, label, r, href, tipAttr) {
   if (!r) {
-    return `<span class="tutorai-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ ${kind}:${label}</span>`;
+    return `<span class="aicampus-xref-broken" title="Quellen-Schlüssel unbekannt — es existiert keine solche Quelle im Kurs">❓ ${kind}:${label}</span>`;
   }
   const a0 = (r.authors && r.authors.length)
     ? r.authors[0] + (r.authors.length > 3 ? ' et al.' : '')
     : '';
   const y = r.year || '';
   if (kind === 'cite') {
-    return `<sup><a href="${href}" data-refkey="${label}" class="tutorai-xref tutorai-cite"${tipAttr}>[${r.num}]</a></sup>`;
+    return `<sup><a href="${href}" data-refkey="${label}" class="aicampus-xref aicampus-cite"${tipAttr}>[${r.num}]</a></sup>`;
   }
   if (kind === 'citet') {
-    return `<a href="${href}" data-refkey="${label}" class="tutorai-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
+    return `<a href="${href}" data-refkey="${label}" class="aicampus-xref"${tipAttr}>${escapeHtml(a0)}${y ? ' (' + escapeHtml(y) + ')' : ''}</a>`;
   }
-  return `<a href="${href}" data-refkey="${label}" class="tutorai-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
+  return `<a href="${href}" data-refkey="${label}" class="aicampus-xref"${tipAttr}>(${escapeHtml(a0)}${y ? ', ' + escapeHtml(y) : ''})</a>`;
 }
 
 function renderCaptionMath(text) {
@@ -2843,7 +2843,7 @@ function applyCodeMath(root) {
           el = doc.createTextNode(part.text);
         } else {
           el = doc.createElement('span');
-          el.className = 'tutorai-code-math';
+          el.className = 'aicampus-code-math';
           el.innerHTML = renderLatexInline(part.latex);
         }
         parent.insertBefore(el, ref);
@@ -2857,7 +2857,7 @@ function applyCodeMath(root) {
 // darf erst NACH dem Highlight-Pass gesetzt werden: "ready" hooken (feuert
 // nach Plugin-Init). Der Quelltext (inkl. $-Paaren) ist zu dem Zeitpunkt
 // unverändert (hljs ändert nur die Spans).
-function tutoraiWireCodeMath(reveal) {
+function aicampusWireCodeMath(reveal) {
   reveal.on('ready', () => applyCodeMath(reveal.getRevealElement()));
 }
 
@@ -2872,8 +2872,8 @@ function tutoraiWireCodeMath(reveal) {
 // dann als normale Fragment-Hosts (group/normal) und entfernt die
 // Klassen; „enclosing“ (KaTeX-Styling) bleibt. Im Skript (ohne slideMode)
 // bleiben die Spans inaktive Elemente — kein visueller Unterschied.
-const KATEX_FRAG_CLASS = 'tutorai-katex-frag';
-const KATEX_FRAG_ID_PREFIX = 'tutorai-katex-fragid-';
+const KATEX_FRAG_CLASS = 'aicampus-katex-frag';
+const KATEX_FRAG_ID_PREFIX = 'aicampus-katex-fragid-';
 
 function _katexFragRewrite(latex) {
   return latex
@@ -3051,13 +3051,13 @@ function createMarkdownEditor(containerId, options = {}) {
   let cm = null;
   if (useCM) {
     textarea.removeAttribute('required');
-    // GFM/Markdown-Basismode + TutorAI-Annotationen-Overlay (Formeln,
-    // Boxen, Labels, Referenzen) — s. codemirror-mode-tutorai.js.
+    // GFM/Markdown-Basismode + AICampus-Annotationen-Overlay (Formeln,
+    // Boxen, Labels, Referenzen) — s. codemirror-mode-aicampus.js.
     const baseMode = CodeMirror.modes.gfm ? 'gfm' : 'markdown';
     // Wichtig: Modus-NAMENSSTRING übergeben, nicht die Factory-Funktion aus
     // CodeMirror.modes — eine Funktion als Mode-Spec löst CM5 stumm auf
     // "text/plain" auf (kein Highlighting, kein Fehler).
-    const mode = CodeMirror.modes['tutorai-markdown'] ? 'tutorai-markdown' : baseMode;
+    const mode = CodeMirror.modes['aicampus-markdown'] ? 'aicampus-markdown' : baseMode;
     // Feste Höhe = Originalhöhe des Textareas (CM5-Default wäre 300 px);
     // bei größeren Inhalten scrollt der Editor intern wie das alte Textarea.
     const wrapperHeight = textarea.offsetHeight || 300;
@@ -3220,9 +3220,9 @@ let _xrefTipShown = null; // Anker, dessen Vorschau gerade sichtbar ist
 function _ensureXrefTipEl() {
   if (_xrefTipEl) return _xrefTipEl;
   const el = document.createElement('div');
-  el.id = 'tutorai-xref-tip';
+  el.id = 'aicampus-xref-tip';
   el.innerHTML =
-    '<div class="tutorai-xref-tip-title"></div><div class="tutorai-xref-tip-body"></div>';
+    '<div class="aicampus-xref-tip-title"></div><div class="aicampus-xref-tip-body"></div>';
   document.body.appendChild(el);
   _xrefTipEl = el;
   return el;
@@ -3258,22 +3258,22 @@ function _xrefTipSetContent(anchor) {
   }
   if (!data || typeof data.p !== 'string' || !data.p) return false;
   const tip = _ensureXrefTipEl();
-  tip.querySelector('.tutorai-xref-tip-title').textContent = anchor.textContent.trim();
-  const body = tip.querySelector('.tutorai-xref-tip-body');
+  tip.querySelector('.aicampus-xref-tip-title').textContent = anchor.textContent.trim();
+  const body = tip.querySelector('.aicampus-xref-tip-body');
   if (data.k === 'eq') {
     // LaTeX-Vorschau: KaTeX falls geladen, sonst Rohtext.
     if (typeof katex !== 'undefined') {
       body.innerHTML = renderLatexBlock(data.p);
     } else {
-      body.innerHTML = '<pre class="tutorai-xref-tip-code">' + escapeHtml(data.p) + '</pre>';
+      body.innerHTML = '<pre class="aicampus-xref-tip-code">' + escapeHtml(data.p) + '</pre>';
     }
   } else if (data.k === 'code') {
     body.innerHTML =
-      '<pre class="tutorai-xref-tip-code"><code>' + escapeHtml(data.p) + '</code></pre>';
+      '<pre class="aicampus-xref-tip-code"><code>' + escapeHtml(data.p) + '</code></pre>';
   } else {
     // fig / box / sec: Text mit optionalen Formeln (KaTeX, pre-wrap im CSS).
     body.innerHTML =
-      '<span class="tutorai-xref-tip-text">' + _xrefTipRenderText(data.p) + '</span>';
+      '<span class="aicampus-xref-tip-text">' + _xrefTipRenderText(data.p) + '</span>';
   }
   return true;
 }
@@ -3319,7 +3319,7 @@ function _bindXrefTip() {
   _ensureXrefTipEl();
   document.addEventListener('mouseover', (e) => {
     const a =
-      e.target && e.target.closest ? e.target.closest('a.tutorai-xref[data-xref-tip]') : null;
+      e.target && e.target.closest ? e.target.closest('a.aicampus-xref[data-xref-tip]') : null;
     if (a === _xrefTipPending) return; // bereits in Bearbeitung
     if (_xrefTipTimer) {
       clearTimeout(_xrefTipTimer);
@@ -3344,7 +3344,7 @@ function _bindXrefTip() {
   // bleibt „Link in neuem Tab öffnen“ etc. für normale Links erhalten.
   document.addEventListener("contextmenu", (e) => {
     const a =
-      e.target && e.target.closest ? e.target.closest('a.tutorai-xref[data-xref-tip]') : null;
+      e.target && e.target.closest ? e.target.closest('a.aicampus-xref[data-xref-tip]') : null;
     if (a && (a === _xrefTipShown || a === _xrefTipPending)) e.preventDefault();
   });
   // Beim Scrollen (capture: auch Scroll-Container) / Resizen / Klicken ausblenden.

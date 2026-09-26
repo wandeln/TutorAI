@@ -27,7 +27,7 @@ from starlette.websockets import WebSocketDisconnect
 from . import auth, config, docker_ops, image_spec, preview, runs, spec, terminal
 from .reaper import REGISTRY, reaper_loop
 
-app = FastAPI(title="TutorAI Compute-Agent", version="1.0")
+app = FastAPI(title="AICampus Compute-Agent", version="1.0")
 _stop_event = threading.Event()
 
 
@@ -135,7 +135,7 @@ def workspace_create(body: dict,
     spec_dict = spec.parse_spec(body.get("spec") or {})
     if not spec_dict.get("image"):
         raise spec.SpecError(
-            "image fehlt (wird normalerweise von TutorAI aus der "
+            "image fehlt (wird normalerweise von AICampus aus der "
             "Image-Spec der Aufgabe injiziert)")
     docker_ops.key_parts(key)  # Key-Format validiert
     REGISTRY.register(key, spec_dict)
@@ -337,7 +337,7 @@ def exec_cmd(key: str, body: dict,
     sp = info["spec"]
     # (Kein Quota-Block hier mehr: der Watchdog warnt bei 100% und
     # stoppt den Container hart bei 150% — s. reaper._check_disk_quota.)
-    # Freie Commands kommen NUR von TutorAI (Backend baut sie aus den
+    # Freie Commands kommen NUR von AICampus (Backend baut sie aus den
     # Task-Skripten); es gibt kein Default mehr aus der Spec.
     command = str(body.get("command") or "")
     if not command.strip():

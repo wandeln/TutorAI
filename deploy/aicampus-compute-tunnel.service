@@ -1,18 +1,18 @@
-# SSH-Tunnel vom TutorAI-Server zum Compute-Server.
+# SSH-Tunnel vom AICampus-Server zum Compute-Server.
 #
 # Fördert den Compute-Agenten (127.0.0.1:8700 auf dem Compute-Server)
-# auf einen lokalen Port des TutorAI-Servers (hier: 8701). Der Agent
+# auf einen lokalen Port des AICampus-Servers (hier: 8701). Der Agent
 # bindet auf dem Compute-Server NUR auf 127.0.0.1 → der SSH-Tunnel ist
 # der einzige Zugangsweg (Key-Auth, kein Password).
 #
-# Installation (als root auf dem TUTORAI-Server):
+# Installation (als root auf dem AICAMPUS-Server):
 #   1) SSH-Key erzeugen + Publikey auf dem Compute-Server hinlegen:
-#        ssh-keygen -t ed25519 -f /etc/tutorai/compute_ssh_key -N ""
-#        ssh-copy-id -i /etc/tutorai/compute_ssh_key.pub tutorai@COMPUTE_HOST
-#      (oder: cat … >> /home/tutorai/.ssh/authorized_keys)
+#        ssh-keygen -t ed25519 -f /etc/aicampus/compute_ssh_key -N ""
+#        ssh-copy-id -i /etc/aicampus/compute_ssh_key.pub aicampus@COMPUTE_HOST
+#      (oder: cat … >> /home/aicampus/.ssh/authorized_keys)
 #   2) COMPUTE_HOST unten in der Unit ersetzen
-#   3) cp deploy/tutorai-compute-tunnel.service /etc/systemd/system/
-#      systemctl daemon-reload && systemctl enable --now tutorai-compute-tunnel
+#   3) cp deploy/aicampus-compute-tunnel.service /etc/systemd/system/
+#      systemctl daemon-reload && systemctl enable --now aicampus-compute-tunnel
 #
 # Mehrere Compute-Server: eine Unit pro Server (verschiedene lokale
 # Ports: 8701, 8702, …) und je Eintrag in der Admin-Registry
@@ -22,7 +22,7 @@
 # ServerAlive* + Restart=always machen Abbrüche automatisch.
 
 [Unit]
-Description=TutorAI Compute SSH Tunnel (127.0.0.1:8701 → COMPUTE_HOST:8700)
+Description=AICampus Compute SSH Tunnel (127.0.0.1:8701 → COMPUTE_HOST:8700)
 After=network-online.target
 Wants=network-online.target
 
@@ -34,9 +34,9 @@ ExecStart=/usr/bin/ssh \
   -o ExitOnForwardFailure=yes \
   -o BatchMode=yes \
   -o StrictHostKeyChecking=accept-new \
-  -i /etc/tutorai/compute_ssh_key \
+  -i /etc/aicampus/compute_ssh_key \
   -L 127.0.0.1:8701:127.0.0.1:8700 \
-  tutorai@COMPUTE_HOST
+  aicampus@COMPUTE_HOST
 Restart=always
 RestartSec=5
 

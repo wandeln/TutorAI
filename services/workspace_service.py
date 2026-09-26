@@ -1,5 +1,5 @@
 """
-Workspace-Service: Orchestrierung zwischen TutorAI (DB, Disk) und den
+Workspace-Service: Orchestrierung zwischen AICampus (DB, Disk) und den
 Compute-Agenten (s. docs/plan-workspace-tasks.md,
     docs/plan-workspace-access-classes.md).
 
@@ -328,7 +328,7 @@ def task_init_hash(session: Session, task: Task, base_image: str) -> str:
 
 
 def task_image_ref(course_id: int, task_id: int, init_hash: str) -> str:
-    return f"tutorai/task/{course_id}-{task_id}:{init_hash}"
+    return f"aicampus/task/{course_id}-{task_id}:{init_hash}"
 
 
 # ── Health-Cache (module-level, pro Agent-URL) ──────────────────────
@@ -1450,7 +1450,7 @@ class WorkspaceService:
         files: list[dict] = []
         seen: set[str] = set()
         if submission.workspace_snapshot:
-            with tempfile.TemporaryDirectory(prefix="tutorai-grade-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="aicampus-grade-") as tmp:
                 self.extract_snapshot(submission.workspace_snapshot, Path(tmp))
                 for p in sorted(Path(tmp).rglob("*")):
                     if not p.is_file():
@@ -1513,7 +1513,7 @@ class WorkspaceService:
         file_acc = {f.path: f.access for f in self.task_files(session, task)}
         ctx: dict = {"student_files": {}, "private_files": {}}
         if submission.workspace_snapshot:
-            with tempfile.TemporaryDirectory(prefix="tutorai-grade-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="aicampus-grade-") as tmp:
                 try:
                     self.extract_snapshot(submission.workspace_snapshot, Path(tmp))
                 except (ValueError, tarfile.TarError, OSError):

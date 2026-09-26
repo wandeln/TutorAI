@@ -1,5 +1,5 @@
 """
-TutorAI: Zentrale Konfiguration / Settings
+AICampus: Zentrale Konfiguration / Settings
 
 Alle Konfigurationswerte werden von Umgebungsvariablen oder .env-Datei gelesen.
 Ermöglicht flexibles Deployen ohne Code-Änderungen.
@@ -14,7 +14,7 @@ load_dotenv()
 
 # ─── Projekt-Root ───────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent.resolve()
-DB_FILE = BASE_DIR / "data" / "tutor.db"
+DB_FILE = BASE_DIR / "data" / "aicampus.db"
 DB_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 # Kurs-Medien (Bilder/Applets): data/media/course_{id}/<uuid>.<ext>

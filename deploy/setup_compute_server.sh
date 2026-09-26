@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
 # ────────────────────────────────────────────────────────────────────
-# TutorAI Compute-Server: Setup-Skript (AUF DEM COMPUTE-SERVER ausführen)
+# AICampus Compute-Server: Setup-Skript (AUF DEM COMPUTE-SERVER ausführen)
 #
 # Installiert: Docker (falls fehlt), nvidia-container-toolkit (falls GPU),
 # User/Dienste/Verzeichnisse, Agent-Venv, installiert die systemd-Unit.
 #
 # Hinweis: Workspace-Images werden NICHT vom Skript gebaut — die Engine
-# bekommt sie über die TutorAI-UI (Admin/Kurs → Compute-Engine →
+# bekommt sie über die AICampus-UI (Admin/Kurs → Compute-Engine →
 # „＋ Image installieren“ aus den Image-Specs).
 #
 # Aufruf (als root):
-#   ./deploy/setup_compute_server.sh /pfad/zum/TutorAI-Repo
+#   ./deploy/setup_compute_server.sh /pfad/zum/AICampus-Repo
 #
 # Danach:
-#   1. AGENT_KEY in /etc/tutorai/compute-agent.env setzen (= COMPUTE_AGENT_KEY
-#      in der TutorAI-.env)
-#   2. SSH-Zugang für den Tunnel einrichten (s. deploy/tutorai-compute-tunnel.service)
-#   3. In der TutorAI-Admin-Konsole (Compute/Workspace) die Engine registrieren:
+#   1. AGENT_KEY in /etc/aicampus/compute-agent.env setzen (= COMPUTE_AGENT_KEY
+#      in der AICampus-.env)
+#   2. SSH-Zugang für den Tunnel einrichten (s. deploy/aicampus-compute-tunnel.service)
+#   3. In der AICampus-Admin-Konsole (Compute/Workspace) die Engine registrieren:
 #      Name z. B. "compute-1", URL "http://127.0.0.1:8701" (Tunnel-Port!),
 #      Key, GPU-Zugang (welche GPUs erlaubt sind)
 # ────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-REPO="${1:?Usage: $0 <pfad-zum-TutorAI-Repo> (muss compute_agent/ enthalten)}"
+REPO="${1:?Usage: $0 <pfad-zum-AICampus-Repo> (muss compute_agent/ enthalten)}"
 REPO="$(cd "$REPO" && pwd)"
-AGENT_USER="tutorai"
-INSTALL_DIR="/opt/tutorai"
+AGENT_USER="aicampus"
+INSTALL_DIR="/opt/aicampus"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 apt_get() { apt-get -y "$@"; }
 
-echo "=== TutorAI Compute-Server Setup ==="
+echo "=== AICampus Compute-Server Setup ==="
 echo "Repo: $REPO"
 echo
 
@@ -76,7 +76,7 @@ fi
 # ── 3. User + Verzeichnisse ───────────────────────────────────────
 echo "[3] User + Verzeichnisse ..."
 id "$AGENT_USER" &>/dev/null || useradd --system --create-home --shell /usr/sbin/nologin "$AGENT_USER"
-mkdir -p "$INSTALL_DIR/assets" /etc/tutorai
+mkdir -p "$INSTALL_DIR/assets" /etc/aicampus
 chown -R "$AGENT_USER":"$AGENT_USER" "$INSTALL_DIR"
 
 # Repo hinlegen (kopieren, damit Updates per Re-Kopieren/Skript laufen)
@@ -94,29 +94,29 @@ python3 -m venv "$INSTALL_DIR/venv"
 
 # ── 5. Agent-Env + systemd-Unit ───────────────────────────────────
 echo "[5] Agent-Service installieren ..."
-[[ -f /etc/tutorai/compute-agent.env ]] || cp "$REPO/deploy/compute-agent.env.example" /etc/tutorai/compute-agent.env
-chown root:"$AGENT_USER" /etc/tutorai/compute-agent.env
-chmod 640 /etc/tutorai/compute-agent.env
-cp "$REPO/deploy/tutorai-compute-agent.service" /etc/systemd/system/
+[[ -f /etc/aicampus/compute-agent.env ]] || cp "$REPO/deploy/compute-agent.env.example" /etc/aicampus/compute-agent.env
+chown root:"$AGENT_USER" /etc/aicampus/compute-agent.env
+chmod 640 /etc/aicampus/compute-agent.env
+cp "$REPO/deploy/aicampus-compute-agent.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable tutorai-compute-agent
+systemctl enable aicampus-compute-agent
 echo "  → Agent läuft NACH NEU-SETZEN DES AGENT_KEY (siehe unten) — noch nicht gestartet."
 
 echo
 echo "=== Setup fertig — noch zu tun ==="
 echo
-echo "  1. AGENT_KEY setzen (== COMPUTE_AGENT_KEY in der TutorAI-.env):"
-echo "       sudo nano /etc/tutorai/compute-agent.env"
+echo "  1. AGENT_KEY setzen (== COMPUTE_AGENT_KEY in der AICampus-.env):"
+echo "       sudo nano /etc/aicampus/compute-agent.env"
 echo "  2. Agent starten:"
-echo "       sudo systemctl start tutorai-compute-agent"
-echo "       sudo systemctl status tutorai-compute-agent   # + journalctl -u tutorai-compute-agent -f"
+echo "       sudo systemctl start aicampus-compute-agent"
+echo "       sudo systemctl status aicampus-compute-agent   # + journalctl -u aicampus-compute-agent -f"
 echo "  3. Schnelltest (auf diesem Server):"
 echo "       curl -s http://127.0.0.1:8700/health    # → {\"ok\": true, ...}"
-echo "  4. SSH-Tunnel auf dem TUTORAI-Server einrichten:"
-echo "       s. deploy/tutorai-compute-tunnel.service"
-echo "  5. Engine in der TutorAI-Admin-Konsole registrieren:"
+echo "  4. SSH-Tunnel auf dem AICAMPUS-Server einrichten:"
+echo "       s. deploy/aicampus-compute-tunnel.service"
+echo "  5. Engine in der AICampus-Admin-Konsole registrieren:"
 echo "       Admin → Systemeinstellungen → Compute/Workspace → „＋ Engine hinzufügen“"
-echo "       URL = http://127.0.0.1:8701 (der TUNNEL-Port auf dem TutorAI-Server)"
+echo "       URL = http://127.0.0.1:8701 (der TUNNEL-Port auf dem AICampus-Server)"
 echo "  6. Images auf der Engine installieren (einmalig je Image-Spec):"
 echo "       Admin/Kurs → Compute-Engine → „＋ Image installieren“"
 echo

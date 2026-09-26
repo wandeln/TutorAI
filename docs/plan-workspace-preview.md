@@ -6,7 +6,7 @@
 
 Jede Workspace-Web-App (Jupyter, TensorBoard, …) bekommt eine **eigene
 Subdomain** — die Apps laufen auf `/` (kein Base-Pfad mehr, kein
-`TUTORAI_PREVIEW_BASE`, keine Root-Ports):
+`AICAMPUS_PREVIEW_BASE`, keine Root-Ports):
 
 ```
 https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/<app-path>
@@ -19,7 +19,7 @@ https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/<app-path>
   `services/preview_proxy.py`) vor dem Router; HTTP+WS delegieren auf
   `preview_http`/`preview_ws` (Agent-Leiste forwardet jetzt den App-Pfad
   DIREKT an die App, s. `compute_agent/preview.py`).
-- **Cookie-Bootstrap**: Der TutorAI-Cookie ist hostgebunden → fehlt auf
+- **Cookie-Bootstrap**: Der AICampus-Cookie ist hostgebunden → fehlt auf
   der Subdomain. UI nutzt daher immer den **Handoff-Endpoint**
   `GET /preview-handoff/{task}?port=<p>[&path=<sub>]` (302 →
   `https://<label>…/__preview_auth?ticket=<JWT-60s-once>` → Middleware
@@ -34,7 +34,7 @@ https://<task>-<port>-<user>-<h6>.<PREVIEW_BASE_DOMAIN>/<app-path>
   `proxy_buffering off`, langem read/send-Timeout und **OHNE
   X-Frame-Options** (Preview läuft im iframe der Hauptdomain; same-Site
   → Samesite=Lax-Cookies werden auch im iframe mitgesendet).
-- **Verworfen**: `TUTORAI_PREVIEW_BASE`-Env + Full-Path-Forwarding
+- **Verworfen**: `AICAMPUS_PREVIEW_BASE`-Env + Full-Path-Forwarding
   (`/preview/<task>/<port>`-Base-Pfad in den Apps) und
   `preview_root_ports` (Ports ohne Base-Path). Die DB-Spalte
   `tasks.workspace_preview_root_ports` bleibt existieren, ungenutzt.
@@ -151,7 +151,7 @@ Pipes fließt.
   das Daemon-Default und der Relay wäre nicht ausführbar. Der Student
   hat auf `/workspace` ohnehin Exec-Rechte → kein Sicherheitsverlust.
   Die tmpfs-Spezifikation ist Teil des Mount-Hash-Labels
-  (`tutorai.mounts`) → bei Spec-Wechsel werden bestehende Container
+  (`aicampus.mounts`) → bei Spec-Wechsel werden bestehende Container
   **einmalig** neu angelegt (Volume bleibt).
 
 ### 2. Compute-Agent (compute_agent/)
@@ -214,7 +214,7 @@ Pipes fließt.
 - **`auth.py`**: `verify_token_raw(token)` (Signatur+Expiry, ohne Request)
   — von der FastAPI-Dependency und vom WS/PReview-Code geteilt.
 
-### 3. Backend (TutorAI)
+### 3. Backend (AICampus)
 
 - **`services/preview_proxy.py`** (neu, ASGI-Routes auf dem Haupt-Port;
   `router = APIRouter()`, kein eigener Server, kein lifespan-Start):
@@ -311,7 +311,7 @@ Zwei neue kleine Sektionen **unter dem Verzeichnis-Tree** (linke Spalte):
   teilen den Haupt-Origin (z. B. `127.0.0.1:8000`) → Site-Cookies
   (z. B. Jupyter-Session) sind pro Port, nicht pro Aufgabe getrennt.
   Absolute Asset-Pfade in der previewten App (z. B. `/static/…`)
-  laden gegen den TutorAI-Origin — nur relative Pfade zuverlässig.
+  laden gegen den AICampus-Origin — nur relative Pfade zuverlässig.
   Mit Subdomain-Modus (`PREVIEW_BASE_DOMAIN`): jedes Port bekommt
   eigene Origin/Cookie-Domain — eingeschränkt gelöst.
 - Relay: nur Loopback-Dial im Container, kein eigener Listener, kein
@@ -331,7 +331,7 @@ Zwei neue kleine Sektionen **unter dem Verzeichnis-Tree** (linke Spalte):
 
 ## Test-Anleitung (Task 41, Kurs 12)
 
-1. **Deploy**: Rebuild BEIDER Container (`tutorai` + `compute-agent`).
+1. **Deploy**: Rebuild BEIDER Container (`aicampus` + `compute-agent`).
    Hinweis: Bestehende Workspace-Container werden **einmalig neu
    angelegt** (tmpfs-Flag) — laufende Jobs brechen dabei ab.
 2. **Ports/Preview**: In `run.sh` eine Zeile `python3 -m http.server 8000 &`

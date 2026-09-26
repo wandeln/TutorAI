@@ -62,7 +62,7 @@
 <script src="{{ asset('vendor/reveal/reveal.js') }}"></script>
 {# Highlight-Plugin (Code-Highlighting + data-line-numbers/Per-Line-Reveal;
    nutzt das global geladene highlight.js aus base.html) #}
-<script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
+<script src="{{ asset('vendor/reveal/plugin/highlight/aicampus-highlight.js') }}"></script>
 {# Notes-Plugin nur für Dozenten/Tutoren: für Studenten ist die Taste „S"
    inaktiv, und die Notizen werden zusätzlich serverseitig aus dem API-
    Content gefiltert (slides_service.strip_slide_notes) → nicht im DOM. #}
@@ -153,10 +153,10 @@ function togglePageFullscreen() {
     width: SLIDE_W,
     height: SLIDE_H,
     // Gezoomte Applets ({zoom=X}) überspringt das Auto-Animate — der
-    // Inline-Transform bleibt erhalten (s. tutoraiAutoAnimateMatcher).
-    autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+    // Inline-Transform bleibt erhalten (s. aicampusAutoAnimateMatcher).
+    autoAnimateMatcher: aicampusAutoAnimateMatcher,
     // Code-Blöcke: Syntax-Highlighting + Zeilennummern/Per-Line-Reveal
-    // (tutorai-highlight.js). escapeHTML: false — der Renderer liefert
+    // (aicampus-highlight.js). escapeHTML: false — der Renderer liefert
     // bereits HTML-escapten Code (mit true würde das Plugin doppelte
     // Entities setzen und die Highlight-Spans kaputt machen).
     highlight: { escapeHTML: false },
@@ -167,10 +167,10 @@ function togglePageFullscreen() {
     plugins: [RevealHighlight, ...(HAS_NOTES ? [RevealNotes] : [])],
   });
   // Code-LaTeX nach Reveal's Highlight-Pass
-  tutoraiWireCodeMath(reveal);
+  aicampusWireCodeMath(reveal);
   await reveal.initialize();
   // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js)
-  tutoraiRegisterSlideReveal(document.getElementById("reveal-root"), reveal);
+  aicampusRegisterSlideReveal(document.getElementById("reveal-root"), reveal);
 
   // Visuelle Fragment-Reihenfolge (KaTeX-Underbraces): neu ableiten,
   // sobald eine Folie gelayoutet ist (beim Markdown-Render sind die

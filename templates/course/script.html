@@ -1522,7 +1522,7 @@
   function sqSwitchTab(which) {
     const mine = which === 'mine';
     sqActiveTab = which; // Markierungs-Modus hängt vom aktiven Tab ab
-    localStorage.setItem('tutorai-script-tab-' + courseId, which);
+    localStorage.setItem('aicampus-script-tab-' + courseId, which);
     const tabMine = document.getElementById('sq-tab-mine');
     const tabAll = document.getElementById('sq-tab-all');
     const activeCls = 'flex-1 py-2 text-sm font-semibold transition text-blue-600 border-b-2 border-blue-600';
@@ -1536,7 +1536,7 @@
   document.getElementById('sq-tab-mine').addEventListener('click', () => sqSwitchTab('mine'));
   document.getElementById('sq-tab-all').addEventListener('click', () => sqSwitchTab('all'));
   // Tab-Wahl pro Kurs persistieren (Default: „Alle Fragen“)
-  sqSwitchTab(localStorage.getItem('tutorai-script-tab-' + courseId) === 'mine' ? 'mine' : 'all');
+  sqSwitchTab(localStorage.getItem('aicampus-script-tab-' + courseId) === 'mine' ? 'mine' : 'all');
 
   // Status-Filter für beide Fragenlisten (offen / behandelt / alle)
   const sqFilterSelect = document.getElementById('sq-status-filter');
@@ -1552,7 +1552,7 @@
   // ─── Markierungen: Toggle an/aus (persistiert pro Kurs) ────────
   // Ob nur eigene oder alle Fragen markiert werden, hängt vom aktiven
   // Tab ("Meine Fragen" = 'mine' / "Alle Fragen" = 'all') ab.
-  function sqMarkKey() { return 'tutorai-script-mark-' + courseId; }
+  function sqMarkKey() { return 'aicampus-script-mark-' + courseId; }
   function sqMarksOn() {
     const v = localStorage.getItem(sqMarkKey());
     // Standard: an. Legacy: 'none' => aus, 'mine'/'all' => on.

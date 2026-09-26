@@ -6,7 +6,7 @@
    stehen — sie wird vom ORM ignoriert)
 3. Die 4 globalen Seed-Specs (python-ml/cpp/asm/server) werden mit den
    neuen Dockerfile-Inhalten ÜBERSCHRIEBEN (sie referenzierten die
-   kuratierten tutorai/*-Images, die es nicht mehr gibt)
+   kuratierten aicampus/*-Images, die es nicht mehr gibt)
 4. Legacy-Tasks: leeres workspace_image + Preset in der Workspace-Spec
    → workspace_image auf den passenden Seed-Spec-Namen setzen (die
    Tasks laufen dann überall über das Spec-System)

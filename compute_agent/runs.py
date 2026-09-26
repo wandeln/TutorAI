@@ -10,7 +10,7 @@ durch eine Semaphore (FIFO-Queue, max. GPU_MAX_JOBS parallel — die GPU
 soll bewusst nicht voll ausgelastet werden).
 
 Die Jobs leben in-memory; nach Agent-Neustart sind laufende Jobs verloren
-(TutorAI zeigt dann „Lauf nicht mehr verfügbar" — Workspace/State bleibt
+(AICampus zeigt dann „Lauf nicht mehr verfügbar" — Workspace/State bleibt
 im Volume erhalten).
 """
 
@@ -125,7 +125,7 @@ _TREE_KILL = (
 
 
 def _pidfile(run_id: str) -> str:
-    return f"/tmp/.tutorai_run_{run_id}.pid"
+    return f"/tmp/.aicampus_run_{run_id}.pid"
 
 
 def _kill_in_container(job: RunJob) -> None:

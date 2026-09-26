@@ -157,7 +157,7 @@ html.print-pdf .reveal.slides-has-logo .slides .pdf-page > section::before {
   height: calc(2.6em * var(--slides-logo-scale, 1));
   background: var(--slides-logo) top right / contain no-repeat;
   pointer-events: none;
-  z-index: 1; /* im PDF über dem Folien-Hintergrund (.tutorai-slide-bg, z-index:0); live: natives Bg liegt hinter .slides */
+  z-index: 1; /* im PDF über dem Folien-Hintergrund (.aicampus-slide-bg, z-index:0); live: natives Bg liegt hinter .slides */
 }
 
 /* Folieninhalt über dem Logo (Logo ganz im Hintergrund).
@@ -210,7 +210,7 @@ html.print-pdf .reveal.slides-logo-bottom-left .slides .pdf-page > section::befo
    .html = interaktives Applet, damit vor dem Druck Einstellungen
    angepasst werden können). Absolute Position → nicht Flex-Item der
    Zentrierung (layout: center). */
-html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg {
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .aicampus-slide-bg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -224,7 +224,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slid
    Sections sind im print-pdf-Mode overflow:visible → bei z<1 (Box größer
    als die Folie) in einem foliengroßen Clip-Wrapper abschneiden, sonst
    würde das Bg in die Nachbar-PDF-Seiten bluten. */
-html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg-clip {
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .aicampus-slide-bg-clip {
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -233,7 +233,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slid
 
 /* Bg im Clip-Wrapper: relativ zum (foliengroßen) Wrapper positioniert —
    die Inline-Styles (calc(100%/z) + transform) bleiben wirksam. */
-html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slide-bg-clip > .tutorai-slide-bg {
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .aicampus-slide-bg-clip > .aicampus-slide-bg {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -243,7 +243,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > .tutorai-slid
 
 /* Folieninhalt über dem Hintergrund (ein positioniertes Element würde
    sonst in-flow-Content übermalen). */
-html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutorai-slide-bg):not(.tutorai-slide-bg-clip) {
+html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.aicampus-slide-bg):not(.aicampus-slide-bg-clip) {
   position: relative;
   z-index: 1;
 }
@@ -255,7 +255,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
    Inline-Style (background-color), das hier diese Regel überlagert.
    backdrop-filter übersteht echte PDF-Drucke nicht — der Farbton
    (30 % Alpha) bleibt sichtbar. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-highlight {
+:is(.reveal .slides, .slides-canvas) .markdown-preview .aicampus-callbox-highlight {
   border: 0;
   border-radius: 0.6em;
   padding: 1em 1.5em;
@@ -362,7 +362,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
   list-style: none !important;
   padding-left: 0.15em !important;
 }
-:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-bibentry {
+:is(.reveal .slides, .slides-canvas) .markdown-preview .aicampus-bibentry {
   font-size: 0.78em;
   line-height: 1.5;
   border-radius: 4px;
@@ -370,27 +370,27 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
      Click-Handler entfernt, der Übergang läuft hier. */
   transition: background-color 1s ease;
 }
-:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-bibentry.ref-flash {
+:is(.reveal .slides, .slides-canvas) .markdown-preview .aicampus-bibentry.ref-flash {
   background-color: color-mix(in srgb, var(--slides-accent, #2563eb) 20%, transparent);
   transition: none; /* sofort ein, langsam aus (siehe oben) */
 }
 
-/* Formel-Nummern-Links (.tutorai-eq-num) ausgenommen — die sehen wie
+/* Formel-Nummern-Links (.aicampus-eq-num) ausgenommen — die sehen wie
    normale (nicht verlinkte) Formel-Nummern aus, s. u. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview a:not(.tutorai-eq-num) {
+:is(.reveal .slides, .slides-canvas) .markdown-preview a:not(.aicampus-eq-num) {
   color: var(--slides-accent, #2563eb) !important;
 }
 
 /* Abbildungs-/Code-Nummern-Links in Captions (Klick → Skript): wie
    normale Nummern (kein Accent, keine Underline) — der Verweis ist erst
-   beim Hover erkennbar (wie .tutorai-eq-num). Muss nach der a-Regel
+   beim Hover erkennbar (wie .aicampus-eq-num). Muss nach der a-Regel
    stehen: gleiche Selektorstärke + !important → Source-Order gewinnt. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) a {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.aicampus-figure, .aicampus-code-figure, .aicampus-table-figure) a {
   color: inherit !important;
   text-decoration: none !important;
 }
 
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) a:hover {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.aicampus-figure, .aicampus-code-figure, .aicampus-table-figure) a:hover {
   text-decoration: underline !important;
 }
 
@@ -423,10 +423,10 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
 /* Code-Box (@box:code) in Slides: das <pre> sitzt nahtlos in der dunklen
    Box (s. main.css) — die generischen Slide-Regeln (margin/padding) dürfen
    dort nicht greifen. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-code pre {
+:is(.reveal .slides, .slides-canvas) .markdown-preview .aicampus-callbox-code pre {
   margin: 0 !important;
 }
-:is(.reveal .slides, .slides-canvas) .markdown-preview .tutorai-callbox-code pre code {
+:is(.reveal .slides, .slides-canvas) .markdown-preview .aicampus-callbox-code pre code {
   padding: 0.5em 1em 0.7em !important;
 }
 
@@ -437,7 +437,7 @@ html.print-pdf .reveal .slides .pdf-page > section.slides-has-bg > *:not(.tutora
    {.height} setzt inline max-height !important → gewinnt gegen diese
    Regel. @box:code bleibt nahtlos ausgenommen (:not). Die Per-Line-
    Reveal-Clones sind absolute Kinder → sie scrollen MIT dem <pre>. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview pre:not(.tutorai-callbox-code pre) {
+:is(.reveal .slides, .slides-canvas) .markdown-preview pre:not(.aicampus-callbox-code pre) {
   max-height: calc(9em / var(--tz, 1)) !important;
   overflow: auto !important;
 }
@@ -507,19 +507,19 @@ html.print-pdf .reveal .slides .markdown-preview pre {
 
 /* Figure-/Applet-/Code-/Tabellen-Captions: in Slides größer als im Skript
    (0.875rem) — em-basiert, damit sie mit dem Reveal-Zoom skalieren. */
-:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.tutorai-figure, .tutorai-code-figure, .tutorai-table-figure) figcaption {
+:is(.reveal .slides, .slides-canvas) .markdown-preview :is(.aicampus-figure, .aicampus-code-figure, .aicampus-table-figure) figcaption {
   font-size: 1.2rem;
 }
 
 /* Applet-Iframes: volle Breite, Höhe dämpfen (Renderer setzt inline
    150–600 px). Videos (YouTube) ausgenommen: ihre Höhe folgt dem
    16:9-Format (aspect-ratio in main.css) oder der expliziten {.height}. */
-:is(.reveal .slides, .slides-canvas) .tutorai-applet {
+:is(.reveal .slides, .slides-canvas) .aicampus-applet {
   width: 100% !important;
   border-radius: 0.4em;
 }
 
-:is(.reveal .slides, .slides-canvas) .tutorai-applet:not(.tutorai-video) {
+:is(.reveal .slides, .slides-canvas) .aicampus-applet:not(.aicampus-video) {
   max-height: 9em !important;
 }
 
@@ -528,7 +528,7 @@ html.print-pdf .reveal .slides .markdown-preview pre {
    scale(--tz) vergrößert sie sichtbar, daher Teilung durch den Faktor
    (--tz setzt der Renderer inline). Ergebnis: sichtbare Höhe = 9em,
    identisch zum zoomlosen Default; darüber scrollt das Applet intern. */
-:is(.reveal .slides, .slides-canvas) .tutorai-applet[data-zoom]:not([data-max-h]):not(.tutorai-video) {
+:is(.reveal .slides, .slides-canvas) .aicampus-applet[data-zoom]:not([data-max-h]):not(.aicampus-video) {
   max-height: calc(9em / var(--tz, 1)) !important;
 }
 
@@ -542,7 +542,7 @@ html.print-pdf .reveal .slides .markdown-preview pre {
    Default-Max-Höhe (9em) entspricht damit exakt der zoomlosen Default-
    Höhe am selben Ort. display:inline-block + width:100% füllt trotzdem
    die gesamte Spaltenbreite, wie ein block-Element. */
-.tutorai-applet-zoom {
+.aicampus-applet-zoom {
   display: inline-block;
   width: 100%;
   overflow: hidden;
@@ -554,7 +554,7 @@ html.print-pdf .reveal .slides .markdown-preview pre {
 }
 
 /* Gleichungs-Nummer: skaliert mit der Folie (em statt rem aus main.css) */
-:is(.reveal .slides, .slides-canvas) .tutorai-equation .tutorai-eq-num {
+:is(.reveal .slides, .slides-canvas) .aicampus-equation .aicampus-eq-num {
   font-size: 0.9em;
   color: var(--slides-text, #1f2937);
   opacity: 0.7;
@@ -564,14 +564,14 @@ html.print-pdf .reveal .slides .markdown-preview pre {
    Sieht exakt wie eine normale (nicht verlinkte) Formel-Nummer aus —
    der Verweis ist erst beim Hover erkennbar. (!important gegen die
    globale Skript-Regel .markdown-preview a aus main.css) */
-:is(.reveal .slides, .slides-canvas) .tutorai-equation a.tutorai-eq-num {
+:is(.reveal .slides, .slides-canvas) .aicampus-equation a.aicampus-eq-num {
   color: var(--slides-text, #1f2937) !important;
   opacity: 0.7;
   text-decoration: none !important;
   cursor: pointer;
 }
 
-:is(.reveal .slides, .slides-canvas) .tutorai-equation a.tutorai-eq-num:hover {
+:is(.reveal .slides, .slides-canvas) .aicampus-equation a.aicampus-eq-num:hover {
   text-decoration: underline !important;
 }
 

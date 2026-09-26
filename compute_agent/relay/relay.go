@@ -1,4 +1,4 @@
-// TutorAI-Workspace-Relay: piped stdin/stdout <-> 127.0.0.1:<port>.
+// AICampus-Workspace-Relay: piped stdin/stdout <-> 127.0.0.1:<port>.
 //
 // Wird per `docker cp` on-demand in den Student-Container kopiert und
 // vom Agent-Preview-Proxy via `docker exec -i <c> /tmp/relay <port>`

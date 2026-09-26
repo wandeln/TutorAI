@@ -1,4 +1,4 @@
-# reveal.js Build (TutorAI)
+# reveal.js Build (AICampus)
 
 Erzeugt die **lesbare (nicht minifizierte)** UMD-Version von
 **reveal.js 4.6.0** in `../reveal.js` (das von den Templates geladene

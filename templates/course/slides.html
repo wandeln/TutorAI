@@ -33,7 +33,7 @@
 {% endif %}
 {# Highlight-Plugin (Code-Highlighting + data-line-numbers; nutzt das
    global geladene highlight.js aus base.html) #}
-<script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
+<script src="{{ asset('vendor/reveal/plugin/highlight/aicampus-highlight.js') }}"></script>
 {% endblock %}
 
 {% block course_content %}
@@ -174,18 +174,18 @@
       history: false,
       width: TILE_W,
       height: TILE_H,
-      autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+      autoAnimateMatcher: aicampusAutoAnimateMatcher,
       // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
       // Renderer liefert bereits HTML-escapten Code).
       highlight: { escapeHTML: false },
       plugins: [RevealHighlight],
     });
     // Code-LaTeX nach Reveal's Highlight-Pass
-    tutoraiWireCodeMath(reveal);
+    aicampusWireCodeMath(reveal);
     await reveal.initialize();
     // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js);
     // deckt auch die nach dem Mini→Voll-Upgrade neu inicialisierte Instanz ab.
-    tutoraiRegisterSlideReveal(shell.querySelector(".reveal"), reveal);
+    aicampusRegisterSlideReveal(shell.querySelector(".reveal"), reveal);
     // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
     wireBgZoom(reveal);
     return reveal;
@@ -565,14 +565,14 @@
         history: false,
         width: W,
         height: H,
-        autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+        autoAnimateMatcher: aicampusAutoAnimateMatcher,
         // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
         // Renderer liefert bereits HTML-escapten Code).
         highlight: { escapeHTML: false },
         plugins: [RevealHighlight],
       });
       // Code-LaTeX nach Reveal's Highlight-Pass
-      tutoraiWireCodeMath(previewReveal);
+      aicampusWireCodeMath(previewReveal);
       await previewReveal.initialize();
       // Folien-Hintergrund-Zoom ({zoom=X} bei Applet-/Website-Backgrounds)
       wireBgZoom(previewReveal);

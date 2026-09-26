@@ -1,4 +1,4 @@
-# 📚 TutorAI
+# 📚 AICampus
 
 AI-gestütztes Tutoring-System für Übungsaufgaben an Universitäten.
 
@@ -84,7 +84,7 @@ Das System unterscheidet **globale Rollen** (Systemebene) und **Kurs-Rollen** (p
 ### 1. Clone & Dependencies
 
 ```bash
-cd TutorAI
+cd AICampus
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -143,7 +143,7 @@ Melde dich mit diesen Credentials an und erstelle über die **Admin-Konsole** de
 ## 📁 Projektstruktur
 
 ```
-TutorAI/
+AICampus/
 ├── main.py                  # FastAPI App + Web-Routes
 ├── config.py                # Zentrale Konfiguration (env vars)
 ├── .env                     # Secrets & Settings
@@ -203,7 +203,7 @@ TutorAI/
 │   ├── code_task_prompt.py  # LLM-Code-Task-Prompt (Vorlage/Tests/Lösung)
 │   └── script_prompt.py     # LLM-Prompt für Skript-Kapitel (Titel/Inhalt als JSON)
 └── data/
-    ├── tutor.db             # SQLite-Datenbank (dev)
+    ├── aicampus.db          # SQLite-Datenbank (dev)
     └── media/course_{id}/   # Kurs-Medien (UUID-Namen, per Upload)
 ```
 
@@ -245,13 +245,13 @@ als **systemd-Service** einrichten — reboot-fest mit Auto-Restart:
 
 ```bash
 # 1) SSH-Key erzeugen (falls noch nicht vorhanden) und Public-Key auf den LLM-Server kopieren
-ssh-keygen -t ed25519 -C "tutorai-llm-tunnel"
+ssh-keygen -t ed25519 -C "aicampus-llm-tunnel"
 ssh-copy-id user@llm-server   # alternativ: Public-Key manuell nach ~/.ssh/authorized_keys
 
 # 2) systemd-Service anlegen (er setzt Key-Auth voraus, kein Passwort-Prompt)
-sudo tee /etc/systemd/system/tutorai-llm-tunnel.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/aicampus-llm-tunnel.service > /dev/null << 'EOF'
 [Unit]
-Description=TutorAI LLM SSH-Tunnel
+Description=AICampus LLM SSH-Tunnel
 After=network-online.target
 Wants=network-online.target
 
@@ -268,7 +268,7 @@ EOF
 
 # 3) Aktivieren
 sudo systemctl daemon-reload
-sudo systemctl enable --now tutorai-llm-tunnel
+sudo systemctl enable --now aicampus-llm-tunnel
 
 # 4) Prüfen: Port muss lauschen
 ss -tln | grep 8001
@@ -280,13 +280,13 @@ Dann im `.env` einfach den lokalen Tunnel-Port als Endpoint angeben:
 LLM_API_URL=http://localhost:8001/v1
 ```
 
-**Bei Docker-Deployment** (TutorAI läuft in einem Container) sind zwei Dinge zusätzlich nötig:
+**Bei Docker-Deployment** (AICampus läuft in einem Container) sind zwei Dinge zusätzlich nötig:
 
 1. Der Container erreicht den Host nicht über `localhost`, sondern über die Docker-Host-IP.
    Am einfachsten per `extra_hosts` in der Compose-Datei:
    ```yaml
    services:
-     tutorai:
+     aicampus:
        extra_hosts: ["host.docker.internal:host-gateway"]
    ```
    und `LLM_API_URL=http://host.docker.internal:8001/v1` im `.env`.
@@ -299,9 +299,9 @@ LLM_API_URL=http://localhost:8001/v1
    sudo ufw allow from 172.18.0.0/16 to any port 8001 proto tcp
    ```
 
-**Fehlersuche:** `journalctl -u tutorai-llm-tunnel -n 50` — ein `Permission denied
+**Fehlersuche:** `journalctl -u aicampus-llm-tunnel -n 50` — ein `Permission denied
 (publickey)`-Fehler deutet auf ein Key-Problem (z. B. überschriebene `authorized_keys` auf dem
-LLM-Server), sonst liegt es am SSH-Server/Netz. In der TutorAI-Admin-Konsole lässt sich die
+LLM-Server), sonst liegt es am SSH-Server/Netz. In der AICampus-Admin-Konsole lässt sich die
 Verbindung jederzeit per „LLM testen" prüfen.
 
 ## 📖 API-Dokumentation

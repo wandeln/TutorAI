@@ -36,12 +36,12 @@ Aufgabe
    (gleiche URL/Key, andere Namen/Regeln).
 2. **Image-Spec = reines Dockerfile, Installation = konkretes Image auf
    einer Engine.** Name + Dockerfile sind separate DB-Felder; es gibt
-   kein Wrapper-YAML, keine `variants`, keine kuratierten `tutorai/*`-
+   kein Wrapper-YAML, keine `variants`, keine kuratierten `aicampus/*`-
    Images mehr — alle Specs leiten von öffentlichen Bases ab. Das LLM
    schreibt das komplette Dockerfile (Konventionen NUR im Prompt);
    Gates = Validierung (FROM öffentlich, kein COPY/ADD, ≤50 KB) +
    Vollanzeige + Bestätigung vor dem Build.
-3. **Deterministische Tags:** `tutorai/spec/{name}:{hash12}`, Hash =
+3. **Deterministische Tags:** `aicampus/spec/{name}:{hash12}`, Hash =
    SHA256 des normalisierten Dockerfiles (Kommentare/Weißraum raus).
    Gleiche Spec auf N Engines → gleiche Tags; "installiert?" =
    `image_exists`. No-op-Specs (nur `FROM`) bauen nichts — das
@@ -82,7 +82,7 @@ Base-Ref (kein localhost-/Registry-Namen mit Port oder Subdomain), kein
 Legacy-Detection: `name:`/`base:`-Zeilen → Friendly-Error "altes Format".
 
 Tags: No-op-Spec (nur `FROM`) → das Base-Image selbst (Installation =
-Pull); sonst `tutorai/spec/{name}:{hash12}` (Hash = normalisiertes
+Pull); sonst `aicampus/spec/{name}:{hash12}` (Hash = normalisiertes
 Dockerfile). Das GPU-Verhalten kommt NICHT aus der Spec, sondern aus
 der Engine-Konfiguration (s. Kern-Entscheidung 1).
 
@@ -114,7 +114,7 @@ GPU-Verhalten kommt aus der Engine-Konfiguration (`gpus`).
 
 | Endpoint | Beschreibung |
 |---|---|
-| `GET /images` | Lokale Images + Build-Status/Log-Tail (Label `tutorai.spec.*`) |
+| `GET /images` | Lokale Images + Build-Status/Log-Tail (Label `aicampus.spec.*`) |
 | `POST /images` | `{name, dockerfile}` validieren → Tag berechnen → Base-Pull (No-op) oder Background-Build starten |
 | `DELETE /images/{ref}` | Löschen (Sperrung: Build läuft / Container nutzt Image) |
 | `GET /health` | + `gpus` (Liste der GPU-Indizes via nvidia-smi), + `active_workspaces` |
@@ -125,7 +125,7 @@ Build läuft im Hintergrund (Thread), Status via `GET /images`
 (`building` + Log-Tail) — dauert je nach Paketen Minuten, blockiert also
 keine HTTP-Requests.
 
-## TutorAI-Endpunkte (neu)
+## AICampus-Endpunkte (neu)
 
 | Endpoint | Rolle |
 |---|---|
@@ -177,7 +177,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
   `gpus` ("all"/"none") übersetzt; JSON-Format bleibt kompatibel.
 - Kurs-Specs im alten YAML-Format sind nach der Migration ungültig
   (Validierung: "altes Format") → neu als Dockerfile anlegen.
-- Alte Agent-Version ohne `/images`: TutorAI erkennt via Fehler und
+- Alte Agent-Version ohne `/images`: AICampus erkennt via Fehler und
   meldet „Agent braucht Update" (kein Crash).
 
 ## Offene / bewusste Nichts
@@ -199,7 +199,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
     Dockerfile-Inhalten überschrieben; Legacy-Tasks mit leerem
     `workspace_image` + `preset:` in der Spec → `workspace_image` =
     Seed-Name via PRESET_TO_SPEC). Keine YAML-Specs, keine `variants`,
-    kein `gpu_mode`, keine kuratierten `tutorai/*`-Images mehr;
+    kein `gpu_mode`, keine kuratierten `aicampus/*`-Images mehr;
     `compute_images/` + `scripts/build_compute_images.sh` gelöscht.
     Alle Specs leiten von öffentlichen Bases ab
     (python:3.11-slim, debian:bookworm-slim, …).
@@ -209,7 +209,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
     `name:`/`base:`-Zeilen → Friendly-Error "altes Format". No-op-Spec
     (nur FROM) = Base-Referenz; deren Installation pullt die Base
     IMMER (explizite Admin-Handlung). Tag: No-op → Base selbst, sonst
-    `tutorai/spec/{name}:{hash12}` (Hash = normalisiertes Dockerfile,
+    `aicampus/spec/{name}:{hash12}` (Hash = normalisiertes Dockerfile,
     Kommentare/Weißraum raus).
   - **GPU je Engine statt je Image/Task:** Agent meldet `gpus` (Indizes
     via nvidia-smi, gecacht) im Health; Engine-Registry-Entry bekommt
@@ -239,7 +239,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
     (PRESET_TO_SEED_SPEC).
   - **Deploy:** `setup_compute_server.sh` + `deploy/README.md` +
     Compose-Header: Images werden NICHT mehr beim Setup gebaut —
-    Installation läuft per Image-Spec in der TutorAI-UI je Engine
+    Installation läuft per Image-Spec in der AICampus-UI je Engine
     („＋ Image installieren“). `config.py`: `LOGICAL_IMAGES` als
     Legacy-Fallback markiert. `workspace_presets.py`: totes
     `base_requirements`-Feld entfernt.
@@ -284,7 +284,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
     „(Build läuft …)“. Install-Toast unterscheidet jetzt „bereits
     installiert“ (No-op, sofort) von „Build gestartet“. Das erklärt
     auch, warum No-op-Specs (z. B. `python-ml` → kuratiertes
-    `tutorai/py-ml`) sofort „vollendet“ melden: das Basis-Image existiert
+    `aicampus/py-ml`) sofort „vollendet“ melden: das Basis-Image existiert
     bereits, es wird nichts gebaut.
   - **.env/Compose-Engine als sichtbare „local“-Zeile:**
     `COMPUTE_AGENT_URL_EXPLICIT` in `config.py` (zählt nur eine explizite
@@ -370,7 +370,7 @@ Task-Save-Seiteneffekt: referenzierte Spec auf **alle** Engines des
 
 - **2026-09-17 (Phase 5):** Downloads finalisiert. Zusätzlich:
   - `images/` im Paket wird jetzt aus der **Image-Spec** generiert
-    (kuratierte `tutorai/*`-Basen werden auf ihre öffentliche Definition
+    (kuratierte `aicampus/*`-Basen werden auf ihre öffentliche Definition
     aufgelöst); ohne `workspace_image` unverändert (Preset-Context).
   - **Bugfix `image_spec.py` (geteiltes Modul!):** `variants.gpu`
     wird jetzt SPARSE geparst (leer = `{}`) — vorher brach ein

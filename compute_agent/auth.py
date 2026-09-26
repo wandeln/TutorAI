@@ -1,5 +1,5 @@
 """
-HMAC-Op-Tokens: jede Anfrage aus TutorAI trägt ein kurzlebiges Token
+HMAC-Op-Tokens: jede Anfrage aus AICampus trägt ein kurzlebiges Token
 (Payload {task_id, student_id, op, exp=60s} + HMAC-SHA256-Signatur).
 
 Format: <base64url(payload)>.<base64url(signature)>
@@ -35,7 +35,7 @@ def _b64d(text: str) -> bytes:
 
 def make_token(key: str, op: str, task_id: int | None = None,
                student_id: int | None = None, ttl: int = 60) -> str:
-    """Token signieren (wird auf der TutorAI-Seite in compute_client genutzt;
+    """Token signieren (wird auf der AICampus-Seite in compute_client genutzt;
     hier definiert, damit beide Seiten die exakt selbe Logik haben)."""
     payload = {"op": op, "task_id": task_id, "student_id": student_id,
                "exp": int(time.time()) + ttl}

@@ -3,7 +3,7 @@ Download-Pakete für Workspace-Aufgaben (s. docs/plan-workspace-tasks.md §7.2).
 
 Erzeugt selbstlaufende tar.gz-Pakete mit docker-compose.yml, sodass
 Studenten und Tutoren Aufgaben auch LOKAL (auf dem eigenen Rechner)
-ausführen können — ohne Zugriff auf die TutorAI-Server.
+ausführen können — ohne Zugriff auf die AICampus-Server.
 
 Prinzip (entschlossen in §11):
   - Basis ist IMMER ein öffentliches Standard-Image (FROM python:3.11-slim,
@@ -28,7 +28,7 @@ Zugriffsklassen (statt Pfad-Zonen, s. plan-workspace-access-classes.md):
 Alle Commands kommen aus den Skripten der Aufgabe (skriptbasiertes Modell):
   - workspace/run.sh               → Aufgabe ausführen
   - workspace/.init.sh             → einmalige Initialisierung (public;
-    (👤 in TutorAI, aber IMMER im Paket) 🔒 rw, Datasets nach
+    (👤 in AICampus, aber IMMER im Paket) 🔒 rw, Datasets nach
     workspace/data/)
   - .init_hidden.sh (👤, Wurzel)  → einmalige private Initialisierung
                                      (NUR Tutor-Paket, NACH .init.sh; 👤 rw)
@@ -261,14 +261,14 @@ def _compose_content(task: Task, slug: str, has_init: bool,
     """
     internet = bool(task.workspace_internet)
     L = [
-        f"# TutorAI Workspace-Paket: {task.title}",
+        f"# AICampus Workspace-Paket: {task.title}",
         f"# Generiert am {date.today().isoformat()} — Anleitung in README.md",
         "services:",
         "  workspace:",
         "    build:",
         "      context: ./images",
-        "    image: tutorai-ws-local:1",
-        f"    container_name: tutorai-ws-{slug}",
+        "    image: aicampus-ws-local:1",
+        f"    container_name: aicampus-ws-{slug}",
         "    working_dir: /workspace",
         "    volumes:",
         _mount("./workspace", "/workspace", ro=False),
@@ -293,7 +293,7 @@ def _compose_content(task: Task, slug: str, has_init: bool,
             "  init:",
             "    build:",
             "      context: ./images",
-            "    image: tutorai-ws-local:1",
+            "    image: aicampus-ws-local:1",
             "    working_dir: /workspace",
             "    volumes:",
             _mount("./workspace", "/workspace", ro=False),
@@ -311,7 +311,7 @@ def _compose_content(task: Task, slug: str, has_init: bool,
             "  init-private:",
             "    build:",
             "      context: ./images",
-            "    image: tutorai-ws-local:1",
+            "    image: aicampus-ws-local:1",
             "    working_dir: /workspace",
             "    volumes:",
             _mount("./workspace", "/workspace", ro=False),
@@ -330,7 +330,7 @@ def _compose_content(task: Task, slug: str, has_init: bool,
             "  verify:",
             "    build:",
             "      context: ./images",
-            "    image: tutorai-ws-local:1",
+            "    image: aicampus-ws-local:1",
             "    working_dir: /workspace",
             "    volumes:",
             _mount("./workspace", "/workspace", ro=False),
@@ -359,9 +359,9 @@ def _readme_content(task: Task, kind: str, has_run: bool,
     else:
         ws_desc = "die Aufgaben-Vorlage (Starter-Dateien)"
     L = [
-        f"# TutorAI Workspace-Paket: {task.title}",
+        f"# AICampus Workspace-Paket: {task.title}",
         "",
-        f"Generiert am {date.today().isoformat()} von TutorAI."
+        f"Generiert am {date.today().isoformat()} von AICampus."
         + (" (deine aktuelle Lösung)" if live
            else " (Version dieser Einreichung)" if is_sub
            else " (Aufgaben-Vorlage)"),
@@ -429,7 +429,7 @@ def _readme_content(task: Task, kind: str, has_run: bool,
             L += [
                 f"**Hinweis:** Die read-only-Bereiche (🔒) sind größer als {size_mb} MB und "
                 "wurden NICHT ins Paket aufgenommen — sie sind weiterhin im "
-                "TutorAI-Workspace verfügbar.",
+                "AICampus-Workspace verfügbar.",
                 "",
             ]
     if has_verify:
@@ -498,7 +498,7 @@ def build_package(task: Task, kind: str,
     ro_files = {p for p, v in public.items() if v["access"] == "readonly"}
     judge_path = fmap["judge_path"]
 
-    tmpdir = Path(tempfile.mkdtemp(prefix="tutorai-pkg-"))
+    tmpdir = Path(tempfile.mkdtemp(prefix="aicampus-pkg-"))
     try:
         top = tmpdir / top_name
         (top / "workspace").mkdir(parents=True)

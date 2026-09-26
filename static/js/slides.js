@@ -14,7 +14,7 @@
  *                            (nur zitierte Quellen, nach kursweiter Nummer);
  *                            manuell geschriebene "class: quellen"-Folien
  *                            (altes Import-Prompt-Format) werden verworfen.
- * - tutoraiRegisterSlideReveal(rootEl, inst) → registriert die Reveal-
+ * - aicampusRegisterSlideReveal(rootEl, inst) → registriert die Reveal-
  *                            Instanz pro .reveal-Root (WeakMap), damit der
  *                            globale Zitations-Click-Handler embeddede
  *                            Instanzen (Kacheln, Editor-Vorschau) navigieren
@@ -42,7 +42,7 @@
  *                            zoom|none" setzt eine klassische Transition.
  *                            Gezoomte Applets ({zoom=X}) überspringt das
  *                            Auto-Animate per autoAnimateMatcher-Config
- *                            (siehe tutoraiAutoAnimateMatcher) — der
+ *                            (siehe aicampusAutoAnimateMatcher) — der
  *                            transform-Zoom bleibt erhalten.
  */
 
@@ -280,9 +280,9 @@ async function parseSlides(content) {
 // im selben Deck — der Quellen-Tab ist für Studenten nicht erreichbar und
 // ein Cross-Page-Anker unnötig. Embedded Reveal-Instanzen (Kachel-Vorschau,
 // Editor, Präsentation) haben keinen globalen Reveal-Zugriff → Instanzen pro
-// .reveal-Root im WeakMap (tutoraiRegisterSlideReveal beim Initialisieren).
+// .reveal-Root im WeakMap (aicampusRegisterSlideReveal beim Initialisieren).
 const _slideReveals = new WeakMap();
-function tutoraiRegisterSlideReveal(rootEl, inst) {
+function aicampusRegisterSlideReveal(rootEl, inst) {
   if (rootEl) _slideReveals.set(rootEl, inst);
 }
 
@@ -313,7 +313,7 @@ document.addEventListener("click", (e) => {
 
 function _flashRefEntry(slidesEl, key) {
   if (!key) return;
-  const entry = slidesEl.querySelector('.tutorai-bibentry[data-refkey="' + key + '"]');
+  const entry = slidesEl.querySelector('.aicampus-bibentry[data-refkey="' + key + '"]');
   if (!entry) return;
   entry.classList.remove("ref-flash");
   void entry.offsetWidth; // Reflow, damit ein erneutes Hinzufügen den Fade neu startet
@@ -420,7 +420,7 @@ async function buildSlideSection(slide, footerText, slidePos) {
   // Folien ineinander). "transition: fade|slide|zoom|none" setzt eine
   // klassische Transition (und damit kein data-auto-animate). Gezoomte
   // Applets ({zoom=X}) überspringt das Auto-Animate per
-  // autoAnimateMatcher-Config (siehe tutoraiAutoAnimateMatcher) — sie
+  // autoAnimateMatcher-Config (siehe aicampusAutoAnimateMatcher) — sie
   // faden ein/aus, der Inline-Transform-Zoom bleibt erhalten.
   const transition = slide.transition || SLIDE_DEFAULT_TRANSITION;
   if (footerText) section.setAttribute("data-footer", footerText);
@@ -444,7 +444,7 @@ async function buildSlideSection(slide, footerText, slidePos) {
     const isApplet = isAppletSrc(slide.background.src);
     if (SLIDES_IS_PRINT_PDF) {
       const bg = document.createElement(isApplet ? "iframe" : "img");
-      bg.className = "tutorai-slide-bg";
+      bg.className = "aicampus-slide-bg";
       bg.src = slide.background.src;
       let appletZoom = null;
       if (isApplet) {
@@ -456,8 +456,8 @@ async function buildSlideSection(slide, footerText, slidePos) {
           // Zoom wie bei 6a (markdown-renderer.js): Layout-Box 1/zoom +
           // transform scale — sichtbare Fläche unverändert, Inhalt ×z
           // (oben links verankert). Inline schlägt die 100%-Regel für
-          // .tutorai-slide-bg (slides.css). Bei z<1 ist die Box größer
-          // als die Folie → Clip-Wrapper (s. .tutorai-slide-bg-clip).
+          // .aicampus-slide-bg (slides.css). Bei z<1 ist die Box größer
+          // als die Folie → Clip-Wrapper (s. .aicampus-slide-bg-clip).
           bg.style.width = `calc(100% / ${z})`;
           bg.style.height = `calc(100% / ${z})`;
           bg.style.transform = `scale(${z})`;
@@ -473,7 +473,7 @@ async function buildSlideSection(slide, footerText, slidePos) {
         // rausgezoomtes (größerer Box) Bg würde in die Nachbar-PDF-Seiten
         // bluten. In einem foliengroßen Clip-Wrapper abschneiden.
         const clip = document.createElement("div");
-        clip.className = "tutorai-slide-bg-clip";
+        clip.className = "aicampus-slide-bg-clip";
         clip.appendChild(bg);
         section.appendChild(clip);
       } else {
@@ -558,7 +558,7 @@ function wireBgZoom(reveal) {
  * matcher.call(this, fromSlide, toSlide) auf) → getAutoAnimatePairs steht
  * hier als Instanz-Methode zur Verfügung.
  */
-function tutoraiAutoAnimateMatcher(fromSlide, toSlide) {
+function aicampusAutoAnimateMatcher(fromSlide, toSlide) {
   const pairs = this.getAutoAnimatePairs(fromSlide, toSlide);
   return pairs.filter(
     (pair) => !pair.from.hasAttribute("data-zoom") && !pair.to.hasAttribute("data-zoom")
@@ -567,7 +567,7 @@ function tutoraiAutoAnimateMatcher(fromSlide, toSlide) {
 
 /**
  * Fragment-Schritte neu ableiten, sobald eine Folie gelayoutet ist (s.
- * tutoraiResortFragments in markdown-renderer.js). Beim Markdown-Render
+ * aicampusResortFragments in markdown-renderer.js). Beim Markdown-Render
  * sind die Sections noch display:none (Reveal-CSS), daher kann die
  * visuelle Fragment-Reihenfolge (z. B. KaTeX-Underbraces) erst richtig
  * sortiert werden, wenn die Folie sichtbar ist — bzw. im Print-Modus,
@@ -585,7 +585,7 @@ function tutoraiAutoAnimateMatcher(fromSlide, toSlide) {
 function wireKatexFragmentResort(reveal, slidesEl) {
   const resort = (slide, resync) => {
     if (!slide || !slide.querySelector(".markdown-preview")) return;
-    tutoraiResortFragments(slide);
+    aicampusResortFragments(slide);
     // Sichtbarkeit an die (ggf. neuen) Indizes anpassen: Ohne angezeigte
     // Fragments ist data-fragment=-1 (Ausgangszustand); bei einem Deep-Link
     // (#/2/1) zeigt der alte Index auf den zugehörigen visuellen Schritt.

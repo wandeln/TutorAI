@@ -19,10 +19,10 @@ ignoriert — die manuelle Datei ist aktueller).
 Idempotent: Tasks, die bereits eine run.sh haben, werden übersprungen
 (es sei denn --force).
 
-Aufruf (im TutorAI-Container, damit Code + DB zusammenpassen):
-    sudo docker compose -f deploy/compose.local.yml exec tutorai \\
+Aufruf (im AICampus-Container, damit Code + DB zusammenpassen):
+    sudo docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 120 python -m scripts.migrate_workspace_scripts --dry-run
-    sudo docker compose -f deploy/compose.local.yml exec tutorai \\
+    sudo docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 120 python -m scripts.migrate_workspace_scripts
 
 Nach erfolgreichem Lauf: die Legacy-Spalten in database/base.py in

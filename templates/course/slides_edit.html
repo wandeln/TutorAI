@@ -41,7 +41,7 @@
 <script src="{{ asset('js/slides.js') }}"></script>
 {# Highlight-Plugin (Code-Highlighting + data-line-numbers; nutzt das
    global geladene highlight.js aus base.html) #}
-<script src="{{ asset('vendor/reveal/plugin/highlight/tutorai-highlight.js') }}"></script>
+<script src="{{ asset('vendor/reveal/plugin/highlight/aicampus-highlight.js') }}"></script>
 {% endblock %}
 
 {% block course_content %}
@@ -559,18 +559,18 @@
       history: false,
       width: W,
       height: H,
-      autoAnimateMatcher: tutoraiAutoAnimateMatcher,
+      autoAnimateMatcher: aicampusAutoAnimateMatcher,
       // Code-Blöcke: s. slides_present.html (escapeHTML: false — der
       // Renderer liefert bereits HTML-escapten Code).
       highlight: { escapeHTML: false },
       plugins: [RevealHighlight],
     });
     // Code-LaTeX nach Reveal's Highlight-Pass
-    tutoraiWireCodeMath(inst);
+    aicampusWireCodeMath(inst);
     previewReveal = inst;
     await inst.initialize();
     // Zitations-Links → auto-Quellen-Folie (Click-Handler in slides.js)
-    tutoraiRegisterSlideReveal(revealRootEl, inst);
+    aicampusRegisterSlideReveal(revealRootEl, inst);
     // Slide-Wechsel in der Vorschau (Pfeile/Pointer) → Editor springt zur
     // passenden Stelle im Markdown (Slide-Anfang an den oberen Rand).
     // Das initiale slidechanged feuert während initialize() — VOR dieser
@@ -800,11 +800,11 @@
     ? (CodeMirror.modes.gfm ? "gfm" : (CodeMirror.modes.markdown ? "markdown" : null))
     : null;
   if (cmMode) {
-    // GFM/Markdown-Basismode + TutorAI-Annotationen (Formeln, Boxen,
+    // GFM/Markdown-Basismode + AICampus-Annotationen (Formeln, Boxen,
     // Labels, Referenzen) — s. codemirror6-setup.js (StateField).
     // Wichtig: NamensSTRING übergeben — das Setup-Modul mappt den Namen
     // auf die CM6-Language-Extension.
-    const mode = CodeMirror.modes["tutorai-markdown"] ? "tutorai-markdown" : cmMode;
+    const mode = CodeMirror.modes["aicampus-markdown"] ? "aicampus-markdown" : cmMode;
     // Feste Höhe = Originalhöhe des Textareas (keine Größen-Sprünge bei
     // der Initialisierung); bei größeren Inhalten scrollt der Editor intern.
     const h = textarea.offsetHeight || Math.round(window.innerHeight * 0.55);

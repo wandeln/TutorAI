@@ -1,6 +1,6 @@
-# TutorAI Web-App (FastAPI)
+# AICampus Web-App (FastAPI)
 #
-# Build:  docker build -t tutorai-app .
+# Build:  docker build -t aicampus-app .
 # Lauf:   siehe deploy/compose.local.yml (lokal) bzw. deploy/README.md
 #
 # Die App erwartet ihre Laufzeit-Daten (DB, Uploads, Workspaces,

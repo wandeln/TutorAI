@@ -1,1 +1,1 @@
-"""TutorAI Compute-Agent — verwaltet die Workspace-Container auf einem Node."""
+"""AICampus Compute-Agent — verwaltet die Workspace-Container auf einem Node."""

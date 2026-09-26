@@ -31,7 +31,7 @@ Algo-Aufgaben ab, aber nicht:
 
 **Ziel:** Jeder Student bekommt pro Aufgabe eine **eigene, isolierte
 Arbeitsumgebung** (Docker-Container mit eigenem Dateisystem/Volume), die auf
-einem separaten Compute-Server liegen kann. TutorAI bleibt die einzige
+einem separaten Compute-Server liegen kann. AICampus bleibt die einzige
 Schnittstelle für den Studenten — der Compute-Server ist für den Browser
 unsichtbar.
 
@@ -56,7 +56,7 @@ Preset-Objekt:
 PRESETS = {
     "python-ml": {
         "label": "Python (ML / Datenanalyse)",
-        "image": "tutorai/py-ml:1",
+        "image": "aicampus/py-ml:1",
         "editor_mode": "python",
         "default_run": "python3 main.py",
         "main_file": "main.py",
@@ -65,21 +65,21 @@ PRESETS = {
     },
     "cpp": {
         "label": "C++",
-        "image": "tutorai/cpp:1",
+        "image": "aicampus/cpp:1",
         "editor_mode": "text/x-c++src",  # CodeMirror clike
         "default_run": "g++ -O2 -std=c++17 -o solution main.cpp && ./solution",
         "main_file": "main.cpp",
     },
     "asm": {
         "label": "Assembler (x86-64)",
-        "image": "tutorai/asm:1",
+        "image": "aicampus/asm:1",
         "editor_mode": "nasm",
         "default_run": "nasm -f elf64 main.asm -o main.o && ld -o solution main.o && ./solution",
         "main_file": "main.asm",
     },
     "server": {
         "label": "Linux-Server / System-Verwaltung",
-        "image": "tutorai/server:1",
+        "image": "aicampus/server:1",
         "editor_mode": "text/x-sh",     # + nginx/modi je Dateiendung
         "default_run": "",              # Student startet Dienste selbst
         "verify_command": "bash .private/verify.sh",
@@ -99,11 +99,11 @@ Pro-Task-Umgebungen und die Layer-Struktur: s. §2.10.
 ### 2.2 "Compute Agent" — der einzige Manager, lokal UND remote
 
 Der **schlüssigste Architekturentscheid**: Es gibt keinen getrennten
-"LocalDocker"- und "RemoteDocker"-Code in TutorAI. Stattdessen:
+"LocalDocker"- und "RemoteDocker"-Code in AICampus. Stattdessen:
 
 ```
 ┌────────────────┐  HTTP über SSH-Tunnel  ┌───────────────────────────┐
-│   TutorAI      │ ─────────────────────▶ │  Compute Agent (FastAPI)  │
+│   AICampus      │ ─────────────────────▶ │  Compute Agent (FastAPI)  │
 │  (FastAPI,     │  (Port-Forward,        │  auf Compute-Server,      │
 │   Web-UI, DB)  │ ◀───────────────────── │  bindet nur 127.0.0.1,    │
 └────────────────┘  signierte Op-Tokens   │  verwaltet Docker         │
@@ -116,7 +116,7 @@ Der **schlüssigste Architekturentscheid**: Es gibt keinen getrennten
 └─────────────────┘                          └───────────────────────────┘
 ```
 
-(Bei einem lokalen Agenten entfällt der Tunnel — TutorAI spricht den Agenten
+(Bei einem lokalen Agenten entfällt der Tunnel — AICampus spricht den Agenten
 Direkt auf `127.0.0.1:8700` an, s. §2.8.)
 
 - **Compute Agent**: kleine FastAPI-App (neuer Modul `compute_agent/` im selben
@@ -124,16 +124,16 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
   `docker`-CLI. Endpoints: Workspace erzeugen/initialisieren, Dateien
   lesen/schreiben/listen/löschen, Befehl ausführen (sync + async mit
   Log-Tail), Snapshot (tar) erzeugen, Container löschen.
-- **TutorAI**: `services/compute_client.py` (httpx-Client) + `WorkspaceService`
+- **AICampus**: `services/compute_client.py` (httpx-Client) + `WorkspaceService`
   als Orchestrierung (DB, Limits, Grading).
 - **Lokal & Remote sind gleichberechtigt (Hybrid):** Der Agent kann auf
-  **jeder** Maschine laufen — auch auf dem TutorAI-Server selbst. Dann ist
-  er einfach eine zweite systemd-Unit (`tutorai-compute-agent.service`) auf
+  **jeder** Maschine laufen — auch auf dem AICampus-Server selbst. Dann ist
+  er einfach eine zweite systemd-Unit (`aicampus-compute-agent.service`) auf
   demselben Host, der sich mit dem **gleichen Docker-Daemon** verbindet;
-  TutorAI zeigt per Config auf `http://127.0.0.1:8700`, **kein SSH-Tunnel**
+  AICampus zeigt per Config auf `http://127.0.0.1:8700`, **kein SSH-Tunnel**
   nötig. Die Agent-Registry in `GlobalSettings` mischt lokal + remote frei;
   Routing-Regel s. §2.8.
-- **Browser spricht nie direkt mit dem Agenten** — alles geht über TutorAI.
+- **Browser spricht nie direkt mit dem Agenten** — alles geht über AICampus.
   JWT/Cookie-Auth bleibt unverändert; der Agent ist für Studenten unsichtbar
   und nur im internen Netz erreichbar.
 
@@ -146,7 +146,7 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
   Image-Root, `/env/` (Task-Pakete) und `/assets/` (Datasets) sind alle
   read-only; Bibliotheken müssen also nirgends einzeln „read-only gesetzt“
   werden. Der **einzige** schreibbare Ort ist `/workspace` (Student-Volume,
-  `tutorai-ws-{key}`). Zusätzliche `mounts:` aus der Spec sind *immer*
+  `aicampus-ws-{key}`). Zusätzliche `mounts:` aus der Spec sind *immer*
   read-only. Eine generische Permission-DSL (`writable: …`) wird
   **bewusst nicht** unterstützt (s. §11). `/assets/` mit den großen public
   Dateien der Aufgabe (Dataset) wird von allen Studenten geteilt, nicht pro
@@ -166,7 +166,7 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
 
 - Starter-/Template-Dateien der Aufgabe: **public** → liegen im Student-Volume.
 - Verifikations-Skript (private Tests, `verify.sh`, Musterlösung): liegt auf
-  TutorAI unter `data/workspaces/{task_id}/.private/` und wird **nur bei
+  AICampus unter `data/workspaces/{task_id}/.private/` und wird **nur bei
   Grading** in einen frischen Container gemountet — nie ins Student-Volume.
   (Gleiche Philosophie wie die heutigen PrivateTests.)
 
@@ -183,7 +183,7 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
   gerendert (Loss-Curves, Grafikscreenshots), andere als Liste/Download.
 
 **"Abgeben"** (Student):
-- Agent tar-t das Workspace-Volume → TutorAI speichert Snapshot unter
+- Agent tar-t das Workspace-Volume → AICampus speichert Snapshot unter
   `data/submissions/{submission_id}/workspace.tar.gz`, Pfad in neuer
   `Submission`-Spalte.
 - Grading (neuer Pfad in `grading_service`, analog `_grade_code`):
@@ -192,7 +192,7 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
   3. Verifikations-Befehl ausführen → der **Agent liefert strukturierte
      Ergebnisse** über die API: Exit-Code, stdout/stderr (truncated ~1 MB),
      Artefakt-Dateien (mit Größenlimits)
-  4. LLM bewertet **auf der TutorAI-Seite** — der LLM spricht nie direkt mit
+  4. LLM bewertet **auf der AICampus-Seite** — der LLM spricht nie direkt mit
      dem Compute-Server. In den Prompt kommen **nur** die relevanten Teile:
      Aufgabenstellung, Quell-Dateien des Studenten (Textdateien aus dem
      Snapshot), Testausgabe, Artefakte (Inhalt bei Text/JSON, Referenz bei
@@ -200,20 +200,20 @@ Direkt auf `127.0.0.1:8700` an, s. §2.8.)
      `/assets/`-Datasets — genau die „unnötigen Daten“.
   5. Punkte + Feedback wie heute.
 
-### 2.6 Verbindung: SSH-Tunnel (TutorAI und Compute-Server in getrennten Netzen)
+### 2.6 Verbindung: SSH-Tunnel (AICampus und Compute-Server in getrennten Netzen)
 
 Kein gemeinsames LAN → die Verbindung ist ein **permanenter SSH
-Local-Port-Forward** vom TutorAI-Server zum Compute-Server:
+Local-Port-Forward** vom AICampus-Server zum Compute-Server:
 
 ```bash
-# Auf dem TutorAI-Server, als systemd-Unit `tutorai-compute-tunnel.service`
+# Auf dem AICampus-Server, als systemd-Unit `aicampus-compute-tunnel.service`
 # (Restart=always; SSH-Auth nur per Key, kein Password)
 autossh -f -M 0 -N \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
   -o ExitOnForwardFailure=yes \
-  -i /etc/tutorai/compute_ssh_key \
+  -i /etc/aicampus/compute_ssh_key \
   -L 127.0.0.1:8700:127.0.0.1:8700 \
-  tutorai@compute-server
+  aicampus@compute-server
 ```
 
 - Der Agent bindet auf dem Compute-Server **nur an 127.0.0.1** → der
@@ -254,7 +254,7 @@ Zwei wichtige Ergänzungen:
   Das ist normal und als Laufzeit im Terminal-Panel sichtbar.
 - **Datasets werden NICHT pro Student kopiert.** Public-Dateien > ~5 MB
   (Datasets) werden beim Anlegen/Ändern der Aufgabe **einmal** auf den
-  Compute-Server gesynct (`/opt/tutorai/assets/{course_id}/{task_id}/…`) und
+  Compute-Server gesynct (`/opt/aicampus/assets/{course_id}/{task_id}/…`) und
   read-only nach `/assets/` gemountet. Das Student-Volume enthält nur die
   editierbaren Dateien → Init bleibt schnell, Disk-Bedarf 1× statt 30–40×,
   und der Submission-Snapshot enthält nur den Studenten-Code (kleiner,
@@ -292,16 +292,16 @@ Die Registry (`compute_agents`) mischt lokale und remote Agenten:
    erster gesunder Agent.
 
 → „Kleine Aufgaben" (kleine CNNs/MNIST auf CPU, C++, Assembler, Server)
-laufen direkt auf dem TutorAI-Server (niedrige Latenz, keine Tunnel-Bandbreite),
+laufen direkt auf dem AICampus-Server (niedrige Latenz, keine Tunnel-Bandbreite),
 GPU-Training wandert automatisch auf den Compute-Server.
 
 **Größenordnung lokaler Agent:** Er teilt sich den Host mit der Web-App →
 der lokale Agent hat konservative Default-Limits je Container (z. B. 2 CPU /
 4 GB RAM, kein GPU), in der Registry je Agent überschreibbar
-(`default_limits`) — schützt TutorAI davor, von Student-Containern
+(`default_limits`) — schützt AICampus davor, von Student-Containern
 verhungernd zu werden.
 
-**Voraussetzung:** Docker auf dem TutorAI-Server. Die Web-App soll dabei
+**Voraussetzung:** Docker auf dem AICampus-Server. Die Web-App soll dabei
 ebenfalls containerisiert werden — das lokale Hybrid-Setup wird zu einer
 Compose-File (s. §2.9).
 
@@ -311,9 +311,9 @@ Compose-File (s. §2.9).
 
 ```yaml
 services:
-  tutorai:
+  aicampus:
     build: .                          # Dockerfile im Repo
-    volumes: ["tutorai_data:/app/data"]   # DB, Medien, Workspaces persistent
+    volumes: ["aicampus_data:/app/data"]   # DB, Medien, Workspaces persistent
     ports: ["127.0.0.1:8000:8000"]
     env_file: .env
   compute-agent:
@@ -321,7 +321,7 @@ services:
     ports: ["127.0.0.1:8700:8700"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Agent verwaltet Host-Container
-      - tutorai_assets:/opt/tutorai/assets         # geteilte Datasets (read-only für Studenten)
+      - aicampus_assets:/opt/aicampus/assets         # geteilte Datasets (read-only für Studenten)
     environment: ["AGENT_KEY=…"]
 ```
 
@@ -335,7 +335,7 @@ services:
   → kein nvidia-runtime am Agent-Container nötig.
 - Nginx/SSL bleibt auf dem Host (proxyt nach `127.0.0.1:8000`) oder wandert
   optional als dritter Service in die Compose; `deploy.sh` wird entsprechend
-  angepasst. Die heutige `tutorai.service`-Unit wird ersetzt.
+  angepasst. Die heutige `aicampus.service`-Unit wird ersetzt.
 - **Remote-Compute-Server:** jeder führt Docker (mit nvidia-container-toolkit
   bei GPU) + Agenten (Compose oder systemd) selbst. Je Node werden nur die
   Images gebaut/gezogen, die der Node tatsächlich bedient — GPU-Node zieht
@@ -347,7 +347,7 @@ services:
 `compute_images/` starten `FROM` öffentlichen Basis-Images (Docker Hub:
 `python:3.11-slim`, `gcc:13`, `nvidia/cuda:…-devel`) und legen nur eine
 dünne Ableger-Schicht drauf (z. B. torch/transformers). Die Ableger-Images
-(`tutorai/py-ml-gpu:1` etc.) werden auf den **Compute-Nodes** lokal
+(`aicampus/py-ml-gpu:1` etc.) werden auf den **Compute-Nodes** lokal
 gebaut/gecacht; in die **Download-Pakete** kommen sie nicht rein — dort
 wird dieselbe dünne Schicht lokal aus öffentlichem Basis-Image + pinned
 `requirements.txt` gebaut (s. §7.2), d. h. kein Registry-Bedarf.
@@ -401,7 +401,7 @@ wie bei der Spec).
 - Optionales Feld `Task.workspace_packages` (pip-requirements-Format,
   z. B. `transformers\nopencv-python`), vom Tutor je Aufgabe pflegbar.
 - Beim Speichern/Ändern der Aufgabe baut der Agent **einmal** ein
-  geteiltes Target-Verzeichnis (`/opt/tutorai/taskenvs/{course}/{task}/`,
+  geteiltes Target-Verzeichnis (`/opt/aicampus/taskenvs/{course}/{task}/`,
   `pip install --target …`; Wheel-Cache des Agents bleibt auf dem Host).
 - Der Container mountet es **read-only** nach `/env`; der Run-Befehl nutzt
   es automatisch (`PYTHONPATH=/env`, `PYTHONDONTWRITEBYTECODE=1`).
@@ -424,13 +424,13 @@ Compiler, Treiber, GPU“ → kuratiertes Image (Preset/Flavor).
 
 Eine Aufgabe definiert ihre Arbeitsumgebung als **ein YAML-Dokument**
 (Spalte `Task.workspace_spec`) — im Geist die „docker-compose der
-Aufgabe“ plus TutorAI-Erweiterungen. Dieses Dokument ist die **einzige
+Aufgabe“ plus AICampus-Erweiterungen. Dieses Dokument ist die **einzige
 Quellwahrheit** für die Umgebung:
 
 ```yaml
 # Workspace-Spec (Beispiel: python-ml)
 preset: python-ml            # Preset → Editor-Modi + Defaults
-image: tutorai/py-ml         # logischer Name; Agent löst die
+image: aicampus/py-ml         # logischer Name; Agent löst die
                              # cpu/gpu-Variante je Node (s. §2.9)
 working_dir: /workspace
 run: python3 train.py        # Studenten-„Ausführen“
@@ -539,8 +539,8 @@ So passen auch größere Datasets ohne DB-Bloat.
 ## 4. Compute Agent (`compute_agent/`, neu)
 
 FastAPI-App, eigenes Entry-Point-Script, Deployment per systemd (analog
-`tutorai.service`) oder als Docker-Container mit `docker.sock`-Mount —
-auf **jeder** Maschine: dem Compute-Server oder dem TutorAI-Server selbst
+`aicampus.service`) oder als Docker-Container mit `docker.sock`-Mount —
+auf **jeder** Maschine: dem Compute-Server oder dem AICampus-Server selbst
 (Hybrid-Modus, s. §2.8).
 
 **Endpoints** (alle nur mit gültigem signiertem Token):
@@ -563,34 +563,34 @@ auf **jeder** Maschine: dem Compute-Server oder dem TutorAI-Server selbst
 
 **Auth:** Agent bindet **nur auf 127.0.0.1** am Compute-Server — einziger
 Zugangsweg ist der SSH-Tunnel (key-basiert, s. §2.6). Zusätzlich trägt jede
-Request aus TutorAI ein HMAC-Token `{task_id, student_id, op, exp=60s}`
+Request aus AICampus ein HMAC-Token `{task_id, student_id, op, exp=60s}`
 (gemeinsamer Key), damit Operationen auf den richtigen Workspace beschränkt
 bleiben.
 
 **Container-Verwaltung:**
-- Create: `docker create --rm --read-only -v tutorai-ws-{key}:/workspace
+- Create: `docker create --rm --read-only -v aicampus-ws-{key}:/workspace
   --cpus … --memory … --pids-limit=256 --network=none --label
-  tutorai.ws={key} {image} /bin/sh -c "sleep infinity"`
+  aicampus.ws={key} {image} /bin/sh -c "sleep infinity"`
 - Execs: `docker exec -w /workspace … sh -c "{run_command}"`
 - Reaper: Background-Task prüft letzte Aktivität (in-memory Registry),
   killt nach Idle-Timeout.
 - Persistenz über Neustarts: Labels + `docker ps -a --filter
-  label=tutorai.ws=` → Registry rekonstruieren.
+  label=aicampus.ws=` → Registry rekonstruieren.
 
 **Docker-Images** (neuer Ordner `compute_images/` mit Dockerfiles +
 Build-Skript `scripts/build_compute_images.sh`, das auf dem Compute-Server
 läuft und alle Images baut):
-- `tutorai/py-ml:1` — python:3.12-slim + numpy, pandas, scikit-learn,
+- `aicampus/py-ml:1` — python:3.12-slim + numpy, pandas, scikit-learn,
   matplotlib, torch (CPU; GPU-Variante `py-ml-gpu:1` mit CUDA-Base)
-- `tutorai/cpp:1` — gcc/clang + make, cmake, SDL2/GLFW-Header, xvfb,
+- `aicampus/cpp:1` — gcc/clang + make, cmake, SDL2/GLFW-Header, xvfb,
   offscreen-Rendering-Support
-- `tutorai/asm:1` — nasm, binutils, objdump
-- `tutorai/server:1` — debian/ubuntu + nginx, sshd, bind9, ufw, curl, …
+- `aicampus/asm:1` — nasm, binutils, objdump
+- `aicampus/server:1` — debian/ubuntu + nginx, sshd, bind9, ufw, curl, …
   (alles vorinstalliert, da `--network=none`)
 
 ---
 
-## 5. TutorAI-Backend (neue/veränderte Module)
+## 5. AICampus-Backend (neue/veränderte Module)
 
 | Modul | Inhalt |
 |---|---|
@@ -679,7 +679,7 @@ Quick-Fields sind eine Komfort-Layer auf derselben Spec:
 │                                                              │
 │  ┌─ workspace_spec.yaml (editierbar) ─────────────────────┐   │
 │  │ preset: python-ml                                      │   │
-│  │ image: tutorai/py-ml                                   │   │
+│  │ image: aicampus/py-ml                                   │   │
 │  │ working_dir: /workspace                                │   │
 │  │ run: python3 train.py                                  │   │
 │  │ verify:                                                │   │
@@ -925,7 +925,7 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
   nicht möglich.
 - Dateien: Pfade sanitizen (kein `..`), Size-Limits (50 MB/Datei,
   512 MB/Workspace), Upload-Typ-Checks, keine Symlinks aus Extracts.
-- Private Dateien: nie im Student-Volume, nie via TutorAI-API an Studenten
+- Private Dateien: nie im Student-Volume, nie via AICampus-API an Studenten
   (`is_public=false` wird hart gefiltert — wie `model_solution` heute).
 - Datasets: Download nur für Kurs-Mitglieder; Sichtbarkeit folgt der
   Aufgabe (wie Medien heute).
@@ -943,8 +943,8 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
    für ein Ziel-Server-OS.
 
 ### Phase 1 — MVP: ein Preset (python-ml), Agent lokal oder auf 1 Server
-1. Dockerfile für die TutorAI-App + `deploy/compose.local.yml`
-   (tutorai + compute-agent + Daten-Volumes); `deploy.sh`-Anpassung.
+1. Dockerfile für die AICampus-App + `deploy/compose.local.yml`
+   (aicampus + compute-agent + Daten-Volumes); `deploy.sh`-Anpassung.
 2. `compute_agent/` (FastAPI) + Docker-Verwaltung + Reaper.
 3. Datenmodell (Task-Spalten, `TaskWorkspaceFile`, `Submission.workspace_snapshot`,
    `WorkspaceRun`) + Migration.
@@ -958,7 +958,7 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
 
 ### Phase 2 — Produktion Multi-Server
 1. Agent auf Compute-Servern deployen (Compose oder systemd, bind
-   127.0.0.1) + SSH-Tunnel-Unit auf dem TutorAI-Server; Admin-Konsole zeigt
+   127.0.0.1) + SSH-Tunnel-Unit auf dem AICampus-Server; Admin-Konsole zeigt
    Tunnel-/Agent-Status.
 2. Health-Check + degradierter Modus im UI; Admin-Konsole: Compute-Settings
    + "Verbindung testen".
@@ -989,7 +989,7 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
    GPU-Passthrough je Aufgabe + Queue (`compute_gpu_max_jobs`, Default ~8;
    GPU bewusst nicht voll auslasten), CUDA-Image `py-ml-gpu:1`.
 2. **Netzwerk:** getrennte Netze, kein direkter Pfad → permanenter
-   **SSH-Tunnel** (Port-Forward, Key-Auth) vom TutorAI-Server zum
+   **SSH-Tunnel** (Port-Forward, Key-Auth) vom AICampus-Server zum
    Compute-Server; Agent nur auf 127.0.0.1 (s. §2.6).
 3. **Compute-Server:** beliebiges Linux; Docker + NVIDIA-Treiber/
    nvidia-container-toolkit werden installiert → Setup-Skript + systemd-Units
@@ -1001,11 +1001,11 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
    (`internet:` in der Workspace-Spec, bridge + egress-Filter) — explizit
    vom Tutor frei geschaltet, z. B. für `pip install`/`apt`.
 6. **Hybrid lokal + remote:** Kleine Aufgaben laufen direkt auf dem
-   TutorAI-Server (gleicher Docker-Daemon, kein Tunnel); GPU-Aufgaben routen
+   AICampus-Server (gleicher Docker-Daemon, kein Tunnel); GPU-Aufgaben routen
    über die Registry auf den Compute-Server (s. §2.8). Routing v1:
    GPU-Flag → gpu-fähiger Agent, sonst lokaler Agent.
-7. **Deployment:** Auch die TutorAI-App wird containerisiert; lokales
-   Hybrid-Setup = eine Compose-File (tutorai + Agent + Daten-Volumes),
+7. **Deployment:** Auch die AICampus-App wird containerisiert; lokales
+   Hybrid-Setup = eine Compose-File (aicampus + Agent + Daten-Volumes),
    Compute-Server mit eigenem Docker/Agenten. Images werden **einmalig pro
    Node** gebaut/gezogen und dann gecacht — kein Download pro Student/Aufgabe
    (s. §2.9).
@@ -1023,7 +1023,7 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
     read-only (s. §2.3).
 11. **Bewertungs-Datenfluss:** Der Agent liefert strukturierte Ergebnisse
     (Exit-Code, Ausgabe, Artefakte) per API; der LLM läuft auf der
-    TutorAI-Seite und erhält nur Aufgabenstellung + Studenten-Quelldateien
+    AICampus-Seite und erhält nur Aufgabenstellung + Studenten-Quelldateien
     + Testausgabe + Artefakte — nie Bibliotheken/Datasets/Container-Inneres
     (s. §2.5).
 12. **Keine (großen) Images von unserem Server für lokale Ausführung:**
@@ -1034,7 +1034,7 @@ ergänzen, gitignore-pflichtfrei wie die anderen): `clike` (C++), `shell`,
 
 ### Restliche Kleinigkeiten (bei Umsetzung klären)
 
-- Ob der TutorAI-Server schon Docker hat (sonst Installation + User-Rechte)
+- Ob der AICampus-Server schon Docker hat (sonst Installation + User-Rechte)
 - SSH-Zugang zum Compute-Server (User, Key-Hinlegung) für das Tunnel-Setup
 - Soll der Student sehen, auf welcher Maschine sein Workspace läuft?
   (Empfehlung: nein — abstrahieren)

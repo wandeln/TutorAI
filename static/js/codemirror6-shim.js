@@ -173,7 +173,7 @@
     // (workspace.js cmModeForPath, markdown-renderer.js, slides_edit.html).
     modes: {
       python: true, javascript: true, htmlmixed: true, xml: true,
-      markdown: true, gfm: true, "tutorai-markdown": true,
+      markdown: true, gfm: true, "aicampus-markdown": true,
       clike: true, shell: true, yaml: true,
     },
     mimeModes: {

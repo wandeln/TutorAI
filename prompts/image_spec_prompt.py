@@ -43,7 +43,7 @@ Regeln für das Dockerfile:
    Erklärungen davor oder danach.
 2. Die ERSTE Instruktion muss `FROM` mit einem ÖFFENTLICHEN Standard-
    Basis-Image sein (z. B. python:3.11-slim, debian:bookworm-slim,
-   ubuntu:22.04, gcc:12) — niemals ein privates oder tutorai/*-Image.
+   ubuntu:22.04, gcc:12) — niemals ein privates oder aicampus/*-Image.
 3. KEINE COPY- oder ADD-Instructionen (der Build-Kontext ist leer).
 4. Halte das Dockerfile MINIMAL — nur Pakete, die für die Beschreibung
    wirklich nötig sind. Pinne Versionen, wo Stabilität wichtig ist.

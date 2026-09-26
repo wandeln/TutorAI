@@ -34,14 +34,14 @@ Idempotenz-Guard (ohne --force):
   Die Einzelschritte sind zusätzlich einzeln idempotent, damit ein
   --force-Lauf nichts zweimal verändert.
 
-Aufruf (im TutorAI-Container, damit Code + DB zusammenpassen — Reihenfolge:
+Aufruf (im AICampus-Container, damit Code + DB zusammenpassen — Reihenfolge:
 ERST migrieren, DANN die neue App starten):
-    sudo docker compose -f deploy/compose.local.yml build tutorai
+    sudo docker compose -f deploy/compose.local.yml build aicampus
     sudo docker compose -f deploy/compose.local.yml run --rm --no-deps \
-        tutorai timeout 300 python -m scripts.migrate_workspace_access --dry-run
+        aicampus timeout 300 python -m scripts.migrate_workspace_access --dry-run
     sudo docker compose -f deploy/compose.local.yml run --rm --no-deps \
-        tutorai timeout 300 python -m scripts.migrate_workspace_access
-    sudo docker compose -f deploy/compose.local.yml up -d --build tutorai
+        aicampus timeout 300 python -m scripts.migrate_workspace_access
+    sudo docker compose -f deploy/compose.local.yml up -d --build aicampus
 """
 
 import argparse
@@ -299,7 +299,7 @@ def main() -> int:
             print("\n[dry-run] keine Änderungen vorgenommen.")
         else:
             print("\nFertig. Nächster Schritt: neue App starten (dropt is_public):")
-            print("  sudo docker compose -f deploy/compose.local.yml up -d --build tutorai")
+            print("  sudo docker compose -f deploy/compose.local.yml up -d --build aicampus")
             print("Danach je Task: 🔄 Sync ausführen — und falls init.sh existiert,")
             print("das alte Task-Image entfernen (neuer init-Hash) bzw. neu initialisieren.")
     return 0

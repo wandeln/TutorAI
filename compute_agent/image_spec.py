@@ -122,4 +122,4 @@ def image_tags(name: str, dockerfile: str) -> list[str]:
     """
     if not has_build_content(dockerfile):
         return [base_image(dockerfile)]
-    return [f"tutorai/spec/{name}:{content_hash(dockerfile)}"]
+    return [f"aicampus/spec/{name}:{content_hash(dockerfile)}"]

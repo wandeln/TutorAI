@@ -109,7 +109,7 @@ Zugriffsklassen** statt der Pfad-Konvention (`path_zone()`). Endzustand:
 - Spec: neuer Key `readonly_paths` (top-level 🔒-Pfade, files+folders).
 - `_build_create_args`: statt `/assets`+tests/+Skript-Mounts → je
   🔒-Pfad ein ro-Bind-Mount `asset_dir/<path>` → `/workspace/<path>`.
-- Mount-Layout-Hash als Container-Label `tutorai.mounts`; Mismatch →
+- Mount-Layout-Hash als Container-Label `aicampus.mounts`; Mismatch →
   Container neu anlegen (Volume bleibt).
 - Student-Write-Guards (Backend + Agent) auf effektive Zugriffe.
 
@@ -196,7 +196,7 @@ ohne zusätzlichen Speicherplatz.
   (`image_exists(ref)`) läuft unverändert weiter — kein Manifest-Key,
   keine Status-Änderung nötig.
 - `remove_task_images`: zusätzlich zum Label-Filter der Namensraum-Filter
-  `reference=tutorai/task/{c}-{t}:*` — Alias-Tags auf dem Basis-Image
+  `reference=aicampus/task/{c}-{t}:*` — Alias-Tags auf dem Basis-Image
   vererben keine Task-Labels. `docker rmi` entfernt nur den Tag; das
   Basis-Image bleibt über seine eigenen Tags erhalten.
 - Build-Log-Zeilen: „(Keine Image-Änderungen — Commit übersprungen.)“ /

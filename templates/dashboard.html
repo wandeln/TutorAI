@@ -83,7 +83,7 @@
       {% if course.role_in_course == 'STUDENT' and stats_by_course|length > 0 %}
         {% set cs = stats_by_course.get(course.id) %}
         {% if cs %}
-          <!-- Aufgaben-Fortschritt (nur wenn der Kurs Aufgaben auf TutorAI hat) -->
+          <!-- Aufgaben-Fortschritt (nur wenn der Kurs Aufgaben auf AICampus hat) -->
           <div class="mb-3">
             <div class="flex justify-between text-xs text-gray-500 mb-1">
               <span>Aufgaben</span>

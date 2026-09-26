@@ -31,9 +31,9 @@ Agent erwartet ``.init.sh`` in .private/ und purgt das alte
 ``init.sh`` nicht fälschlich):
     sudo -n docker compose -f deploy/compose.local.yml up -d --build \\
         compute-agent
-    sudo -n docker compose -f deploy/compose.local.yml exec tutorai \\
+    sudo -n docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 300 python -m scripts.migrate_init_sh_hidden --dry-run
-    sudo -n docker compose -f deploy/compose.local.yml exec tutorai \\
+    sudo -n docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 300 python -m scripts.migrate_init_sh_hidden
 """
 

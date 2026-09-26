@@ -1,5 +1,5 @@
 {
-  "name": "tutorai-reveal-build",
+  "name": "aicampus-reveal-build",
   "version": "1.0.0",
   "private": true,
   "description": "Buildt die lesbare (nicht minifizierte) UMD-Version von reveal.js 4.6.0 nach ../reveal.js",

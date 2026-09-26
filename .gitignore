@@ -27,7 +27,7 @@ data/
 # Deployment / Betrieb (Repo = nur Code-Backup)
 nginx.conf
 deploy.sh
-tutorai.service
+aicampus.service
 AGENTS.md
 .env.production.example
 .zed/

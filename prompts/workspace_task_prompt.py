@@ -220,10 +220,10 @@ Testverhalten von test.sh/.test_private.sh).
       für die Lösung sinnvoll ist (z. B. Notebook für EDA/Training).
       Die Studierenden starten das Skript im Terminal und öffnen den
       Port in der Browser-Preview. Die App MUSS auf 0.0.0.0 OHNE
-      Base-Pfad (auf /) lauschen — TutorAI routet jeden Port über eine
+      Base-Pfad (auf /) lauschen — AICampus routet jeden Port über eine
       eigene Subdomain zur App (Routing/Auth übernimmt die Plattform,
       das Skript kümmert sich nicht darum). Das ist auch der normale
-      Zustand bei lokaler Ausführung ohne TutorAI. Muster
+      Zustand bei lokaler Ausführung ohne AICampus. Muster
       (POSIX-kompatibel, Port frei wählbar; belegt übliche Ports wie
       80/443 vermeiden):
       * Jupyter: `jupyter notebook --allow-root --ip 0.0.0.0 --port

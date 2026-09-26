@@ -2,7 +2,7 @@
 Konfiguration des Compute-Agenten (per Umgebungsvariablen, s. .env / systemd-Unit).
 
 Der Agent spricht die docker-CLI, verwaltet die Workspace-Container
-und liegt zwischen TutorAI (über SSH-Tunnel oder 127.0.0.1) und dem
+und liegt zwischen AICampus (über SSH-Tunnel oder 127.0.0.1) und dem
 Docker-Daemon dieses Hosts.
 """
 
@@ -17,7 +17,7 @@ def _bool(val: str, default: bool = False) -> bool:
 
 
 # ── Auth ──────────────────────────────────────────────────────────
-# Gemeinsamer HMAC-Secret mit TutorAI (COMPUTE_AGENT_KEY). Leer = Auth
+# Gemeinsamer HMAC-Secret mit AICampus (COMPUTE_AGENT_KEY). Leer = Auth
 # deaktiviert (nur für lokale Entwicklung!).
 AGENT_KEY: str = os.getenv("AGENT_KEY", "")
 
@@ -29,14 +29,14 @@ AGENT_KEY: str = os.getenv("AGENT_KEY", "")
 HOST: str = os.getenv("AGENT_HOST", "127.0.0.1")
 PORT: int = int(os.getenv("AGENT_PORT", "8700"))
 # Preview-Tunnel (raw asyncio, s. preview.py): nur über das Compose-Netz
-# erreichbar (KEIN Host-Publish); einziger Client ist der TutorAI-
+# erreichbar (KEIN Host-Publish); einziger Client ist der AICampus-
 # Backend-Preview-Proxy (ASGI-Routes auf dem Backend-Haupt-Port,
 # s. services/preview_proxy.py).
 PREVIEW_PORT: int = int(os.getenv("PREVIEW_PORT", "8701"))
 
 # ── Verzeichnisse auf diesem Host ─────────────────────────────────
 # /assets: geteilte public-Dateien/Datasets je Aufgabe (read-only-Mount)
-ASSET_ROOT: str = os.getenv("ASSET_ROOT", "/opt/tutorai/assets")
+ASSET_ROOT: str = os.getenv("ASSET_ROOT", "/opt/aicampus/assets")
 # Wenn der Agent im Container läuft (Compose-Setup), ist ASSET_ROOT ein
 # Container-Pfad, der auf dem HOST nicht existiert — der Docker-Daemon
 # läuft aber auf dem Host und braucht Host-Pfade für Bind-Mounts.
@@ -68,16 +68,16 @@ INIT_TIMEOUT: int = int(os.getenv("AGENT_INIT_TIMEOUT", "1800"))  # 30 min
 # GPU nur verwenden, wenn nvidia-smi Erfolg hat (auto) oder erzwungen (true).
 GPU_ENABLED: str = os.getenv("GPU_ENABLED", "auto").strip().lower()
 # Fehlende öffentliche Images beim Start nachziehen (kuratierte
-# tutorai/*-Images werden NICHT gepullt — die werden gebaut, s. README).
+# aicampus/*-Images werden NICHT gepullt — die werden gebaut, s. README).
 AUTOPULL: bool = _bool(os.getenv("AGENT_AUTOPULL", "false"))
 
 # ── Image-Liste ───────────────────────────────────────────────────
 # Repos, die in der Image-Liste der Engine ausgeblendet und per API
-# nicht löschbar sind (Core-Images des TutorAI-Sets: das laufende
+# nicht löschbar sind (Core-Images des AICampus-Sets: das laufende
 # App-/Agent-Image soll nicht versehentlich entfernt werden).
 HIDDEN_IMAGE_REPOS: frozenset[str] = frozenset(
     r.strip() for r in os.getenv(
-        "HIDDEN_IMAGE_REPOS", "tutorai-app,tutorai-compute-agent"
+        "HIDDEN_IMAGE_REPOS", "aicampus-app,aicampus-compute-agent"
     ).split(",") if r.strip()
 )
 

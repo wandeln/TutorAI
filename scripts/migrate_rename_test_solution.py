@@ -18,10 +18,10 @@ unangetastet und werden nur gemeldet.
 
 Idempotent: beides ist sicher mehrmals ausführbar.
 
-Aufruf (im TutorAI-Container, damit Code + DB zusammenpassen):
-    sudo docker compose -f deploy/compose.local.yml exec tutorai \\
+Aufruf (im AICampus-Container, damit Code + DB zusammenpassen):
+    sudo docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 120 python -m scripts.migrate_rename_test_solution --dry-run
-    sudo docker compose -f deploy/compose.local.yml exec tutorai \\
+    sudo docker compose -f deploy/compose.local.yml exec aicampus \\
         timeout 120 python -m scripts.migrate_rename_test_solution
 
 Nebenwirkung (einmalig): die Access-Map ist Teil des init-Hashes →

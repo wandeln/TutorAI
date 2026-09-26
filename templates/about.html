@@ -1,0 +1,462 @@
+{% extends "base.html" %}
+
+{% block title %} - Über AICampus{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* About-Page: Scroll-Reveal (dezente Fade-in der Sektionen) */
+  .about-reveal { opacity: 0; transform: translateY(24px); transition: opacity .7s ease, transform .7s ease; }
+  .about-reveal.about-in { opacity: 1; transform: none; }
+
+  /* About: Terminal-Typing — blinkender Cursor */
+  @keyframes about-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+  .about-cursor { display: inline-block; width: .6em; height: 1.15em; margin-left: 2px; vertical-align: text-bottom; background: #64748b; animation: about-blink 1s step-end infinite; }
+
+  /* About: Datenfluss-Punkte (mobil vertikal, ≥lg horizontal) */
+  @keyframes about-flow-v { from { top: 0; } to { top: calc(100% - 8px); } }
+  @keyframes about-flow-x { from { left: 0; } to { left: calc(100% - 8px); } }
+  .about-flow-dot { position: absolute; width: 8px; height: 8px; border-radius: 9999px; background: #2563eb; }
+  @media (max-width: 1023px) {
+    .about-flow-dot { left: 50%; margin-left: -4px; animation: about-flow-v 2.2s linear infinite; }
+  }
+  @media (min-width: 1024px) {
+    .about-flow-dot { top: 50%; margin-top: -4px; animation: about-flow-x 2.2s linear infinite; }
+  }
+
+  /* About: Material-Card — Textwechsel */
+  .about-fade { transition: opacity .3s ease; }
+
+  /* About: Gamification — Medaillen leuchten nacheinander auf */
+  .about-medal { opacity: .25; filter: grayscale(1); transform: scale(.95); transition: opacity .45s ease, filter .45s ease, transform .45s ease; }
+  .about-medal.about-lit { opacity: 1; filter: none; transform: scale(1); }
+  .about-medal.about-pop { transform: scale(1.18); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .about-reveal { opacity: 1; transform: none; transition: none; }
+    .about-cursor, .about-flow-dot { animation: none; }
+    .about-medal, .about-fade { transition: none; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <!-- ── Hero ─────────────────────────────────────────────────── -->
+  <section class="text-center pt-8 pb-2 sm:pt-12">
+    <p class="font-mono text-[11px] sm:text-xs uppercase tracking-[0.25em] text-blue-600">
+      KI-Plattform für MINT-Lehre · 100 % auf eurer Hardware
+    </p>
+    <h1 class="mt-5 text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-800 leading-tight max-w-3xl mx-auto">
+      Künstliche Intelligenz für eure Lehre.<br>
+      <span class="text-blue-700">Alle Daten bleiben bei euch.</span>
+    </h1>
+    <p class="mt-6 text-lg text-gray-500 leading-relaxed max-w-2xl mx-auto">
+      AICampus erzeugt Übungsaufgaben und Lehrmaterialien, korrigiert Abgaben
+      automatisch und führt Studierende an Problemen entlang — betrieben auf
+      euren Servern, ohne Cloud-Abhängigkeiten.
+    </p>
+    <div class="mt-8 flex flex-wrap justify-center gap-3">
+      <a href="https://github.com/wandeln/AICampus/blob/main/docs/installation.md"
+         class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-medium px-5 py-2.5 rounded-lg transition">
+        Installation &amp; Quick Start
+      </a>
+      <a href="https://github.com/wandeln/AICampus"
+         class="bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-medium px-5 py-2.5 rounded-lg transition">
+        GitHub-Repository
+      </a>
+      {% if current_user %}
+      <a href="/" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2.5 rounded-lg transition">
+        Zur Plattform
+      </a>
+      {% else %}
+      <a href="/login" class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2.5 rounded-lg transition">
+        Login
+      </a>
+      {% endif %}
+    </div>
+    <p class="mt-5 font-mono text-xs text-gray-400">
+      100 % Open Source (MIT) · Docker-Deployment · LDAP-Anbindung · Excel-Export
+    </p>
+  </section>
+
+  <!-- ── Datenhoheit ──────────────────────────────────────────── -->
+  <section class="mt-14 sm:mt-16 about-reveal">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-md p-6 sm:p-8">
+      <p class="font-mono text-xs uppercase tracking-[0.2em] text-blue-600">Datenhoheit</p>
+      <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-gray-800">Jede Lösung bleibt im Uni-Netzwerk.</h2>
+      <p class="mt-4 text-gray-600 leading-relaxed max-w-3xl">
+        AICampus spricht jedes LLM an, das eine OpenAI-kompatible API bietet —
+        vLLM, TGI oder Ollama auf euren GPU-Servern. Einreichungen, Korrekturen
+        und Kursmaterial verlassen euer Netz nicht. Und wenn der LLM-Endpoint
+        nur intern erreichbar ist, verbindet ein reboot-fester SSH-Tunnel die
+        App — ohne offene Ports.
+      </p>
+
+      <div class="mt-8">
+        <div class="relative border-2 border-dashed border-blue-300 bg-blue-50/50 rounded-xl px-4 pt-8 pb-6 sm:px-8">
+          <span class="absolute -top-2.5 left-5 bg-white px-2 font-mono text-[10px] tracking-[0.2em] uppercase text-blue-600">
+            Uni-Netzwerk
+          </span>
+          <div class="flex flex-col lg:flex-row items-center gap-3">
+
+            <div class="w-full lg:flex-1 bg-white rounded-lg border border-gray-200 px-4 py-3 text-center shadow-sm">
+              <div class="text-sm font-semibold text-gray-800">Studierende &amp; Dozierende</div>
+              <div class="text-xs text-gray-500 mt-0.5">im Browser</div>
+            </div>
+
+            <div class="relative w-px h-8 lg:h-px lg:w-14 bg-gray-300">
+              <span class="about-flow-dot"></span>
+              <span class="about-flow-dot" style="animation-delay:1.1s"></span>
+            </div>
+
+            <div class="w-full lg:flex-1 bg-blue-700 rounded-lg px-4 py-3 text-center shadow">
+              <div class="text-sm font-semibold text-white">AICampus</div>
+              <div class="text-xs text-blue-200 mt-0.5">Web-App · Compute-Agent</div>
+            </div>
+
+            <div class="relative w-px h-8 lg:h-px lg:w-14 bg-gray-300">
+              <span class="about-flow-dot"></span>
+              <span class="about-flow-dot" style="animation-delay:1.1s"></span>
+            </div>
+
+            <div class="w-full lg:flex-1 bg-white rounded-lg border border-gray-200 px-4 py-3 text-center shadow-sm">
+              <div class="text-sm font-semibold text-gray-800">Lokales LLM</div>
+              <div class="text-xs text-gray-500 mt-0.5">vLLM · TGI · Ollama · euer GPU-Server</div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Automatisiertes Feedback ─────────────────────────────── -->
+  <section class="mt-10 sm:mt-12 about-reveal">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-md p-6 sm:p-8">
+      <div class="grid lg:grid-cols-2 gap-8 items-center">
+
+        <div>
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-blue-600">Automatisiertes Feedback</p>
+          <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-gray-800">
+            Jede Abgabe bekommt in Sekunden ein ehrliches Feedback.
+          </h2>
+          <p class="mt-4 text-gray-600 leading-relaxed">
+            Statt auf die nächste Sprechstunde zu warten: Textaufgaben
+            korrigiert das LLM mit konstruktivem, differenziertem Feedback.
+            Codeaufgaben laufen durch eure Unit-Tests — sichtbar und
+            versteckt — in einer serverseitigen Sandbox mit CPU-, RAM- und
+            Timeout-Limits.
+          </p>
+          <p class="mt-3 text-gray-600 leading-relaxed">
+            Workspace-Aufgaben bekommen pro Studierendem einen isolierten
+            Container: Editor, Terminal, Web-Preview, auf Wunsch GPU. Und wenn
+            jemand feststeckt, gibt das LLM <strong>sokratische
+            Hinweise</strong> — es führt an der Aufgabe entlang, statt die
+            Lösung zu verraten.
+          </p>
+        </div>
+
+        <!-- Live-Demo: Grading-Session, die sich selbst tippt (Loops) -->
+        <div class="rounded-xl overflow-hidden border border-gray-700 shadow-lg bg-[#282c34] font-mono text-[12px] sm:text-[13px] leading-relaxed">
+          <div class="flex items-center gap-1.5 px-4 py-2.5 bg-[#21252b] border-b border-gray-700">
+            <span class="w-3 h-3 rounded-full bg-gray-600"></span>
+            <span class="w-3 h-3 rounded-full bg-gray-600"></span>
+            <span class="w-3 h-3 rounded-full bg-gray-600"></span>
+            <span class="ml-3 text-xs text-gray-500">aicampus — sandbox</span>
+          </div>
+          <div id="about-term" class="p-4 sm:p-5 min-h-[330px] sm:min-h-[300px] text-slate-200"></div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Lehrmaterial ─────────────────────────────────────────── -->
+  <section class="mt-10 sm:mt-12 about-reveal">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-md p-6 sm:p-8">
+      <div class="grid lg:grid-cols-2 gap-8 items-center">
+
+        <!-- Cycling-Card: wechselt durch die Material-Typen -->
+        <div class="order-2 lg:order-1 rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <span id="about-mat-label" class="about-fade font-mono text-xs uppercase tracking-[0.2em] text-blue-600"></span>
+            <span class="font-mono text-[10px] text-gray-300">4 Material-Typen</span>
+          </div>
+          <div class="p-5">
+            <p id="about-mat-desc" class="about-fade text-gray-700 leading-relaxed min-h-[72px]"></p>
+            <p class="mt-3 text-sm font-medium text-green-600">✓ generiert — bereit zur Prüfung &amp; Freigabe</p>
+          </div>
+        </div>
+
+        <div class="order-1 lg:order-2">
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-blue-600">Lehrmaterial</p>
+          <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-gray-800">
+            Material, das ihr prüft — statt das ihr schreibt.
+          </h2>
+          <p class="mt-4 text-gray-600 leading-relaxed">
+            Aus Thema und Schwierigkeitsgrad erzeugt das LLM komplette
+            Übungsaufgaben — mit Vorlage, Unit-Tests und Musterlösung.
+            Dasselbe Prinzip für Vorlesungsskripte mit LaTeX und
+            Mermaid-Diagrammen, Slide-Decks und interaktive Applets — auch aus
+            einer Skizze oder einem Referenzbild.
+          </p>
+          <p class="mt-3 text-gray-600 leading-relaxed">
+            Jedes Ergebnis landet in eurer Prüfung: anpassen, freigeben,
+            fertig. Und bestehende Skripte und Folien (PDF, PowerPoint, Word)
+            importiert ein Wizard interaktiv in Kurskapitel und Decks —
+            inklusive Quellenbibliothek in BibTeX.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Gamification ─────────────────────────────────────────── -->
+  <section class="mt-10 sm:mt-12 about-reveal">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-md p-6 sm:p-8">
+      <div class="grid lg:grid-cols-2 gap-8 items-center">
+
+        <div>
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-blue-600">Gamification</p>
+          <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-gray-800">
+            Fortschritt, den Studierende sehen — und der sie motiviert.
+          </h2>
+          <p class="mt-4 text-gray-600 leading-relaxed">
+            Punkte, Fortschrittsbalken und Medaillen pro Aufgabe machen
+            Lernfortschritt sichtbar: Bronze ab 70 %, Silber ab 80 %, Gold ab
+            90 %, Platinum bei 100 %. Dazu Perzentil im Kurs und
+            Kursdurchschnitt — jede und jeder sieht, wo er oder sie steht.
+          </p>
+          <p class="mt-3 text-gray-600 leading-relaxed">
+            Ohne zusätzliche Konfiguration: Die Medaillen basieren einfach auf
+            den Punkten, die ihr pro Aufgabe ohnehin setzt.
+          </p>
+        </div>
+
+        <!-- Demo: Fortschrittsbalken + Medaillen-Sequence (wie im Produkt) -->
+        <div class="rounded-xl border border-gray-200 shadow-sm p-5 sm:p-6 bg-gray-50">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="font-semibold text-gray-800">Aufgabe 12 · Kürzeste Pfade</div>
+              <div class="text-sm text-gray-500 mt-0.5">12,3 / 13,5 Punkte</div>
+            </div>
+            <div class="flex gap-1.5 flex-wrap justify-end" id="about-medals">
+              <span class="badge-tier about-medal badge-bronze">🥉 Bronze</span>
+              <span class="badge-tier about-medal badge-silver">🥈 Silber</span>
+              <span class="badge-tier about-medal badge-gold">🥇 Gold</span>
+              <span class="badge-tier about-medal badge-platinum">💎 Platin</span>
+            </div>
+          </div>
+          <div class="mt-5 w-full bg-gray-200 rounded-full h-2">
+            <div id="about-prog" class="bg-blue-500 h-2 rounded-full" style="width:0%"></div>
+          </div>
+          <div class="mt-2 flex justify-between text-xs text-gray-500">
+            <span>Bronze 70 % · Silber 80 % · Gold 90 % · Platin 100 %</span>
+            <span class="font-semibold text-gray-700">91 %</span>
+          </div>
+          <div class="mt-4 flex justify-between text-sm border-t border-gray-200 pt-4">
+            <span class="text-gray-500">Kursdurchschnitt: <span class="font-semibold text-gray-700">61 %</span></span>
+            <span class="text-gray-500">Perzentil: <span id="about-pct" class="font-semibold text-green-600">0 %</span></span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Tech-Stack ───────────────────────────────────────────── -->
+  <section class="mt-10 sm:mt-12 about-reveal">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-md p-6 sm:p-8">
+      <p class="font-mono text-xs uppercase tracking-[0.2em] text-blue-600">Tech-Stack</p>
+      <h2 class="mt-2 text-2xl sm:text-3xl font-bold text-gray-800">
+        100 % Open Source. Auditierbar, erweiterbar, lizenzkostenfrei.
+      </h2>
+      <p class="mt-4 text-gray-600 leading-relaxed max-w-3xl">
+        Kein Blackbox-SaaS: Der gesamte Stack ist unter der MIT-Lizenz
+        veröffentlicht — von der Web-App über den Compute-Agent bis zu den
+        Deployment-Dateien. Prüft den Code, passt ihn an, tragt bei.
+      </p>
+      <dl class="mt-6 grid sm:grid-cols-2 gap-x-10 gap-y-1 font-mono text-sm">
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Backend</dt><dd class="text-gray-700 text-right">Python · FastAPI · SQLModel</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Frontend</dt><dd class="text-gray-700 text-right">Jinja2 · HTMX · Tailwind</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Code-Editor</dt><dd class="text-gray-700 text-right">CodeMirror 6</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Mathematik</dt><dd class="text-gray-700 text-right">KaTeX · Mermaid</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Slides</dt><dd class="text-gray-700 text-right">reveal.js</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Terminal</dt><dd class="text-gray-700 text-right">xterm.js</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Visualisierung</dt><dd class="text-gray-700 text-right">Plotly · Chart.js · Three.js</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Datenbank</dt><dd class="text-gray-700 text-right">SQLite → PostgreSQL</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Auth</dt><dd class="text-gray-700 text-right">JWT · SHA-256 · LDAP</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">LLM</dt><dd class="text-gray-700 text-right">openai SDK → OpenAI-kompatible Endpunkte</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Compute</dt><dd class="text-gray-700 text-right">Docker · GPU-Passthrough</dd></div>
+        <div class="flex justify-between gap-4 border-b border-gray-100 py-1.5"><dt class="text-gray-400">Export</dt><dd class="text-gray-700 text-right">openpyxl (Excel)</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <!-- ── CTA ──────────────────────────────────────────────────── -->
+  <section class="mt-10 sm:mt-12 mb-8 about-reveal">
+    <div class="bg-blue-700 rounded-xl shadow-md p-8 sm:p-10 text-center">
+      <h2 class="text-2xl sm:text-3xl font-bold text-white">
+        Eure Hardware. Eure Daten. Eure Plattform: AICampus
+      </h2>
+      <p class="mt-4 text-blue-100 leading-relaxed max-w-2xl mx-auto">
+        AICampus läuft per Docker Compose auf einem Standard-Server — von der
+        Installation zum ersten Kurs in einem Nachmittag. Workspace-Aufgaben
+        mit isolierten GPU-Containern kommen optional dazu.
+      </p>
+      <div class="mt-7 flex flex-wrap justify-center gap-3">
+        <a href="https://github.com/wandeln/AICampus/blob/main/docs/installation.md"
+           class="bg-white text-blue-700 hover:bg-blue-50 font-semibold px-5 py-2.5 rounded-lg transition">
+          Installation &amp; Konfiguration
+        </a>
+        <a href="https://github.com/wandeln/AICampus"
+           class="border border-blue-400 text-white hover:bg-blue-600 font-semibold px-5 py-2.5 rounded-lg transition">
+          GitHub-Repository
+        </a>
+      </div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+(function () {
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ── Scroll-Reveal ─────────────────────────────────────────── */
+  var reveals = document.querySelectorAll(".about-reveal");
+  if (reduced || !("IntersectionObserver" in window)) {
+    reveals.forEach(function (el) { el.classList.add("about-in"); });
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("about-in"); io.unobserve(e.target); }
+      });
+    }, { threshold: 0.12 });
+    reveals.forEach(function (el) { io.observe(el); });
+  }
+
+  /* ── Terminal: Auto-Grading-Session, die sich selbst tippt ── */
+  var term = document.getElementById("about-term");
+  if (term) {
+    var LINES = [
+      { t: "$ grade --aufgabe 12 --student maier", c: "text-slate-400", slow: true },
+      { t: "sandbox: 2 CPU · 512 MB · 30 s", c: "text-slate-500" },
+      { t: "✓ test_01_klein.py   PASS", c: "text-green-400" },
+      { t: "✓ test_02_gewichtet.py PASS", c: "text-green-400" },
+      { t: "✗ test_03_groß.py   FAIL (timeout)", c: "text-red-400" },
+      { t: "→ LLM analysiert Code & Tests …", c: "text-blue-300", slow: true },
+      { t: "→ 6,5 / 10 Punkte", c: "text-blue-300" },
+      { t: "Feedback:", c: "text-slate-500" },
+      { t: "„Dijkstra korrekt — aber der", c: "text-slate-300" },
+      { t: "min()-Scan der Warteschlange kostet O(V)", c: "text-slate-300" },
+      { t: "pro Schritt. Mit heapq: O((V+E)·log V)", c: "text-slate-300" },
+      { t: "— dann läuft auch test_03 durch.“", c: "text-slate-300" }
+    ];
+    if (reduced) {
+      term.innerHTML = LINES.map(function (l) {
+        return '<div class="' + l.c + '">' + l.t + "</div>";
+      }).join("");
+    } else {
+      var cursor = document.createElement("span");
+      cursor.className = "about-cursor";
+      var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+      (async function run() {
+        for (;;) {
+          term.innerHTML = "";
+          for (var i = 0; i < LINES.length; i++) {
+            var l = LINES[i];
+            var div = document.createElement("div");
+            div.className = l.c;
+            term.appendChild(div);
+            div.appendChild(cursor);
+            var perChar = l.slow ? 22 : 13;
+            for (var j = 0; j < l.t.length; j++) {
+              div.insertBefore(document.createTextNode(l.t.charAt(j)), cursor);
+              await wait(perChar + Math.random() * 14);
+            }
+            await wait(l.slow ? 600 : 220);
+          }
+          await wait(4500);
+        }
+      })();
+    }
+  }
+
+  /* ── Lehrmaterial: Cycling-Card durch die Material-Typen ───── */
+  var matLabel = document.getElementById("about-mat-label");
+  var matDesc = document.getElementById("about-mat-desc");
+  if (matLabel && matDesc) {
+    var ITEMS = [
+      { l: "Übungsaufgabe", d: "„Floyd–Warshall implementieren“ — aus Thema + Schwierigkeitsgrad generiert, mit Vorlage, 7 Unit-Tests (4 versteckt) und Musterlösung." },
+      { l: "Vorlesungsskript", d: "Kapitel „Kürzeste Pfade“ — Markdown mit LaTeX und Mermaid-Diagrammen, verlinkt mit den Übungsaufgaben, Kapitel für Kapitel freischaltbar." },
+      { l: "Slide-Deck", d: "24 Folien in reveal.js — LLM-gestützt erstellt, im Browser präsentieren, als PDF exportieren." },
+      { l: "Interaktives Applet", d: "Graph-Explorer — aus einer Beschreibung oder einem Referenzbild generiert, interaktiv im Skript eingebettet." }
+    ];
+    var mi = 0;
+    matLabel.textContent = ITEMS[0].l;
+    matDesc.textContent = ITEMS[0].d;
+    if (!reduced) {
+      setInterval(function () {
+        matLabel.style.opacity = "0";
+        matDesc.style.opacity = "0";
+        setTimeout(function () {
+          mi = (mi + 1) % ITEMS.length;
+          matLabel.textContent = ITEMS[mi].l;
+          matDesc.textContent = ITEMS[mi].d;
+          matLabel.style.opacity = "1";
+          matDesc.style.opacity = "1";
+        }, 300);
+      }, 4200);
+    }
+  }
+
+  /* ── Gamification: Balken füllt, Medaillen leuchten auf ────── */
+  var prog = document.getElementById("about-prog");
+  var pct = document.getElementById("about-pct");
+  var medals = Array.prototype.slice.call(document.querySelectorAll("#about-medals .about-medal"));
+  if (prog && pct && medals.length) {
+    if (reduced) {
+      prog.style.width = "91%";
+      medals.slice(0, 3).forEach(function (m) { m.classList.add("about-lit"); });
+      pct.textContent = "87 %";
+    } else {
+      (function loop() {
+        prog.style.transition = "none";
+        prog.style.width = "0%";
+        medals.forEach(function (m) { m.classList.remove("about-lit", "about-pop"); });
+        pct.textContent = "0 %";
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            prog.style.transition = "width 1.6s cubic-bezier(.25,.7,.3,1)";
+            prog.style.width = "91%";
+          });
+        });
+        setTimeout(function () { medals[0].classList.add("about-lit"); }, 1000);
+        setTimeout(function () { medals[1].classList.add("about-lit"); }, 1450);
+        setTimeout(function () {
+          medals[2].classList.add("about-lit", "about-pop");
+          setTimeout(function () { medals[2].classList.remove("about-pop"); }, 450);
+        }, 1900);
+        setTimeout(function () {
+          var t0 = null;
+          var tick = function (now) {
+            if (t0 === null) { t0 = now; }
+            var p = Math.min(1, (now - t0) / 1000);
+            pct.textContent = Math.round(87 * p) + " %";
+            if (p < 1) { requestAnimationFrame(tick); }
+          };
+          requestAnimationFrame(tick);
+        }, 2300);
+        setTimeout(loop, 7500);
+      })();
+    }
+  }
+})();
+</script>
+{% endblock %}

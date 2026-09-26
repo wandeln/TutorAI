@@ -169,6 +169,9 @@
       <button id="burger-btn" class="sm:hidden text-white text-2xl leading-none p-1" onclick="document.getElementById('mobile-menu').classList.toggle('hidden')">
         ☰
       </button>
+      {% else %}
+      <!-- Gast (nicht eingeloggt): Login-Link -->
+      <a href="/login" class="text-sm text-blue-100 hover:text-white transition">Login</a>
       {% endif %}
     </div>
 
@@ -233,7 +236,7 @@
   <!-- ─── Footer ──────────────────────────────────────────────── -->
   <footer class="bg-gray-800 text-gray-400 py-4 mt-8">
     <div class="container mx-auto px-4 text-center text-sm">
-        <p>AICampus &copy; 2026 &mdash; <a href="https://github.com/wandeln/AICampus">Open-Source</a> &mdash; Hosted @ <a href="https://cg.cs.uni-bonn.de">Uni-Bonn</a></p>
+        <p>AICampus &copy; 2026 &mdash; <a href="/about">Über AICampus</a> &mdash; <a href="https://github.com/wandeln/AICampus">Open-Source</a> &mdash; Hosted @ <a href="https://cg.cs.uni-bonn.de">Uni-Bonn</a></p>
     </div>
   </footer>
 

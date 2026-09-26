@@ -36,6 +36,10 @@ Kursmaterial — bleiben in Ihrem Netz.
   - **Sokratische Hinweise:** das LLM führt an der Aufgabe entlang, statt die
     Lösung wegzugeben
 - Versuchslimits, Abgabefristen und Punkte pro Aufgabe — automatisch.
+- **Gamification:** Punkte, Fortschrittsbalken und Medaillen pro Aufgabe
+  (Bronze ab 70 %, Silber ab 80 %, Gold ab 90 %, Platinum bei 100 %) — plus
+  Perzentil im Kurs und Kursdurchschnitt. Sichtbarer Fortschritt, der
+  Studierende motiviert; ohne zusätzliche Konfiguration.
 - **Kurs-Forum** mit Kanälen für Fragen & Austausch.
 - Für Sie: **Punktestands-Übersicht, Korrektur-Workflow und Excel-Export**.
 

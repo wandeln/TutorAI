@@ -559,11 +559,13 @@ async def index(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    """Home-Seite: Login oder Dashboard."""
+    """Home-Seite: About (Gast), Login (abgelaufene Session) oder Dashboard."""
     # Prüfen, ob User eingeloggt
     token = request.cookies.get("access_token")
     if not token:
-        return templates.TemplateResponse("login.html", {"request": request})
+        # Gast (noch nie angemeldet) → About-Seite als Landing
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/about", status_code=302)
 
     try:
         user = await get_current_user(request, session)
@@ -674,6 +676,29 @@ async def login_page(request: Request):
     """Login-Seite anzeigen."""
     next_url = request.query_params.get("next", "")
     return templates.TemplateResponse("login.html", {"request": request, "next_url": next_url})
+
+
+@app.get("/about")
+async def about_page(request: Request, session: Session = Depends(get_session)):
+    """Öffentliche About-Seite — Pitch für Dozierende, Verwaltung & Studierende.
+
+    Landing-Page für Gäste: wer nicht eingeloggt ist, landet über / hier.
+    Eingeloggte Nutzer bekommen den normalen Nav-Context.
+    """
+    ctx: dict[str, Any] = {"request": request, "page_title": "Über AICampus"}
+    try:
+        user = await get_current_user(request, session)
+    except HTTPException:
+        user = None
+    if user:
+        display_role = "Admin" if user.role == GlobalUserRole.ADMIN else "User"
+        ctx.update({
+            "current_user": _user_ctx(user, display_role),
+            "courses": _get_user_courses(user, session),
+            "selected_course_id": None,
+            "is_admin": user.role == GlobalUserRole.ADMIN,
+        })
+    return templates.TemplateResponse("about.html", ctx)
 
 
 async def _do_login(
